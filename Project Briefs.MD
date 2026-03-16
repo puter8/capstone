@@ -18,6 +18,5 @@
 | Team Ground Rule | https://github.com/puter8/capstone/blob/main/Team_Ground_Rule.md |
 | 최종수정일 | 2026.03.13 |
 
-[↑ 목록으로](#2026-spring-전체-프로젝트-리스트)
 
 
