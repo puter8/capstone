@@ -71,10 +71,11 @@ LLM system prompt + Rive 시각 파라미터
 
 가중치 행렬 W는 초기에 수동 설정 후, 사용자 피드백으로 튜닝 가능.
 
-## **Slang Pipeline: Reddit Only**
+## **Slang Pipeline: Reddit + Supabase pgvector**
 
 - **데이터 소스:** Reddit API (r/slang, r/OutOfTheLoop, r/GenZ 등)
 - **수집 대상:** 슬랭/밈 표현, 사용 맥락, 업보트 기반 인기도
+- **벡터 저장:** Supabase pgvector — 외부 벡터 DB 없이 기존 DB 내에서 벡터 검색 수행
 - **적용:** Humor Style 축 수치에 따라 AI 캐릭터가 사용하는 슬랭 빈도 조절
 
 ## **Character Visualization: 추상적 시각 매핑 (Rive)**
@@ -120,7 +121,7 @@ LLM system prompt + Rive 시각 파라미터
 | **역할** | **스택** |
 | --- | --- |
 | LLM | **GPT-4o** |
-| RAG | **LangChain + Pinecone** |
+| RAG | **Supabase pgvector** |
 | 슬랭 수집 | **Reddit PRAW** |
 | 파이프라인 | **GitHub Actions** |
 | 임베딩 | **text-embedding-3-small** |
@@ -140,6 +141,7 @@ LLM system prompt + Rive 시각 파라미터
 2. ~~슬랭 파이프라인 MVP 범위~~ → **Reddit만** (RESOLVED)
 3. ~~Rive 캐릭터의 시각적 상태 수~~ → **추상적 시각 매핑, 연속값** (RESOLVED)
 4. ~~기술 스택 결정~~ → **RESOLVED** (위 참조)
+5. ~~RAG 파이프라인~~ → **Supabase pgvector** (RESOLVED) — 외부 벡터 DB 없이 기존 DB 내 벡터 검색
 
 ## **Success Criteria**
 

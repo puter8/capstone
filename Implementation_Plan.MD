@@ -31,7 +31,7 @@
 | 0 | 백엔드 아키텍처 | **FastAPI 단일 백엔드** — Spring Boot 제거 |
 | 1 | DB/Auth | **Supabase Auth + RLS** — FastAPI는 AI/매트릭스 전담 |
 | 2 | LLM 호출 | **단일 GPT-4o 호출** — structured output으로 축 점수 + 대화 응답 통합 |
-| 3 | RAG 파이프라인 | **보류** — 교수님 확인 후 결정 (Pinecone vs pgvector vs 텍스트검색) |
+| 3 | RAG 파이프라인 | **Supabase pgvector** — 외부 벡터 DB 없이 기존 DB 내 벡터 검색 |
 | 4 | 데이터 저장 | **FastAPI가 service_role로 Supabase 직접 저장** |
 | 5 | 가중치 행렬 W | **MVP: identity** — 축 점수 초기값 0, 사용자별 독립 |
 | 6 | 축 감쇠 | **모든 축에 EMA** — Intimacy alpha=0.1(느림), 나머지 alpha=0.5(빠름) |
@@ -116,7 +116,7 @@ CREATE TABLE messages (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- slang_entries: Reddit 슬랭 (RAG 결정 후 확장 가능)
+-- slang_entries: Reddit 슬랭 + pgvector 벡터 검색
 CREATE TABLE slang_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   term TEXT NOT NULL,
@@ -124,6 +124,7 @@ CREATE TABLE slang_entries (
   context TEXT,
   source_url TEXT,
   popularity INT DEFAULT 0,
+  embedding VECTOR(1536),  -- text-embedding-3-small
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -147,11 +148,13 @@ CREATE TABLE slang_entries (
 3. **Rive 캐릭터 컴포넌트** — 5축 파라미터 실시간 반영
 4. **Zustand 스토어** — 축 점수 상태, 대화 이력
 
-### **Phase 5: Slang Pipeline (RAG 결정 후)**
+### **Phase 5: Slang Pipeline (Supabase pgvector)**
 
 1. **PRAW Reddit 수집 스크립트** — GitHub Actions cron
-2. **DB 저장** — slang_entries 테이블
-3. **System prompt 주입** — Humor Style 축 점수에 따라 슬랭 빈도 조절
+2. **임베딩 생성** — text-embedding-3-small로 슬랭 벡터화
+3. **DB 저장** — slang_entries 테이블 (embedding 컬럼, pgvector)
+4. **벡터 검색** — 대화 맥락 기반 유사 슬랭 검색 (cosine similarity)
+5. **System prompt 주입** — Humor Style 축 점수에 따라 슬랭 빈도 조절
 
 ## **Error Handling Matrix**
 
@@ -173,9 +176,8 @@ CREATE TABLE slang_entries (
 
 ## **Unresolved Decisions**
 
-- **Issue 3: RAG 파이프라인** — 교수님 확인 후 결정 (Pinecone vs pgvector vs 텍스트검색). 슬랭 파이프라인 구현이 이 결정에 의존함.
+없음 — 모든 주요 기술 결정 완료.
 
 ## **TODOs (deferred)**
 
-1. **RAG 파이프라인 결정** — 교수님 확인 후. 옵션: 3A(텍스트 검색), 3B(Pinecone+LangChain), 3C(pgvector). Blocked by: 교수님 확인.
-2. **EMA alpha 값 튜닝** — 실제 대화 데이터 50회화 이상 축적 후 최적화. 초기값: Intimacy 0.1, 나머지 0.5.
+1. **EMA alpha 값 튜닝** — 실제 대화 데이터 50회화 이상 축적 후 최적화. 초기값: Intimacy 0.1, 나머지 0.5.
