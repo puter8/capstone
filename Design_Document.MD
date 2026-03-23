@@ -112,9 +112,8 @@ LLM system prompt + Rive 시각 파라미터
 
 | **역할** | **스택** |
 | --- | --- |
-| API 서버 | **Spring Boot 3** (Java) |
-| DB | **PostgreSQL** |
-| ORM | **JPA / Hibernate** |
+| API 서버 | **FastAPI** (Python) |
+| DB / Auth | **Supabase** (PostgreSQL + Auth + RLS) |
 
 ### **AI Service**
 
