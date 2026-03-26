@@ -120,6 +120,108 @@
     }
 
     tr:nth-child(even) td { background: #f6f8fa; }
+
+    /* ── Calculator ── */
+    .calc-section {
+      margin-top: 40px;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .calc-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background: #f6f8fa;
+      border-bottom: 1px solid #d0d7de;
+      font-size: 14px;
+      font-weight: 600;
+      color: #24292f;
+    }
+
+    .calc-body {
+      padding: 24px 32px;
+    }
+
+    .calc-body h2 {
+      font-size: 1.1em;
+      margin-top: 0;
+      border: none;
+      padding: 0;
+    }
+
+    .calc-form {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 16px 0;
+    }
+
+    .calc-form input {
+      width: 100px;
+      padding: 6px 10px;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      font-size: 16px;
+      text-align: center;
+    }
+
+    .calc-form input:focus {
+      outline: none;
+      border-color: #0969da;
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+    }
+
+    .calc-form .op {
+      font-size: 20px;
+      font-weight: 600;
+      color: #57606a;
+    }
+
+    .calc-btn {
+      padding: 6px 16px;
+      background: #0969da;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .calc-btn:hover { background: #0860ca; }
+    .calc-btn:disabled { background: #8c959f; cursor: not-allowed; }
+
+    .calc-result {
+      margin-top: 12px;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 16px;
+      display: none;
+    }
+
+    .calc-result.success {
+      background: #dafbe1;
+      border: 1px solid #82e09a;
+      color: #1a7f37;
+      display: block;
+    }
+
+    .calc-result.error {
+      background: #ffebe9;
+      border: 1px solid #ff818266;
+      color: #cf222e;
+      display: block;
+    }
+
+    .calc-loading {
+      color: #57606a;
+      font-size: 14px;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -191,6 +293,73 @@
       </div>
     </div>
 
+    <!-- 덧셈 계산기 (BE 연동) -->
+    <div class="calc-section">
+      <div class="calc-header">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="#57606a">
+          <path d="M8.75 3a.75.75 0 0 0-1.5 0v3.25H4a.75.75 0 0 0 0 1.5h3.25V11a.75.75 0 0 0 1.5 0V7.75H12a.75.75 0 0 0 0-1.5H8.75V3Z"/>
+        </svg>
+        덧셈 계산기 — API Demo (BE: /api/add)
+      </div>
+      <div class="calc-body">
+        <h2>숫자 두 개를 입력하면 서버가 더해서 반환합니다</h2>
+        <div class="calc-form">
+          <input type="number" id="numA" placeholder="숫자 A" />
+          <span class="op">+</span>
+          <input type="number" id="numB" placeholder="숫자 B" />
+          <span class="op">=</span>
+          <button class="calc-btn" id="calcBtn" onclick="calculate()">계산</button>
+        </div>
+        <span class="calc-loading" id="loading">계산 중...</span>
+        <div class="calc-result" id="result"></div>
+      </div>
+    </div>
+
   </div>
+
+  <script>
+    async function calculate() {
+      const a = document.getElementById("numA").value;
+      const b = document.getElementById("numB").value;
+      const resultEl = document.getElementById("result");
+      const loadingEl = document.getElementById("loading");
+      const btn = document.getElementById("calcBtn");
+
+      resultEl.className = "calc-result";
+      resultEl.textContent = "";
+
+      if (a === "" || b === "") {
+        resultEl.className = "calc-result error";
+        resultEl.textContent = "숫자를 모두 입력해주세요.";
+        return;
+      }
+
+      btn.disabled = true;
+      loadingEl.style.display = "inline";
+
+      try {
+        const res = await fetch(`/api/add?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`);
+        const data = await res.json();
+
+        if (res.ok) {
+          resultEl.className = "calc-result success";
+          resultEl.textContent = `${a} + ${b} = ${data.result}`;
+        } else {
+          resultEl.className = "calc-result error";
+          resultEl.textContent = data.error || "오류가 발생했습니다.";
+        }
+      } catch (e) {
+        resultEl.className = "calc-result error";
+        resultEl.textContent = "서버에 연결할 수 없습니다.";
+      } finally {
+        btn.disabled = false;
+        loadingEl.style.display = "none";
+      }
+    }
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") calculate();
+    });
+  </script>
 </body>
 </html>
