@@ -234,6 +234,28 @@
       puter8 <span class="slash">/</span> <span>capstone</span>
     </div>
 
+    <!-- 덧셈 계산기 (BE 연동) -->
+    <div class="calc-section">
+      <div class="calc-header">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="#57606a">
+          <path d="M8.75 3a.75.75 0 0 0-1.5 0v3.25H4a.75.75 0 0 0 0 1.5h3.25V11a.75.75 0 0 0 1.5 0V7.75H12a.75.75 0 0 0 0-1.5H8.75V3Z"/>
+        </svg>
+        덧셈 계산기 — API Demo (BE: /api/add)
+      </div>
+      <div class="calc-body">
+        <h2>숫자 두 개를 입력하면 서버가 더해서 반환합니다</h2>
+        <div class="calc-form">
+          <input type="number" id="numA" placeholder="숫자 A" />
+          <span class="op">+</span>
+          <input type="number" id="numB" placeholder="숫자 B" />
+          <span class="op">=</span>
+          <button class="calc-btn" id="calcBtn" onclick="calculate()">Submit</button>
+        </div>
+        <span class="calc-loading" id="loading">계산 중...</span>
+        <div class="calc-result" id="result"></div>
+      </div>
+    </div>
+
     <div class="readme-box">
       <div class="readme-header">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="#57606a">
@@ -290,28 +312,6 @@
           </tbody>
         </table>
 
-      </div>
-    </div>
-
-    <!-- 덧셈 계산기 (BE 연동) -->
-    <div class="calc-section">
-      <div class="calc-header">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="#57606a">
-          <path d="M8.75 3a.75.75 0 0 0-1.5 0v3.25H4a.75.75 0 0 0 0 1.5h3.25V11a.75.75 0 0 0 1.5 0V7.75H12a.75.75 0 0 0 0-1.5H8.75V3Z"/>
-        </svg>
-        덧셈 계산기 — API Demo (BE: /api/add)
-      </div>
-      <div class="calc-body">
-        <h2>숫자 두 개를 입력하면 서버가 더해서 반환합니다</h2>
-        <div class="calc-form">
-          <input type="number" id="numA" placeholder="숫자 A" />
-          <span class="op">+</span>
-          <input type="number" id="numB" placeholder="숫자 B" />
-          <span class="op">=</span>
-          <button class="calc-btn" id="calcBtn" onclick="calculate()">Submit</button>
-        </div>
-        <span class="calc-loading" id="loading">계산 중...</span>
-        <div class="calc-result" id="result"></div>
       </div>
     </div>
 
