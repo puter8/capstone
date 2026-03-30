@@ -1,6 +1,11 @@
 import postgres from "postgres";
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.DATABASE_URL_UNPOOLED;
 
 const sql = connectionString
   ? postgres(connectionString, {
@@ -12,7 +17,7 @@ let logsTableEnsured = false;
 
 export function getSql() {
   if (!sql) {
-    throw new Error("DATABASE_URL is not set");
+    throw new Error("No Postgres connection env var is set");
   }
   return sql;
 }
