@@ -66,7 +66,7 @@ Mode: Startup (졸프 + 스타트업 지향)
                           ↓ 가중합
 캐릭터 파라미터 = W × [F, E, I, H, C]ᵀ + bias
                           ↓
-LLM system prompt + Rive 시각 파라미터
+LLM system prompt + Canvas2D 시각 파라미터
 ```
 
 가중치 행렬 W는 초기에 수동 설정 후, 사용자 피드백으로 튜닝 가능.
@@ -78,24 +78,30 @@ LLM system prompt + Rive 시각 파라미터
 - **벡터 저장:** Supabase pgvector — 외부 벡터 DB 없이 기존 DB 내에서 벡터 검색 수행
 - **적용:** Humor Style 축 수치에 따라 AI 캐릭터가 사용하는 슬랭 빈도 조절
 
-## **Character Visualization: 추상적 시각 매핑 (Rive)**
+## **Character Visualization: Superformula + Canvas2D 절차적 생성**
 
-복잡한 캐릭터 애니메이션 대신, **축 값을 추상적 시각 속성에 직접 매핑**하는 방식.
+Rive 대신 **Superformula 수학 공식 + Canvas2D**로 캐릭터를 절차적 생성한다.
+Superformula는 하나의 파라미터 공식으로 원/별/클로버/사각형 등 모든 형태를 연속적으로 변환할 수 있다.
 
-| **축** | **시각 속성** | **매핑** |
-| --- | --- | --- |
-| **Intimacy** | Hue (색조) | 0→차가운 색(파랑) ~ 100→따뜻한 색(주황/핑크) |
-| **Energy** | Animation Speed (속도) | 0→느린 움직임 ~ 100→빠른 바운스/펄스 |
-| **Humor Style** | Vertex Count (꼭짓점) | 0→원/단순 도형 ~ 100→별/복잡한 도형 |
-| **Formality** | Brightness (밝기) | 0→비비드/밝은 ~ 100→차분한/어두운 톤 |
-| **Curiosity** | Size/Scale (크기 변화) | 0→일정 ~ 100→호흡하듯 크기 변화 |
+```
+r(θ) = (|cos(mθ/4)/a|^n2 + |sin(mθ/4)/b|^n3)^(-1/n1)
+```
+
+| **축** | **시각 속성** | **매핑** | **Superformula** |
+| --- | --- | --- | --- |
+| **Humor** | Body Shape (형태) | 0→●원 ~ 100→✱별/복잡 형태 | m (꼭짓점 수) |
+| **Formality** | Body Angularity (각진 정도) | 0→유기적/둥근 ~ 100→기하학적/각진 | n1 (각도) |
+| **Energy** | Eye Shape + Size (눈) | 0→작은 점 눈 ~ 100→큰 별 모양 눈 | (별도 렌더링) |
+| **Intimacy** | Hue (색조) | 0→차가운 색(파랑) ~ 100→따뜻한 색(핑크) | HSL hue |
+| **Curiosity** | Scale Pulse (호흡) | 0→정적 ~ 100→호흡 효과 | scale sin() |
 
 **장점:**
 
-- Rive State Machine의 숫자 Input으로 직접 연결 (0~100 → 시각 속성 연속 변환)
-- 27개 이산 상태 대신 **연속적 변화** → 더 자연스러운 전환
-- 애니메이션 에셋 최소화 — 하나의 도형에 파라미터만 변경
+- **수학적으로 무한한 중간 형태** — 원↔별↔클로버↔사각형을 연속적으로 전환
+- 외부 의존성 없음 — Canvas2D API만 사용
+- 5축 → 수학 파라미터 직접 매핑 → 예측 가능한 시각적 결과
 - 졸프 발표에서 "대화하면서 캐릭터가 실시간으로 변하는 것"을 시연하기 좋음
+- Idle 애니메이션: 미세 부유, 랜덤 눈 깜빡임, 파라미터 lerp 전환 (requestAnimationFrame 60fps)
 
 ## **Tech Stack**
 
@@ -105,7 +111,7 @@ LLM system prompt + Rive 시각 파라미터
 | --- | --- |
 | 프레임워크 | **Next.js 14** |
 | 스타일링 | **Tailwind CSS** |
-| 캐릭터 애니메이션 | **Rive** |
+| 캐릭터 애니메이션 | **Canvas2D + Superformula** (절차적 생성) |
 | 상태관리 | **Zustand** |
 
 ### **Backend**
@@ -147,7 +153,7 @@ LLM system prompt + Rive 시각 파라미터
 1. 5축 MATRIX가 사용자 발화를 분석하여 수치를 산출한다
 2. 수치 변화에 따라 AI 캐릭터의 말투/성격이 눈에 띄게 달라진다
 3. 누적 대화에 따라 Intimacy 축이 변화하며 관계 진화가 느껴진다
-4. Rive 캐릭터가 MATRIX 수치에 따라 시각적으로 변화한다
+4. Canvas2D 캐릭터가 MATRIX 수치에 따라 시각적으로 변화한다 (Superformula)
 5. 졸프 발표에서 시연 가능한 프로토타입이 완성된다
 
 ## **The Assignment**
