@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>감정 MATRIX 캐릭터 시각화</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #fff8f5;
+      color: #333;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 32px 16px;
+      gap: 28px;
+    }
+
+    h1 {
+      font-size: 1.1em;
+      font-weight: 700;
+      color: #e06080;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .utterance-box {
+      background: #fff;
+      border: 2px solid #f5c0cc;
+      border-radius: 16px;
+      padding: 14px 24px;
+      font-size: 0.95em;
+      color: #555;
+      max-width: 560px;
+      text-align: center;
+      line-height: 1.6;
+      box-shadow: 0 2px 12px rgba(230,100,130,0.1);
+    }
+
+    .main-area {
+      display: flex;
+      align-items: center;
+      gap: 48px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    canvas { background: transparent; }
+
+    .axes-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-width: 260px;
+    }
+
+    .axis-row { display: flex; flex-direction: column; gap: 5px; }
+
+    .axis-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82em;
+      color: #888;
+    }
+
+    .axis-name { font-weight: 700; color: #555; }
+    .axis-value { font-weight: 700; color: #e06080; }
+
+    .axis-bar-bg {
+      height: 8px;
+      background: #f0e0e5;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .axis-bar {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.8s ease;
+    }
+
+    .char-params {
+      margin-top: 4px;
+      padding: 10px 14px;
+      background: #fff;
+      border-radius: 10px;
+      border: 1.5px solid #f5c0cc;
+      font-size: 0.78em;
+      color: #888;
+      line-height: 1.9;
+    }
+
+    .char-params span { color: #e06080; font-weight: 700; }
+
+    .nav-buttons { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
+    button {
+      padding: 8px 20px;
+      border: 2px solid #f5c0cc;
+      border-radius: 20px;
+      background: #fff;
+      color: #e06080;
+      font-size: 0.85em;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    button:hover { background: #fff0f3; }
+    button.active { background: #e06080; color: #fff; border-color: #e06080; }
+
+    .case-label { font-size: 0.75em; color: #bbb; }
+  </style>
+</head>
+<body>
+
+<h1>감정 MATRIX — 캐릭터 시각화</h1>
+
+<div class="utterance-box" id="utteranceBox">발화를 선택하세요</div>
+
+<div class="main-area">
+  <canvas id="canvas" width="300" height="300"></canvas>
+
+  <div class="axes-panel">
+    <div class="axis-row">
+      <div class="axis-label">
+        <span class="axis-name">Formality <small>(격식도)</small></span>
+        <span class="axis-value" id="vF">0</span>
+      </div>
+      <div class="axis-bar-bg"><div class="axis-bar" id="bF" style="background:#a0c4ff;width:0%"></div></div>
+    </div>
+    <div class="axis-row">
+      <div class="axis-label">
+        <span class="axis-name">Energy <small>(에너지)</small></span>
+        <span class="axis-value" id="vE">0</span>
+      </div>
+      <div class="axis-bar-bg"><div class="axis-bar" id="bE" style="background:#ffb347;width:0%"></div></div>
+    </div>
+    <div class="axis-row">
+      <div class="axis-label">
+        <span class="axis-name">Intimacy <small>(친밀도)</small></span>
+        <span class="axis-value" id="vI">0</span>
+      </div>
+      <div class="axis-bar-bg"><div class="axis-bar" id="bI" style="background:#f06090;width:0%"></div></div>
+    </div>
+    <div class="axis-row">
+      <div class="axis-label">
+        <span class="axis-name">Humor <small>(유머)</small></span>
+        <span class="axis-value" id="vH">0</span>
+      </div>
+      <div class="axis-bar-bg"><div class="axis-bar" id="bH" style="background:#90e090;width:0%"></div></div>
+    </div>
+    <div class="axis-row">
+      <div class="axis-label">
+        <span class="axis-name">Curiosity <small>(탐구심)</small></span>
+        <span class="axis-value" id="vC">0</span>
+      </div>
+      <div class="axis-bar-bg"><div class="axis-bar" id="bC" style="background:#c090f0;width:0%"></div></div>
+    </div>
+
+    <div class="char-params" id="charParams">캐릭터 파라미터가 여기에 표시됩니다.</div>
+  </div>
+</div>
+
+<div class="nav-buttons" id="navButtons"></div>
+<div class="case-label" id="caseLabel"></div>
+
+<script>
+// ── 테스트 케이스 ────────────────────────────────────────
+const CASES = [
+  {
+    utterance: '"yo what\'s up lol, u wanna hang or nah?"',
+    axes: { F: 0, E: 60, I: 62, H: 55, C: 32 },
+    label: "케이스 1: 캐주얼 슬랭"
+  },
+  {
+    utterance: '"I would like to formally inquire about the implications of this matter."',
+    axes: { F: 100, E: 20, I: 5, H: 5, C: 65 },
+    label: "케이스 2: 격식체"
+  },
+  {
+    utterance: '"omg have you seen that new meme?? it literally made me cry laughing 😂😂"',
+    axes: { F: 5, E: 85, I: 60, H: 90, C: 35 },
+    label: "케이스 3: 밈/유머"
+  },
+  {
+    utterance: '"Why do you think people struggle with English conversation?"',
+    axes: { F: 55, E: 40, I: 35, H: 10, C: 80 },
+    label: "케이스 4: 탐구적 질문"
+  },
+];
+
+// ── 가중치 행렬 ─────────────────────────────────────────
+const W = [
+  [-0.45, 0.10, 0.15, 0.15, 0.00],
+  [ 0.05, 0.40, 0.15, 0.10, 0.10],
+  [ 0.00, 0.05, 0.10, 0.50, 0.05],
+];
+const BIAS = [50, 20, 10];
+
+function computeCharacter(axes) {
+  const v = [axes.F, axes.E, axes.I, axes.H, axes.C];
+  return W.map((row, i) => {
+    const val = row.reduce((s, w, j) => s + w * v[j], 0) + BIAS[i];
+    return Math.max(0, Math.min(100, Math.round(val)));
+  });
+}
+
+// ── Canvas ────────────────────────────────────────────────
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const CX = canvas.width / 2;
+const CY = canvas.height / 2 + 10;
+
+let current = { F: 50, E: 50, I: 50, H: 50, C: 50 };
+let target  = { F: 50, E: 50, I: 50, H: 50, C: 50 };
+let animT = 0;
+let phase = 0;
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+function smoothstep(t) { return t * t * (3 - 2 * t); }
+
+// ── 뾰족한 몸통 그리기 ──────────────────────────────────
+function drawBody(cx, cy, r, spikes, spikeDepth, hue, sat, lit) {
+  const step = (Math.PI * 2) / spikes;
+
+  ctx.beginPath();
+  for (let i = 0; i < spikes; i++) {
+    // 바깥쪽 뾰족점
+    const outerAngle = i * step - Math.PI / 2;
+    const ox = cx + Math.cos(outerAngle) * r;
+    const oy = cy + Math.sin(outerAngle) * r;
+
+    // 안쪽 오목점
+    const innerAngle = outerAngle + step / 2;
+    const ir = r * spikeDepth;
+    const ix = cx + Math.cos(innerAngle) * ir;
+    const iy = cy + Math.sin(innerAngle) * ir;
+
+    if (i === 0) ctx.moveTo(ox, oy);
+    else ctx.lineTo(ox, oy);
+    ctx.lineTo(ix, iy);
+  }
+  ctx.closePath();
+
+  // 그라디언트 채우기
+  const grad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.25, r * 0.1, cx, cy, r);
+  grad.addColorStop(0, `hsl(${hue}, ${sat}%, ${lit + 12}%)`);
+  grad.addColorStop(1, `hsl(${hue}, ${sat}%, ${lit - 8}%)`);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // 외곽선
+  ctx.strokeStyle = `hsl(${hue}, ${sat - 10}%, ${lit - 15}%)`;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+}
+
+// ── 눈 그리기 ────────────────────────────────────────────
+function drawEye(cx, cy, size, energy) {
+  // 흰자
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, size, size * 1.1, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "#fff";
+  ctx.fill();
+  ctx.strokeStyle = "#e06080";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // 빨간 눈동자
+  const pupilSize = size * 0.62;
+  ctx.beginPath();
+  ctx.arc(cx, cy + size * 0.05, pupilSize, 0, Math.PI * 2);
+  ctx.fillStyle = "#e03050";
+  ctx.fill();
+
+  // 노란 별 (눈동자 안)
+  drawStar(cx, cy + size * 0.05, pupilSize * 0.55, 5, "#ffe040");
+
+  // 하이라이트
+  ctx.beginPath();
+  ctx.arc(cx - size * 0.25, cy - size * 0.2, size * 0.18, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.fill();
+}
+
+// ── 별 그리기 ─────────────────────────────────────────────
+function drawStar(cx, cy, r, points, color) {
+  const step = (Math.PI * 2) / points;
+  const inner = r * 0.45;
+  ctx.beginPath();
+  for (let i = 0; i < points; i++) {
+    const a = i * step - Math.PI / 2;
+    ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    const b = a + step / 2;
+    ctx.lineTo(cx + Math.cos(b) * inner, cy + Math.sin(b) * inner);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+// ── 전체 캐릭터 렌더링 ────────────────────────────────────
+function drawCharacter(F, E, I, H, C, breathScale, bounceY) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Intimacy → 색조 (차가운 핑크 ~ 따뜻한 핑크/산호)
+  const hue = lerp(330, 355, I / 100);
+  // Formality → 채도/밝기 (비비드 ~ 차분)
+  const sat = lerp(80, 45, F / 100);
+  const lit = lerp(68, 52, F / 100);
+  // Humor → 스파이크 수 (8 ~ 18)
+  const spikes = Math.round(lerp(8, 18, H / 100));
+  // Humor → 스파이크 깊이 (완만 ~ 뾰족)
+  const spikeDepth = lerp(0.82, 0.60, H / 100);
+
+  const r = 100 * breathScale;
+  const cy = CY + bounceY;
+
+  // 그림자
+  ctx.save();
+  ctx.globalAlpha = 0.12;
+  ctx.beginPath();
+  ctx.ellipse(CX, CY + 95, r * 0.55, 12, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "#e06080";
+  ctx.fill();
+  ctx.restore();
+
+  // 몸통
+  drawBody(CX, cy, r, spikes, spikeDepth, hue, sat, lit);
+
+  // 눈 위치 (몸통 중앙 약간 위)
+  const eyeY = cy - r * 0.12;
+  const eyeSpacing = r * 0.30;
+  const eyeSize = r * 0.22;
+
+  drawEye(CX - eyeSpacing, eyeY, eyeSize, E);
+  drawEye(CX + eyeSpacing, eyeY, eyeSize, E);
+}
+
+// ── 애니메이션 루프 ──────────────────────────────────────
+function animate() {
+  animT = Math.min(animT + 0.035, 1);
+  const t = smoothstep(Math.min(animT, 1));
+
+  const F = lerp(current.F, target.F, t);
+  const E = lerp(current.E, target.E, t);
+  const I = lerp(current.I, target.I, t);
+  const H = lerp(current.H, target.H, t);
+  const C = lerp(current.C, target.C, t);
+
+  // Energy → 애니메이션 속도
+  const speed = lerp(0.018, 0.07, E / 100);
+  phase += speed;
+
+  // Curiosity → 크기 호흡 진폭
+  const breathAmp = lerp(0.012, 0.06, C / 100);
+  const breathScale = 1 + Math.sin(phase) * breathAmp;
+
+  // Energy → 위아래 통통 튀는 정도
+  const bounceAmp = lerp(1, 7, E / 100);
+  const bounceY = Math.sin(phase * 1.3) * bounceAmp;
+
+  drawCharacter(F, E, I, H, C, breathScale, bounceY);
+  requestAnimationFrame(animate);
+}
+
+// ── UI 업데이트 ──────────────────────────────────────────
+function updateUI(idx) {
+  const c = CASES[idx];
+  current = { ...target };
+  target  = { F: c.axes.F, E: c.axes.E, I: c.axes.I, H: c.axes.H, C: c.axes.C };
+  animT = 0;
+
+  document.getElementById("utteranceBox").textContent = c.utterance;
+  document.getElementById("caseLabel").textContent = c.label;
+
+  const a = c.axes;
+  ["F","E","I","H","C"].forEach(k => {
+    document.getElementById(`v${k}`).textContent = a[k];
+    document.getElementById(`b${k}`).style.width = a[k] + "%";
+  });
+
+  const [tone, energy, humor] = computeCharacter(a);
+  const toneDesc   = tone   > 60 ? "매우 캐주얼" : tone   < 30 ? "격식체"   : "중립";
+  const energyDesc = energy > 60 ? "매우 활발"   : energy < 30 ? "차분"     : "보통";
+  const humorDesc  = humor  > 60 ? "유머/밈 적극" : humor  < 30 ? "진지"    : "가끔 위트";
+
+  document.getElementById("charParams").innerHTML =
+    `<span>가중합 행렬 연산 결과</span><br>` +
+    `tone_casual : ${tone}/100 → ${toneDesc}<br>` +
+    `energy_level: ${energy}/100 → ${energyDesc}<br>` +
+    `humor_level : ${humor}/100 → ${humorDesc}`;
+
+  document.querySelectorAll(".nav-btn").forEach((btn, i) => {
+    btn.classList.toggle("active", i === idx);
+  });
+}
+
+// ── 버튼 생성 ────────────────────────────────────────────
+const nav = document.getElementById("navButtons");
+CASES.forEach((c, i) => {
+  const btn = document.createElement("button");
+  btn.className = "nav-btn";
+  btn.textContent = `케이스 ${i + 1}`;
+  btn.onclick = () => updateUI(i);
+  nav.appendChild(btn);
+});
+
+animate();
+updateUI(0);
+</script>
+</body>
+</html>
