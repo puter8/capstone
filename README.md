@@ -50,7 +50,7 @@ capstone/
 │                      # 발화의 언어적 특징(슬랭, 격식 표현, 이모지 등)을 분석하여
 │                      # Formality / Energy / Intimacy / Humor / Curiosity 수치 산출
 │
-├── matrix_engine.py   # 감정 MATRIX 핵심 연산 모듈
+├── matrix_engine.py   # CHARACTER MATRIX 핵심 연산 모듈
 │                      # 5축 수치 벡터에 가중치 행렬 W를 곱해 AI 캐릭터 파라미터 산출
 │                      # W × [F, E, I, H, C]ᵀ + bias → tone_casual / energy_level / humor_level
 │
@@ -63,7 +63,7 @@ capstone/
     │                   # analyzer → matrix_engine → AI 응답 생성까지 시연
     │                   # 실행: python tests/test_matrix.py
     │
-    └── visualizer.html # 감정 MATRIX 캐릭터 시각화 (Canvas2D)
+    └── visualizer.html # CHARACTER MATRIX 캐릭터 시각화 (Canvas2D)
                         # 5축 수치 변화에 따라 캐릭터 색상 / 스파이크 수 / 애니메이션 속도 변화
                         # test_matrix.py 실행 시 브라우저 자동 실행
 ```
