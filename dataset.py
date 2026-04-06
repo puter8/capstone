@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-감정 MATRIX 학습 데이터셋
+CHARACTER MATRIX 학습 데이터셋
 ==========================
 팀이 직접 채점한 Ground Truth 라벨 데이터.
 

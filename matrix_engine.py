@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Matrix Engine — Emotion MATRIX Core
+Matrix Engine — CHARACTER MATRIX Core
 =====================================
 Weighted-sum matrix operation: 5-axis scores → character parameters.
 Also handles EMA smoothing for temporal updates.

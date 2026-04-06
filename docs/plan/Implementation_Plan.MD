@@ -1,8 +1,8 @@
-# **Plan: Emotion MATRIX - Personalized English Conversation Service**
+# **Plan: CHARACTER MATRIX - Personalized English Conversation Service**
 
 ## **Context**
 
-졸업 프로젝트로 감정 MATRIX 기반 개인화 영어 회화 학습 서비스를 구축한다. 기존 영어 회화 앱의 뻣뻣하고 반복적인 대화를 해결하기 위해, 사용자 발화를 5축으로 분석하고 AI 캐릭터 성격을 동적으로 조절하는 시스템이다.
+졸업 프로젝트로 CHARACTER MATRIX 기반 개인화 영어 회화 학습 서비스를 구축한다. 기존 영어 회화 앱의 뻣뻣하고 반복적인 대화를 해결하기 위해, 사용자 발화를 5축으로 분석하고 AI 캐릭터 성격을 동적으로 조절하는 시스템이다.
 
 디자인 문서(**`/.context/plans/design-emotion-matrix-personalized-english-convers.md`**)에서 엔지니어링 리뷰를 거쳐 다음 결정이 확정되었다:
 

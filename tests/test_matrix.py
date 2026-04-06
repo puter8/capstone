@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-감정 MATRIX 핵심 기술 테스트
+CHARACTER MATRIX 핵심 기술 테스트
 ==============================
 발화 -> 5축 분석 -> 가중합 행렬 연산 -> AI 캐릭터 성격 변화 시연
 
@@ -75,7 +75,7 @@ DEMO_STYLES = ["casual", "formal", "humor", "curious"]
 
 def run_demo():
     print("=" * 62)
-    print("   감정 MATRIX 핵심 기술 데모")
+    print("   CHARACTER MATRIX 핵심 기술 데모")
     print("   [5축 분석: 규칙 기반 분류기 -> 추후 LLM으로 교체 예정]")
     print(f"   [학습 데이터셋: {len(DATASET)}개 라벨 데이터 준비됨]")
     print("=" * 62)

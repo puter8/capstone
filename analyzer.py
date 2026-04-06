@@ -3,7 +3,7 @@
 Rule-Based Utterance Analyzer
 ==============================
 Analyzes English utterances and extracts 5-axis personality scores.
-This is the core self-developed model of the Emotion MATRIX system.
+This is the core self-developed model of the CHARACTER MATRIX system.
 
 Axes:
   Formality  (0=slang/casual, 100=highly formal)

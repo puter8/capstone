@@ -14,7 +14,7 @@
 
 > "내가 대화할수록, AI가 나를 닮아간다"
 
-### 1. 감정 MATRIX 시스템
+### 1. CHARACTER MATRIX 시스템
 
 사용자 발화를 5가지 성격 축(Formality, Energy, Intimacy, Humor Style, Curiosity)으로 수치화하고 LLM 시스템 프롬프트에 실시간 반영하여
 AI의 말투·슬랭 빈도·리액션 강도를 동적으로 조절한다.
