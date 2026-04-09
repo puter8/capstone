@@ -15,17 +15,17 @@
 │  + Canvas2D  │      └─────────────┘
 │  + Zustand   │
 └──────┬───────┘      ┌─────────────────────────────────────┐
-       └─────────────→│  FastAPI (Railway)                   │
-        (AI 요청만)    │                                     │
+       └─────────────→│  FastAPI (Railway)                  │
+        (AI 요청만)    │                                      │
                       │  ┌───────────────────┐              │
-                      │  │ 발화 분석기        │              │
-                      │  │ (자체 개발)        │              │
-                      │  │ Rule-Based → ML   │              │
+                      │  │ 발화 분석기          │              │
+                      │  │ (자체 개발)         │              │
+                      │  │              ML   │              │
                       │  └────────┬──────────┘              │
                       │           ▼                         │
                       │  ┌───────────────────┐  ┌────────┐ │
-                      │  │ MATRIX 엔진       │→│ GPT-4o │ │
-                      │  │ (EMA + 가중합)    │  └────────┘ │
+                      │  │ MATRIX 엔진         │→  │ GPT-4o │ │
+                      │  │ (EMA + 가중합)      │   └────────┘ │
                       │  └───────────────────┘  답변 생성만  │
                       │  + PRAW                             │
                       └──────────────┬──────────────────────┘
@@ -60,29 +60,30 @@ Next.js ──POST──→ FastAPI /api/chat
                       ├─ 1. 사용자 축 점수 이력 조회 (Supabase)
                       │
                       ├─ 2. 자체 발화 분석기로 5축 raw 점수 추출
-                      │     ├─ [Rule-Based] 키워드 사전 + 패턴 매칭 + 가중치
-                      │     │   "what up" → Formality↓, "mate/yo" → Intimacy↑
+                      │     │   
                       │     └─ [ML] (Phase 4+) sentence-transformers → regression
+                      │              "what up" → Formality↓, "mate/yo" → Intimacy↑
                       │     → raw_scores: {F:10, E:75, I:70, H:65, C:20}
                       │
                       ├─ 3. EMA로 축 점수 업데이트
                       │     └─ new_score = alpha * raw + (1 - alpha) * prev
                       │
-                      ├─ 4. 행렬 연산 W × [F,E,I,H,C]ᵀ + bias
-                      │     → 캐릭터 파라미터: {tone_casual, energy_level, humor_level, ...}
-                      │
-                      ├─ 5. system prompt 구성 (캐릭터 파라미터 수치 주입)
+                      ├─ 4. system prompt 구성 (캐릭터 파라미터 수치 주입)
                       │     → GPT-4o 호출 (streaming) — 답변 생성만 담당
                       │
-                      ├─ 6. Supabase에 저장 (대화 + raw/ema 점수)
+                      ├─ 5. Supabase에 저장 (대화 + raw/ema 점수)
                       │
-                      └─ 7. 스트리밍 응답 + 축 점수 반환
+                      └─ 6. 스트리밍 응답 + 축 점수 반환 
+                      │
+                      └─ 7. 세션 종료 후 비주얼 업데이트를 위해 행렬 연산 W × [F,E,I,H,C]ᵀ + bias
+                           → 캐릭터 파라미터: {tone_casual, energy_level, humor_level, ...}
+       
                               │
                               ▼
                          Next.js
                       ├─ 텍스트: 실시간 렌더링
                       ├─ 축 점수: Zustand 상태 업데이트
-                      └─ Canvas2D: Superformula 캐릭터 반영 (형태, 각도, 눈, 색조, 호흡)
+                      └─ Canvas2D: 세션 종료 후 Superformula 캐릭터 반영 (형태, 각도, 눈, 색조, 호흡)
 ```
 
 ## **5-Axis → Character Visual Mapping (Superformula + Canvas2D)**
@@ -181,11 +182,21 @@ Curiosity   → Scale Pulse (호흡)        → 0:정적 ~ 100:호흡 효과    
 2. **System prompt builder** — 캐릭터 파라미터 수치를 GPT-4o 성격 지시문으로 변환
 3. **에러 핸들링**: 7개 케이스 전부 (발화 분석 실패, GPT 실패, 파싱 실패, 범위 초과, DB 실패, Reddit rate limit, Canvas NaN/undefined → 기본값 50)
 
-### **Phase 3: Next.js Frontend** — depends on: Phase 0
+
+### **Phase 3: Slang Pipeline (Supabase pgvector)** — depends on: Phase 0
+
+1. **PRAW Reddit 수집 스크립트** — GitHub Actions cron
+2. **임베딩 생성** — text-embedding-3-small로 슬랭 벡터화
+3. **DB 저장** — slang_entries 테이블 (embedding 컬럼, pgvector)
+4. **벡터 검색** — 대화 맥락 기반 유사 슬랭 검색 (cosine similarity)
+5. **System prompt 주입** — Humor Style 축 점수에 따라 슬랭 빈도 조절
+
+
+### **Phase 4: Next.js Frontend** — depends on: Phase 0
 
 1. **Auth 페이지** — Supabase Auth UI
 2. **채팅 페이지** — SSE 스트리밍 수신, 메시지 렌더링
-3. **Superformula 캐릭터 컴포넌트 (Canvas2D)** — 5축 파라미터 실시간 반영
+3. **Superformula 캐릭터 컴포넌트 (Canvas2D)** — 5축 파라미터 세션 종료 후 반영
     - Superformula로 body shape 절차적 생성 (Humor→m, Formality→n1)
     - Eye renderer: Energy→눈 형태+크기 (점 눈↔별 눈)
     - HSL color: Intimacy→hue (파랑↔핑크)
@@ -194,20 +205,7 @@ Curiosity   → Scale Pulse (호흡)        → 0:정적 ~ 100:호흡 효과    
     - React useRef + requestAnimationFrame (60fps)
 4. **Zustand 스토어** — 축 점수 상태, 대화 이력
 
-### **Phase 4: ML 모델 전환** — depends on: Phase 2, Phase 3 (앱 사용 데이터 축적 후)
 
-1. **데이터 수집 파이프라인** — 앱 사용 로그에서 (발화, Rule-Based 점수) 쌍 자동 축적
-2. **ML 모델 학습** — sentence-transformers 임베딩 + regression head
-3. **A/B 비교 실험** — Rule-Based vs ML 정확도 정량 비교
-4. **ML 모델 교체** — ML 우선, Rule-Based는 fallback으로 유지
-
-### **Phase 5: Slang Pipeline (Supabase pgvector)** — depends on: Phase 0
-
-1. **PRAW Reddit 수집 스크립트** — GitHub Actions cron
-2. **임베딩 생성** — text-embedding-3-small로 슬랭 벡터화
-3. **DB 저장** — slang_entries 테이블 (embedding 컬럼, pgvector)
-4. **벡터 검색** — 대화 맥락 기반 유사 슬랭 검색 (cosine similarity)
-5. **System prompt 주입** — Humor Style 축 점수에 따라 슬랭 빈도 조절
 
 ## **Error Handling Matrix**
 
