@@ -5,9 +5,9 @@ CHARACTER MATRIX 핵심 기술 테스트
 발화 -> 5축 분석 -> 가중합 행렬 연산 -> AI 캐릭터 성격 변화 시연
 
 모듈 구성:
-  analyzer.py      - 규칙 기반 5축 분석기 (추후 LLM으로 교체)
-  matrix_engine.py - 가중합 행렬 연산
-  dataset.py       - ground truth 학습 데이터셋
+  ai/analyzer.py      - 규칙 기반 5축 분석기 (추후 LLM으로 교체)
+  ai/matrix_engine.py - 가중합 행렬 연산
+  data/dataset.py     - ground truth 학습 데이터셋
 
 실행:
   python tests/test_matrix.py   # 데모 출력 + 캐릭터 시각화
@@ -17,8 +17,10 @@ import sys
 import os
 import webbrowser
 
-# 루트 경로 추가 (analyzer, matrix_engine, dataset import용)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# ai/, data/ 경로 추가
+ROOT = os.path.join(os.path.dirname(__file__), "..")
+sys.path.insert(0, os.path.join(ROOT, "ai"))
+sys.path.insert(0, os.path.join(ROOT, "data"))
 sys.stdout.reconfigure(encoding='utf-8')
 
 from analyzer import analyze_utterance
@@ -93,7 +95,7 @@ def run_demo():
     print(f"{'='*62}")
 
     viz_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "visualizer.html")
+        os.path.join(os.path.dirname(__file__), "..", "assets", "visualizer.html")
     )
     if os.path.exists(viz_path):
         print(f"\n 캐릭터 시각화 열기: {viz_path}")
