@@ -468,22 +468,25 @@ For the planner to embed as acceptance criteria on individual tasks. All assume 
 | Health endpoint information disclosure | Information Disclosure | `{ ok: true }` only — no version string, no env data. D-09 enforces. |
 | Supabase anon key in client bundle | (None — by design) | `NEXT_PUBLIC_*` is the canonical Supabase pattern; protection lives in RLS policies (Phase 1C). |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Are the 6 non-Supabase, non-OpenAI keys in root `.env.local` safe to delete?**
    - What we know: `OPENAI_API_KEY` (delete), `SUPABASE_SERVICE_ROLE_KEY` (move to Phase 1C `backend/.env` Notion stash), `REDDIT_*` (3 keys — likely from `ENGINE-03` v2 work, not MVP), `DATABASE_URL` (likely Supabase direct Postgres).
    - What's unclear: whether `DATABASE_URL` or `REDDIT_*` are actively referenced by any local script not in scope here.
    - Recommendation: Plan inserts a single human-loop checkpoint where 이찬희 confirms with PM whether to (a) discard all 4 unknowns, (b) stash them in Notion under "deferred MVP credentials", or (c) some per-key mix. Default to (b) — safer.
+   - **RESOLVED (D-14):** Per-key `env_routing_table` — `SUPABASE_SERVICE_ROLE_KEY` + `DATABASE_URL` + `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` + `REDDIT_USER_AGENT` → `backend/.env.local`; `OPENAI_API_KEY` → delete + PM (최윤서) revoke at platform.openai.com; `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` → `frontend/.env.local`. Root `.env.local` deleted after all 8 keys placed.
 
 2. **`tsx` vs `node --experimental-strip-types` for `check-supabase.ts`?**
    - What we know: Node 24.14 supports `--experimental-strip-types`; `tsx@^4` is mainstream.
    - What's unclear: team preference; PM may want minimal devDeps.
    - Recommendation: Add `tsx` as devDep + a `package.json` script `"check:supabase": "tsx scripts/check-supabase.ts"`. Cleaner and reproducible.
+   - **RESOLVED (D-15):** `tsx@^4` as devDependency + `"check:supabase": "tsx scripts/check-supabase.ts"` script in `frontend/package.json`.
 
 3. **Should `frontend/app/page.tsx` placeholder use the Tailwind `cn()` import at all?**
    - What we know: Doing so proves the whole chain compiles (Tailwind directive in `globals.css` + `cn()` from `lib/utils` + alias `@/lib/utils`).
    - What's unclear: 1A will rewrite this file immediately.
    - Recommendation: Yes — render `<main className={cn('p-4 text-sm')}>Pally</main>`. Proves end-to-end wiring in <60s for free. Even if 1A overwrites, the throw-away test confirmed Phase 0 SC#5.
+   - **RESOLVED (D-16):** `frontend/app/page.tsx` renders `<main className={cn('p-4 text-sm')}>Pally</main>` — exercises the full Tailwind + `cn()` chain at scaffold time. Phase 1A overwrites Day 1.
 
 ## Sources
 
