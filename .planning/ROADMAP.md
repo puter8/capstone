@@ -46,11 +46,12 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 **Owner**: 이찬희 (FE · 디자인)
 **Requirements**: MAIN-01, CHAT-01
 **Success Criteria** (what must be TRUE):
-  1. 모바일 폭(~360px)에서 랜딩 화면에 Pally 영역(placeholder OK) + rec 버튼이 보이고, rec 버튼을 누르면 대화 화면으로 전환된다
-  2. 대화 화면에서 직전 발화/응답이 말풍선으로 표시되고, 토글로 SMS 스타일 전체 스크립트(사용자=노란색, Pally=흰색)를 열고 닫을 수 있다
-  3. `/feedback` 페이지가 세션 ID 기반으로 진입 가능하고, 빈 상태/로딩/결과 3가지 상태가 렌더링된다
-  4. 모든 화면이 Phase 0에서 정의한 API 응답 타입을 import해서 사용하고, mock 데이터로 화면 동작이 검증된다
-  5. "AI 캐릭터와 대화 중" 라벨이 대화 화면에 상시 노출된다 (과몰입 방지)
+  1. 모바일 폭(~360px)에서 랜딩 화면에 Pally 영역(placeholder OK) + rec 버튼이 보이고, rec 버튼을 누르면 온보딩 화면으로 진입한다
+  2. 온보딩 화면에서 사용자가 (a) Pally 이름(`character_name`)을 입력하고 (b) 영어 레벨(A2 / B1 / B2 / C1)을 선택할 수 있고, 두 값이 채워져야만 다음 단계로 진행 가능하다. 선택값은 `/api/session/start` 호출로 `sessions` row 생성과 함께 서버에 전송된다
+  3. 대화 화면에서 직전 발화/응답이 말풍선으로 표시되고, 토글로 SMS 스타일 전체 스크립트(사용자=노란색, Pally=흰색)를 열고 닫을 수 있다
+  4. `/feedback` 페이지가 세션 ID 기반으로 진입 가능하고, 빈 상태/로딩/결과 3가지 상태가 렌더링된다
+  5. 모든 화면이 Phase 0에서 정의한 API 응답 타입을 import해서 사용하고, mock 데이터로 화면 동작이 검증된다
+  6. "AI 캐릭터와 대화 중" 라벨이 대화 화면에 상시 노출된다 (과몰입 방지)
 **Plans**: TBD
 **Estimated effort**: 5 days (parallel with 1B/1C)
 **UI hint**: yes
@@ -82,17 +83,20 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 **Depends on**: Phase 0 (scaffold + types + Supabase client), Phase 1B (Python 엔진 통합 ADR)
 **Owner**: 김민주 (BE · Supabase)
 **Requirements**: VOICE-01, VOICE-02, ENGINE-01, FB-01, FB-02, SESSION-01 (schema portion)
-**LLM 벤더**: GCP Vertex AI 단일. SDK = `@google-cloud/vertexai`. STT = Gemini 2.5 native audio input, 응답 생성 = Gemini 2.5, TTS = Vertex Text-to-Speech, 인라인 한국어 힌트 = Gemini 2.5 structured output.
+**LLM / 음성 벤더**: GCP 단일. STT = **Google Cloud Speech-to-Text** (`@google-cloud/speech`), 응답 생성 = **Gemini 2.5 Flash** via Vertex AI (`@google-cloud/vertexai`), TTS = **Google Cloud Text-to-Speech** (`@google-cloud/text-to-speech`), 인라인 한국어 힌트 = Gemini 2.5 Flash structured output.
 **Success Criteria** (what must be TRUE):
-  1. Supabase에 `sessions` / `messages` 테이블이 `session_id` 기반 RLS와 함께 마이그레이션으로 생성되어 있고, 익명 세션 ID(클라이언트 UUID)로 insert/select가 정책 검사를 통과한다. `messages` 테이블은 `axes`(jsonb), `character`(jsonb), `transcript`(text), `role` 컬럼을 포함한다. `lib/supabase/server.ts`(service role, `'server-only'` import)도 본 phase에서 추가
-  2. 사용자가 마이크로 영어 한 문장을 말하면 Gemini가 오디오를 직접 받아 텍스트화(STT)하고, 그 텍스트가 5축 분석 + CHARACTER MATRIX + EMA 보정을 거친 캐릭터 파라미터로 변환되어 응답 페이로드에 포함된다
-  3. 같은 호출 흐름에서 Gemini가 영어 응답 텍스트를 생성하고, Vertex TTS가 그 텍스트를 음성으로 변환해 (스트리밍 또는 청크 단위로) 클라이언트에 도착한다
-  4. 대화 중 Gemini가 어색한 영어 발화를 감지하면 한국어 힌트가 응답에 포함되고, 클라이언트는 이를 작은 UI 요소로 표시할 수 있는 형태(텍스트 + 위치)로 받는다
-  5. 세션 종료 후 `/api/feedback` 호출 시 Gemini가 세션 전체 메시지를 일괄 분석해 표현 교정·한국어 설명·자연스러운 대안을 JSON으로 반환한다
-  6. 모든 외부 API 호출은 서버 측에서만 이루어지며 (`service_role` / GCP 서비스 어카운트 JSON이 클라이언트 번들에 포함되지 않음), 호출 결과는 `messages` 테이블에 `axes`/`character` JSONB와 함께 저장된다
+  1. Supabase에 `sessions` / `messages` 테이블이 `session_id` 기반 RLS와 함께 마이그레이션으로 생성되어 있고, 익명 세션 ID(클라이언트 UUID)로 insert/select가 정책 검사를 통과한다. `sessions` 테이블은 `character_name`(text), `level`(text: A2 / B1 / B2 / C1), `created_at`, `ended_at?` 컬럼을 포함한다. `messages` 테이블은 `session_id`, `role`, `transcript`(text), `axes`(jsonb), `character`(jsonb), `created_at` 컬럼을 포함한다. `lib/supabase/server.ts`(service role, `'server-only'` import)도 본 phase에서 추가
+  2. 사용자가 마이크로 영어 한 문장을 말하면 Google Cloud STT가 오디오를 텍스트화하고, 그 텍스트가 5축 분석 + CHARACTER MATRIX + EMA 보정을 거친 캐릭터 파라미터로 변환되어 응답 페이로드에 포함된다
+  3. 같은 호출 흐름에서 Gemini 2.5 Flash가 영어 응답 텍스트를 생성하고, Google Cloud TTS가 그 텍스트를 음성으로 변환해 (스트리밍 또는 청크 단위로) 클라이언트에 도착한다
+  4. `/api/chat` 호출 시 Gemini 프롬프트에 `character_name`(온보딩에서 사용자가 지어준 Pally 이름), `level`(A2 / B1 / B2 / C1 — 응답 난이도/어휘 조절용), `conversation_history`(같은 `session_id`의 이전 messages를 chronological order로) 가 전부 주입되어 응답이 (a) 그 이름으로 자신을 지칭하고 (b) 해당 레벨에 맞는 어휘/문장 길이로 나오고 (c) 직전 대화 맥락을 잇는 것이 출력으로 확인된다
+  5. 대화 중 Gemini가 어색한 영어 발화를 감지하면 한국어 힌트가 응답에 포함되고, 클라이언트는 이를 작은 UI 요소로 표시할 수 있는 형태(텍스트 + 위치)로 받는다
+  6. 세션 종료 후 `/api/feedback` 호출 시 Gemini가 세션 전체 메시지를 일괄 분석해 표현 교정·한국어 설명·자연스러운 대안을 JSON으로 반환한다
+  7. 모든 외부 API 호출은 서버 측에서만 이루어지며 (`service_role` / GCP 서비스 어카운트 JSON이 클라이언트 번들에 포함되지 않음), 호출 결과는 `messages` 테이블에 `axes`/`character` JSONB와 함께 저장된다
 **Plans**: TBD
 **Estimated effort**: 6 days (parallel with 1A/1B)
-**Task order**: Supabase 마이그레이션 → Gemini STT(오디오 입력) → 1B ADR 도착 후 엔진 호출 → 응답 생성/TTS → `/api/feedback`.
+**Task order**: Supabase 마이그레이션(sessions/messages + character_name·level 컬럼) → Google Cloud STT 연동 → 1B ADR 도착 후 엔진 호출 → Gemini 2.5 Flash 응답 + Google Cloud TTS → `/api/feedback`.
+
+> **온보딩 입력 출처**: `character_name`과 `level`은 Phase 1A 온보딩 화면에서 입력받아 클라이언트가 `/api/session/start` (또는 동등) 호출로 `sessions` row를 생성할 때 같이 보낸다. Phase 1A에 온보딩 UI 요구사항 추가 필요.
 
 ---
 
