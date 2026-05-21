@@ -3,10 +3,21 @@ __pycache__/
 *.pyc
 *.pyo
 
-# 환경변수 (API 키 포함 — 절대 커밋하지 말 것)
+# macOS metadata
+.DS_Store
+**/.DS_Store
+
+# Local env
 .env
 .env.local
 .env.*.local
+
+# Next.js
+.next/
+out/
+
+# Vercel
+.vercel
 
 # Claude Code 내부 파일
 .claude/

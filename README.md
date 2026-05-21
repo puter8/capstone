@@ -255,20 +255,23 @@ capstone/
 │  └─ test_matrix.py           ← 전체 파이프라인 데모 실행
 ├─ assets/                     ← 시각화 및 정적 자산
 │  └─ visualizer.html          ← CHARACTER MATRIX 시각화 프로토타입
-├─ frontend/                   ← Next.js 14 프론트엔드 (개발 예정)
-├─ backend/                    ← FastAPI 백엔드 (개발 예정)
+├─ (app/, components/, lib/, public/, package.json 등)
+│                              ← Next.js 14 앱 (Phase 0에서 셋업, 루트에 위치)
 ├─ docs/
-│  ├─ PMF/
-│  │  ├─ AI transparency report.md
-│  │  └─ COMPETITIVE_ANALYSIS.md
-│  ├─ design/
-│  │  └─ Design_Document.MD
-│  ├─ plan/
+│  ├─ mvp/                               ← MVP 제품 스펙 (현재 작업 범위)
+│  │  ├─ PRD.md                          ← June 7 데모 기능 명세
+│  │  └─ 2026-05-midterm-qa.md           ← 중간발표 Q&A 및 설계 결정
+│  ├─ final/                             ← 전체 제품/Post-MVP 스펙 (참조)
 │  │  ├─ 2026-05-development-plan.md
+│  │  ├─ Design_Document.MD
 │  │  ├─ Ideation.MD
 │  │  ├─ Implementation_Plan.MD
 │  │  └─ Project Briefs.MD
-│  └─ Team_Ground_Rule.md
+│  └─ shared/                            ← 양쪽 다 해당 (PMF, 팀 룰 등)
+│     ├─ AI transparency report.md
+│     ├─ COMPETITIVE_ANALYSIS.md
+│     ├─ Team_Ground_Rule.md
+│     └─ elevator_speech.md
 ├─ .env.example
 ├─ CLAUDE.md
 └─ .gitignore
@@ -299,26 +302,26 @@ capstone/
 
 ### 문서
 
-- `docs/plan/Project Briefs.MD`
-  프로젝트 개요, 팀 구성, 사용 기술 요약본입니다.
+- `docs/mvp/PRD.md`
+  June 7 데모 기준 MVP 기능 명세서입니다.
 
-- `docs/plan/2026-05-development-plan.md`
-  2026년 5월~10월 전체 개발 로드맵과 Phase별 세부 계획입니다.
+- `docs/mvp/2026-05-midterm-qa.md`
+  중간발표 Q&A와 설계 결정(콜드 스타트, 페르소나 제어, 비용 구조 등)을 정리한 문서입니다.
 
-- `docs/design/Design_Document.MD`
-  프로젝트 설계 배경과 전체 방향을 정리한 문서입니다.
+- `docs/final/`
+  전체 제품 비전·풀스코프 기획 문서(Ideation, Implementation_Plan, Project Briefs, 2026-05-development-plan, Design_Document)를 보관한 디렉토리입니다. MVP 이후 단계에서 참조합니다.
 
-- `docs/plan/Implementation_Plan.MD`
-  구현 계획과 확장 방향을 정리한 문서입니다.
-
-- `docs/PMF/COMPETITIVE_ANALYSIS.md`
+- `docs/shared/COMPETITIVE_ANALYSIS.md`
   경쟁 서비스 분석 및 차별화 전략 문서입니다.
 
-- `docs/PMF/AI transparency report.md`
+- `docs/shared/AI transparency report.md`
   AI 투명성 보고서입니다.
 
-- `docs/Team_Ground_Rule.md`
+- `docs/shared/Team_Ground_Rule.md`
   팀 그라운드 룰 문서입니다.
+
+- `docs/shared/elevator_speech.md`
+  Pally 제품 한 줄 소개 및 짧은 피치 문서입니다.
 
 ## 사용 기술
 
