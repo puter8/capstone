@@ -71,9 +71,8 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
   1. Python 엔진(`ai/analyzer.py` + `matrix_engine.py`) 통합 방식이 `docs/adr/0001-python-engine-integration.md`로 확정되어 있고 (TS 포팅 / Vercel Python serverless / subprocess / 외부 Python 서비스 중 1개), 결정된 방식으로 Next.js API route에서 샘플 문장을 입력하면 5축 점수 + CHARACTER MATRIX가 JSON으로 반환된다
   2. Canvas2D 컴포넌트가 Pally를 Superformula 도형으로 렌더링하고, 60fps에 근접하게 동작한다 (모바일 브라우저 기준)
   3. `Formality` / `Energy` / `Intimacy` / `Humor` / `Curiosity` 값을 외부에서 주입하면 Pally의 형태·색·표정이 ~300ms 안에 부드럽게 트랜지션된다 (튐 없음)
-  4. "thinking" 상태가 true가 되면 Pally가 식별 가능한 로딩/생각 애니메이션을 보여주고, false가 되면 idle로 복귀한다
-  5. 데모용 컨트롤 페이지에서 슬라이더로 각 축을 움직여 시각 변화를 즉시 확인할 수 있다
-  6. Phase 0에서 정의한 `CharacterParams` 타입을 그대로 받아 렌더링한다 (별도 변환 레이어 없음)
+  4. 데모용 컨트롤 페이지에서 슬라이더로 각 축을 움직여 시각 변화를 즉시 확인할 수 있다
+  5. Phase 0에서 정의한 `CharacterParams` 타입을 그대로 받아 렌더링한다 (별도 변환 레이어 없음)
 
 **Plans**: TBD
 **Estimated effort**: 5 days (parallel with 1A/1C)
