@@ -90,8 +90,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
   2. 사용자가 마이크로 영어 한 문장을 말하면 Google Cloud STT가 오디오를 텍스트화하고, 그 텍스트가 5축 분석 + CHARACTER MATRIX + EMA 보정(alpha=0.7 — 데모에서 캐릭터 변화를 빠르게 보이기 위해 기본값 0.3 대신 사용)을 거친 캐릭터 파라미터로 변환되어 응답 페이로드에 포함된다
   3. 같은 호출 흐름에서 Gemini 2.5 Flash가 영어 응답 텍스트를 생성하고, Google Cloud TTS가 그 텍스트를 음성으로 변환해 (스트리밍 또는 청크 단위로) 클라이언트에 도착한다
   4. `/api/chat` 호출 시 Gemini 프롬프트에 `character_name`(MVP 기본값 `'Pally'`, sessions row에서 조회), `level`(MVP 기본값 `'B1'` — 응답 난이도/어휘 조절용, sessions row에서 조회), `conversation_history`(같은 `session_id`의 이전 messages를 chronological order로) 가 전부 주입되어 응답이 (a) 그 이름으로 자신을 지칭하고 (b) 해당 레벨에 맞는 어휘/문장 길이로 나오고 (c) 직전 대화 맥락을 잇는 것이 출력으로 확인된다
-  5. 대화 중 Gemini가 어색한 영어 발화를 감지하면 한국어 힌트가 응답에 포함되고, 클라이언트는 이를 작은 UI 요소로 표시할 수 있는 형태(텍스트 + 위치)로 받는다
-  6. 모든 외부 API 호출은 서버 측에서만 이루어지며 (`service_role` / GCP 서비스 어카운트 JSON이 클라이언트 번들에 포함되지 않음), 호출 결과는 `messages` 테이블에 `axes`/`character` JSONB와 함께 저장된다
+  5. 모든 외부 API 호출은 서버 측에서만 이루어지며 (`service_role` / GCP 서비스 어카운트 JSON이 클라이언트 번들에 포함되지 않음), 호출 결과는 `messages` 테이블에 `axes`/`character` JSONB와 함께 저장된다
 **Plans**: TBD
 **Estimated effort**: 6 days (parallel with 1A/1B)
 **Task order**: Supabase 마이그레이션(sessions/messages + character_name·level 컬럼, 기본값 포함) → Google Cloud STT 연동 → 1B ADR 도착 후 엔진 호출 → Gemini 2.5 Flash 응답 + Google Cloud TTS → Railway 배포.
