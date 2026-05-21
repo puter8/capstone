@@ -1,0 +1,16 @@
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+
+# 환경변수 (API 키 포함 — 절대 커밋하지 말 것)
+.env
+.env.local
+.env.*.local
+
+# Claude Code 내부 파일
+.claude/
+
+# 테스트 출력 파일
+*.mp3
+*.wav
