@@ -40,20 +40,18 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 
 ---
 
-### Phase 1A: FE Screens & Feedback UI
-**Goal**: 사용자가 모바일 브라우저에서 보게 될 두 화면(메인 대화·피드백)이 시각적으로 완성되고, Phase 0에서 정의한 API 계약에 맞춰 호출 준비가 되어 있다.
+### Phase 1A: FE Screens
+**Goal**: 사용자가 모바일 브라우저에서 보게 될 메인 대화 화면이 시각적으로 완성되고, Phase 0에서 정의한 API 계약에 맞춰 호출 준비가 되어 있다.
 **Depends on**: Phase 0
 **Owner**: 이찬희 (FE · 디자인)
 **Requirements**: MAIN-01, CHAT-01
-**화면 구성** (총 2 화면):
+**화면 구성** (총 1 화면):
   - **메인 대화 화면**: 중앙에 Pally + 하단에 rec 버튼 + 최하단 네비게이션 (4 아이콘). 상단에는 토글로 펼쳤다/접었다 할 수 있는 대화 로그 영역 (직전 발화/응답 말풍선, SMS 스타일).
-  - **피드백 화면**: 세션 종료 후 진입. 각 발화별로 카드가 쌓여 영어 원문 + 한국어 교정/설명을 보여줌. 상단에 back 화살표 + "Feedback" 타이틀, 하단 네비게이션 공유.
 **Success Criteria** (what must be TRUE):
   1. 모바일 폭(~360px)에서 메인 대화 화면이 보인다: Pally 영역(placeholder OK) + rec 버튼 + 하단 네비게이션 (4 아이콘)
   2. 메인 대화 화면 상단 영역이 토글(▲/▼) 가능하며, 펼치면 직전 발화/응답이 말풍선으로 표시된다 (사용자=노란색 라벨, Pally=흰색 카드 / SMS 스타일)
-  3. `/feedback` 페이지가 세션 ID 기반으로 진입 가능하고, 각 발화에 대한 영어 원문 + 한국어 교정 설명이 카드 형태로 표시된다. 빈 상태 / 로딩 / 결과 3가지 상태가 렌더링된다
-  4. 두 화면 모두 Phase 0에서 정의한 API 응답 타입을 import해서 사용하고, mock 데이터로 화면 동작이 검증된다
-  5. "AI 캐릭터와 대화 중" 라벨이 메인 대화 화면에 상시 노출된다 (과몰입 방지)
+  3. Phase 0에서 정의한 API 응답 타입을 import해서 사용하고, mock 데이터로 화면 동작이 검증된다
+  4. "AI 캐릭터와 대화 중" 라벨이 메인 대화 화면에 상시 노출된다 (과몰입 방지)
 
 > **Note — 온보딩 없음 (MVP)**: 별도 온보딩/랜딩 화면을 두지 않는다. Pally 이름과 영어 레벨은 v2에서 받기로 하고, MVP에서는 Phase 1C가 sessions row를 생성할 때 데모 기본값(`character_name = 'Pally'`, `level = 'B1'`)으로 채운다.
 **Plans**: TBD
@@ -89,29 +87,29 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 **LLM / 음성 벤더**: GCP 단일. STT = **Google Cloud Speech-to-Text** (`@google-cloud/speech`), 응답 생성 = **Gemini 2.5 Flash** via Vertex AI (`@google-cloud/vertexai`), TTS = **Google Cloud Text-to-Speech** (`@google-cloud/text-to-speech`), 인라인 한국어 힌트 = Gemini 2.5 Flash structured output.
 **Success Criteria** (what must be TRUE):
   1. Supabase에 `sessions` / `messages` 테이블이 `session_id` 기반 RLS와 함께 마이그레이션으로 생성되어 있고, 익명 세션 ID(클라이언트 UUID)로 insert/select가 정책 검사를 통과한다. `sessions` 테이블은 `character_name`(text, default `'Pally'`), `level`(text: A2 / B1 / B2 / C1, default `'B1'`), `created_at`, `ended_at?` 컬럼을 포함한다 (MVP에는 입력 UI가 없어서 기본값으로 채워지고, v2에서 사용자 입력으로 대체). `messages` 테이블은 `session_id`, `role`, `transcript`(text), `axes`(jsonb), `character`(jsonb), `created_at` 컬럼을 포함한다. `lib/supabase/server.ts`(service role, `'server-only'` import)도 본 phase에서 추가
-  2. 사용자가 마이크로 영어 한 문장을 말하면 Google Cloud STT가 오디오를 텍스트화하고, 그 텍스트가 5축 분석 + CHARACTER MATRIX + EMA 보정을 거친 캐릭터 파라미터로 변환되어 응답 페이로드에 포함된다
+  2. 사용자가 마이크로 영어 한 문장을 말하면 Google Cloud STT가 오디오를 텍스트화하고, 그 텍스트가 5축 분석 + CHARACTER MATRIX + EMA 보정(alpha=0.7 — 데모에서 캐릭터 변화를 빠르게 보이기 위해 기본값 0.3 대신 사용)을 거친 캐릭터 파라미터로 변환되어 응답 페이로드에 포함된다
   3. 같은 호출 흐름에서 Gemini 2.5 Flash가 영어 응답 텍스트를 생성하고, Google Cloud TTS가 그 텍스트를 음성으로 변환해 (스트리밍 또는 청크 단위로) 클라이언트에 도착한다
   4. `/api/chat` 호출 시 Gemini 프롬프트에 `character_name`(MVP 기본값 `'Pally'`, sessions row에서 조회), `level`(MVP 기본값 `'B1'` — 응답 난이도/어휘 조절용, sessions row에서 조회), `conversation_history`(같은 `session_id`의 이전 messages를 chronological order로) 가 전부 주입되어 응답이 (a) 그 이름으로 자신을 지칭하고 (b) 해당 레벨에 맞는 어휘/문장 길이로 나오고 (c) 직전 대화 맥락을 잇는 것이 출력으로 확인된다
   5. 대화 중 Gemini가 어색한 영어 발화를 감지하면 한국어 힌트가 응답에 포함되고, 클라이언트는 이를 작은 UI 요소로 표시할 수 있는 형태(텍스트 + 위치)로 받는다
-  6. 세션 종료 후 `/api/feedback` 호출 시 Gemini가 세션 전체 메시지를 일괄 분석해 표현 교정·한국어 설명·자연스러운 대안을 JSON으로 반환한다
-  7. 모든 외부 API 호출은 서버 측에서만 이루어지며 (`service_role` / GCP 서비스 어카운트 JSON이 클라이언트 번들에 포함되지 않음), 호출 결과는 `messages` 테이블에 `axes`/`character` JSONB와 함께 저장된다
+  6. 모든 외부 API 호출은 서버 측에서만 이루어지며 (`service_role` / GCP 서비스 어카운트 JSON이 클라이언트 번들에 포함되지 않음), 호출 결과는 `messages` 테이블에 `axes`/`character` JSONB와 함께 저장된다
 **Plans**: TBD
 **Estimated effort**: 6 days (parallel with 1A/1B)
-**Task order**: Supabase 마이그레이션(sessions/messages + character_name·level 컬럼, 기본값 포함) → Google Cloud STT 연동 → 1B ADR 도착 후 엔진 호출 → Gemini 2.5 Flash 응답 + Google Cloud TTS → `/api/feedback`.
+**Task order**: Supabase 마이그레이션(sessions/messages + character_name·level 컬럼, 기본값 포함) → Google Cloud STT 연동 → 1B ADR 도착 후 엔진 호출 → Gemini 2.5 Flash 응답 + Google Cloud TTS → Railway 배포.
+**배포 (백엔드 — 백은혜)**: FastAPI 백엔드는 **Railway**에 배포. 필요 파일: `Procfile` (`web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT`), `runtime.txt` (`python-3.11.0`). Railway 환경변수: `GOOGLE_AI_API_KEY`, `GOOGLE_CLOUD_API_KEY`. 배포 완료 후 Railway URL을 파트 A(이찬희)에 공유해 프론트에서 API 호출 주소로 사용.
 
 ---
 
 ### Phase 2: Integration & Demo Polish
-**Goal**: 세 슬라이스가 하나의 흐름으로 합쳐져 Vercel 배포 URL에서 모바일로 데모 가능한 상태가 된다.
+**Goal**: 세 슬라이스가 하나의 흐름으로 합쳐져 Vercel(프론트) + Railway(백엔드) 배포 URL에서 모바일로 데모 가능한 상태가 된다.
+**배포 구조**: 프론트엔드(Next.js) → Vercel (이찬희), 백엔드(FastAPI) → Railway (백은혜)
 **Depends on**: Phase 1A, Phase 1B, Phase 1C
 **Owner**: 전원
 **Requirements**: DEPLOY-01
 **Success Criteria** (what must be TRUE):
   1. Vercel main 브랜치에 push하면 자동 배포되고, 배포 URL을 모바일 브라우저(~360px)에서 열어 메인 대화 화면(rec→발화→Pally 응답)→피드백 화면 전체 흐름이 끊김 없이 동작한다
   2. PRD의 3가지 데모 케이스(casual / formal / 대화 중 페르소나 드리프트) 각각에 대해 Pally의 시각·말투가 눈에 띄게 다르게 반응한다 (rehearsal 1회 이상 완료)
-  3. 한 세션의 모든 메시지가 Supabase `messages`에 `axes`/`character` JSONB와 함께 저장되어 있고, `/feedback` 페이지가 해당 세션 ID로 결과를 보여준다
-  4. STT/응답/TTS 평균 지연이 데모 가능 수준이며, 에러 시에는 사용자에게 명시적 메시지가 표시된다 (silent fail 없음)
-  5. 발표자가 데모 디바이스 + 백업 디바이스 2대에서 동일 흐름을 재현했고, 알려진 에지 케이스 목록이 문서화되어 있다
+  3. STT/응답/TTS 평균 지연이 데모 가능 수준이며, 에러 시에는 사용자에게 명시적 메시지가 표시된다 (silent fail 없음)
+  4. 발표자가 데모 디바이스 + 백업 디바이스 2대에서 동일 흐름을 재현했고, 알려진 에지 케이스 목록이 문서화되어 있다
 **Plans**: TBD
 **Estimated effort**: 3 days (2026-06-04 → 2026-06-06, 데모 전일 버퍼 1일 포함)
 **UI hint**: yes
