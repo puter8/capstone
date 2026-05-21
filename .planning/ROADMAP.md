@@ -16,8 +16,8 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 
 - [ ] **Phase 0: Foundation (Minimal)** — Next.js 스캐폴드 + 공유 타입 + `.env.example` + Supabase 클라이언트 + Tailwind. 1A/1B/1C가 즉시 시작할 수 있게 최소만 (이찬희, 0.5일)
 - [ ] **Phase 1A: FE Screens & Feedback UI** — 랜딩 + 대화 + `/feedback` 페이지 UI (이찬희)
-- [ ] **Phase 1B: Pally Canvas2D + Python Engine Integration** — Superformula 렌더러 + 5축 엔진 통합 ADR (백은혜)
-- [ ] **Phase 1C: Voice + Feedback Backend + Supabase Schema** — Vertex AI Gemini로 `/api/chat`, `/api/feedback` + Supabase 테이블/RLS (김민주)
+- [ ] **Phase 1B: Pally Canvas2D + Python Engine Integration** — Superformula 렌더러 + 5축 엔진 통합 ADR (김민주)
+- [ ] **Phase 1C: Voice + Feedback Backend + Supabase Schema** — Vertex AI Gemini로 `/api/chat`, `/api/feedback` + Supabase 테이블/RLS (백은혜)
 - [ ] **Phase 2: Integration & Demo Polish** — End-to-end wiring, Vercel deploy, demo rehearsal (전원)
 
 ## Phase Details
@@ -61,12 +61,12 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 ### Phase 1B: Pally Canvas2D + Python Engine Integration
 **Goal**: Canvas2D Superformula로 렌더링된 Pally가 캐릭터 파라미터 변화에 부드럽게 반응하고, 응답 대기 중에는 생각 애니메이션을 보여준다. 또한 5축 Python 엔진 통합 방식이 ADR로 확정되어 1C가 그 결정을 따를 수 있게 한다.
 **Depends on**: Phase 0
-**Owner**: 백은혜 (AI · 데이터)
+**Owner**: 김민주 (AI · 데이터)
 **Requirements**: PALLY-01, PALLY-02, ENGINE-01 (engine integration portion)
 **Success Criteria** (what must be TRUE):
   1. Python 엔진(`ai/analyzer.py` + `matrix_engine.py`) 통합 방식이 `docs/adr/0001-python-engine-integration.md`로 확정되어 있고 (TS 포팅 / Vercel Python serverless / subprocess / 외부 Python 서비스 중 1개), 결정된 방식으로 Next.js API route에서 샘플 문장을 입력하면 5축 점수 + CHARACTER MATRIX가 JSON으로 반환된다
   2. Canvas2D 컴포넌트가 Pally를 Superformula 도형으로 렌더링하고, 60fps에 근접하게 동작한다 (모바일 브라우저 기준)
-  3. `tone_casual` / `energy_level` / `humor_level` 값을 외부에서 주입하면 Pally의 형태·색·표정이 ~300ms 안에 부드럽게 트랜지션된다 (튐 없음)
+  3. `Formality` / `Energy` / `Intimacy` / `Humor` / `Curiosity` 값을 외부에서 주입하면 Pally의 형태·색·표정이 ~300ms 안에 부드럽게 트랜지션된다 (튐 없음)
   4. "thinking" 상태가 true가 되면 Pally가 식별 가능한 로딩/생각 애니메이션을 보여주고, false가 되면 idle로 복귀한다
   5. 데모용 컨트롤 페이지에서 슬라이더로 각 축을 움직여 시각 변화를 즉시 확인할 수 있다
   6. Phase 0에서 정의한 `CharacterParams` 타입을 그대로 받아 렌더링한다 (별도 변환 레이어 없음)
@@ -81,7 +81,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 ### Phase 1C: Voice + Feedback Backend + Supabase Schema
 **Goal**: 사용자의 음성 입력이 Vertex AI Gemini로 텍스트화 → 5축 분석 → 응답 생성 → TTS까지 흐르고, 종료 후·대화 중 피드백이 동작한다. 또한 본 phase에서 사용할 Supabase `sessions`/`messages` 테이블 + `session_id` 기반 RLS를 정의한다.
 **Depends on**: Phase 0 (scaffold + types + Supabase client), Phase 1B (Python 엔진 통합 ADR)
-**Owner**: 김민주 (BE · Supabase)
+**Owner**: 백은혜 (BE · AI)
 **Requirements**: VOICE-01, VOICE-02, ENGINE-01, FB-01, FB-02, SESSION-01 (schema portion)
 **LLM / 음성 벤더**: GCP 단일. STT = **Google Cloud Speech-to-Text** (`@google-cloud/speech`), 응답 생성 = **Gemini 2.5 Flash** via Vertex AI (`@google-cloud/vertexai`), TTS = **Google Cloud Text-to-Speech** (`@google-cloud/text-to-speech`), 인라인 한국어 힌트 = Gemini 2.5 Flash structured output.
 **Success Criteria** (what must be TRUE):
@@ -155,7 +155,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
         +----------------+----------------+
         |                |                |
    Phase 1A (5d)   Phase 1B (5d)    Phase 1C (6d)
-   (이찬희)         (백은혜)          (김민주)
+   (이찬희)         (김민주)          (백은혜)
         |                |                |
         |          ADR D+1 ──────► 1C uses ADR
         |                |                |

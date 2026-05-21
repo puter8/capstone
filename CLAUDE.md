@@ -197,8 +197,8 @@ python tests/test_matrix.py
 | 담당자 | 주력 phase | 비고 |
 |--------|-----------|------|
 | 이찬희 (FE · 디자인) | **Phase 0** (Foundation) + **Phase 1A** (FE Screens) | Next.js 스캐폴딩 · Supabase 스키마 · 공유 타입 · 랜딩/대화/피드백 UI · DESIGN.md |
-| 백은혜 (AI · 데이터) | **Phase 1B** (Pally Canvas2D) | 5축 파라미터 → Canvas2D Superformula 시각화 · thinking 애니메이션 |
-| 김민주 (BE · Supabase) | **Phase 1C** (Voice + Feedback BE) | `/api/chat` (Whisper → 5축 → GPT-4o → TTS) · `/api/feedback` · Gemini 인라인 힌트 |
+| 김민주 (AI · 데이터) | **Phase 1B** (Pally Canvas2D) | 5축 파라미터 → Canvas2D Superformula 시각화 · thinking 애니메이션 |
+| 백은혜 (BE · AI) | **Phase 1C** (Voice + Feedback BE) | `/api/chat` (Google STT → 5축 → Gemini 2.5 Flash → TTS) · `/api/feedback` · Gemini 인라인 힌트 |
 | 전원 | **Phase 2** (Integration & Demo Polish) | 모바일 폴리시 · Vercel 배포 · 데모 리허설 |
 
 > Phase 0 완료 전엔 1A/1B/1C 병렬 작업 불가. 이찬희가 Phase 0을 가장 먼저 끝내야 백은혜/김민주가 시작 가능.
