@@ -255,8 +255,8 @@ capstone/
 │  └─ test_matrix.py           ← 전체 파이프라인 데모 실행
 ├─ assets/                     ← 시각화 및 정적 자산
 │  └─ visualizer.html          ← CHARACTER MATRIX 시각화 프로토타입
-├─ frontend/                   ← Next.js 14 프론트엔드 (개발 예정)
-├─ backend/                    ← FastAPI 백엔드 (개발 예정)
+├─ (app/, components/, lib/, public/, package.json 등)
+│                              ← Next.js 14 앱 (Phase 0에서 셋업, 루트에 위치)
 ├─ docs/
 │  ├─ PMF/
 │  │  ├─ AI transparency report.md

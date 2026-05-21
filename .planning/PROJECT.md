@@ -95,6 +95,8 @@
 | 피드백 이중 트랙 — 인라인(Gemini) + 종료 후(OpenAI 일괄) | 인라인은 즉각성, 종료 후는 종합성. 두 LLM 분담으로 비용 분산. | — Pending |
 | 모바일 우선, 익명 세션, 온보딩 생략 | 데모 흐름을 최단 경로(메인 → 음성 시작 → 응답 → 피드백)로 단순화. Auth/온보딩은 Post-MVP. | — Pending |
 | 5축이 Pally의 시각(Canvas2D)과 말투(GPT-4o 프롬프트 변수) 둘 다에 영향 | "스타일이 반응으로 이어진다"는 Core Value를 가장 잘 보여주는 구성. PRD와 일치. | — Pending |
+| Next.js 앱을 repo 루트에 배치 (option A) | Vercel 표준 배포 구조. `frontend/`/`backend/` 빈 placeholder는 삭제. 17일 timeline에서 별도 서브폴더/모노레포 오버헤드 회피. | — Pending |
+| Python 엔진(`ai/`)의 통합 방식은 Phase 0에서 결정 | TS 포팅 vs serverless Python vs subprocess — Foundation phase 계획 단계에서 비교/결정. 지금 결정하면 잘못된 가정 만들 위험. | — Pending |
 
 ## Evolution
 
