@@ -104,7 +104,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
   6. 모든 외부 API 호출은 서버 측에서만 이루어지며 (`service_role` / GCP 서비스 어카운트 JSON이 클라이언트 번들에 포함되지 않음), 호출 결과는 `messages` 테이블에 `axes`/`character` JSONB와 함께 저장된다
 **Plans**: TBD
 **Estimated effort**: 6 days (parallel with 1A/1B)
-**Task order**: Supabase 마이그레이션(sessions/messages + character_name·level 컬럼, 기본값 포함) → Google Cloud STT 연동 → 1B ADR 도착 후 엔진 호출 → Gemini 2.5 Flash 응답 + Google Cloud TTS → Railway 배포.
+**Task order**: GCP setup(API 활성화 `speech` / `texttospeech` / `aiplatform` + `pally-backend` service account 생성 + 필요 role 바인딩 + JSON 키 발급 → base64로 Railway env `GOOGLE_APPLICATION_CREDENTIALS_JSON`에 등록. PM이 GCP project `capstone-puter8`을 만들고 전원을 Owner로 초대해뒀으므로 1C 담당이 본인 손으로 진행) → Supabase 마이그레이션(sessions/messages + character_name·level 컬럼, 기본값 포함) → Google Cloud STT 연동 → 1B ADR 도착 후 엔진 호출 → Gemini 2.5 Flash 응답 + Google Cloud TTS → Railway 배포.
 **배포 (백엔드 — 백은혜)**: FastAPI 백엔드는 **Railway**에 배포. 필요 파일: `Procfile` (`web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT`), `runtime.txt` (`python-3.11.0`). Railway 환경변수: `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS_JSON`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. 배포 완료 후 Railway URL을 파트 A(이찬희)에 공유해 프론트에서 API 호출 주소로 사용.
 
 ---

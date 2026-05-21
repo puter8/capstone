@@ -81,20 +81,19 @@ claude mcp list                  # 4개 떠야 함
 
 ---
 
-## 4. GCP 인증 
+## 4. GCP 인증
+
+PM이 GCP project `capstone-puter8`을 만들고 전원을 Owner로 초대해뒀음. Phase 2 통합 디버깅(GCP 로그 조회, 응답 shape 확인 등)에 전원이 필요하니까 **각자 본인 컴퓨터에서 인증 3줄**:
 
 ```bash
-gcloud auth login
-gcloud auth application-default login                # 로컬 dev는 ADC
-gcloud config set project <PALLY_PROJECT_ID>
-gcloud services enable speech.googleapis.com texttospeech.googleapis.com aiplatform.googleapis.com
+gcloud auth login                              # 본인 Google 계정 로그인
+gcloud auth application-default login          # 로컬 dev용 ADC
+gcloud config set project capstone-puter8
 ```
 
-**Railway 배포 시:** service account JSON → base64 인코딩 → `GOOGLE_APPLICATION_CREDENTIALS_JSON` 환경변수. backend가 런타임에 디코드해서 임시 파일로 마운트.
+> 모르겠으면 Claude / Codex에게 "gcloud 셋업 도와줘"라고 하면 됨.
 
-```bash
-base64 -i path/to/service-account.json | pbcopy      # macOS, 클립보드로 복사
-```
+**API 활성화 / Service account 생성 / JSON 키 발급 / Railway 환경변수 등록**은 Phase 1C의 첫 task로 진행한다 (`.planning/ROADMAP.md` Phase 1C Task order 참조).
 
 ---
 
