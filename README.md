@@ -258,17 +258,20 @@ capstone/
 ├─ (app/, components/, lib/, public/, package.json 등)
 │                              ← Next.js 14 앱 (Phase 0에서 셋업, 루트에 위치)
 ├─ docs/
-│  ├─ PMF/
-│  │  ├─ AI transparency report.md
-│  │  └─ COMPETITIVE_ANALYSIS.md
-│  ├─ plan/
-│  │  ├─ PRD.md                          ← MVP 기능 명세 (June 7 데모)
+│  ├─ mvp/                               ← MVP 제품 스펙 (현재 작업 범위)
+│  │  ├─ PRD.md                          ← June 7 데모 기능 명세
 │  │  └─ 2026-05-midterm-qa.md           ← 중간발표 Q&A 및 설계 결정
-│  ├─ _archive/                          ← 옛 풀스코프 문서 (참조용)
-│  │  ├─ design/Design_Document.MD
-│  │  └─ plan/{Ideation, Implementation_Plan, Project Briefs, 2026-05-development-plan}.md
-│  ├─ Team_Ground_Rule.md
-│  └─ elevator_speech.md
+│  ├─ final/                             ← 전체 제품/Post-MVP 스펙 (참조)
+│  │  ├─ 2026-05-development-plan.md
+│  │  ├─ Design_Document.MD
+│  │  ├─ Ideation.MD
+│  │  ├─ Implementation_Plan.MD
+│  │  └─ Project Briefs.MD
+│  └─ shared/                            ← 양쪽 다 해당 (PMF, 팀 룰 등)
+│     ├─ AI transparency report.md
+│     ├─ COMPETITIVE_ANALYSIS.md
+│     ├─ Team_Ground_Rule.md
+│     └─ elevator_speech.md
 ├─ .env.example
 ├─ CLAUDE.md
 └─ .gitignore
@@ -299,23 +302,26 @@ capstone/
 
 ### 문서
 
-- `docs/plan/PRD.md`
+- `docs/mvp/PRD.md`
   June 7 데모 기준 MVP 기능 명세서입니다.
 
-- `docs/plan/2026-05-midterm-qa.md`
+- `docs/mvp/2026-05-midterm-qa.md`
   중간발표 Q&A와 설계 결정(콜드 스타트, 페르소나 제어, 비용 구조 등)을 정리한 문서입니다.
 
-- `docs/_archive/`
-  옛 풀스코프 기획 문서(Ideation, Implementation_Plan, Project Briefs, 2026-05-development-plan, Design_Document)를 보관한 디렉토리입니다. 현재 MVP 범위 외 참조용입니다.
+- `docs/final/`
+  전체 제품 비전·풀스코프 기획 문서(Ideation, Implementation_Plan, Project Briefs, 2026-05-development-plan, Design_Document)를 보관한 디렉토리입니다. MVP 이후 단계에서 참조합니다.
 
-- `docs/PMF/COMPETITIVE_ANALYSIS.md`
+- `docs/shared/COMPETITIVE_ANALYSIS.md`
   경쟁 서비스 분석 및 차별화 전략 문서입니다.
 
-- `docs/PMF/AI transparency report.md`
+- `docs/shared/AI transparency report.md`
   AI 투명성 보고서입니다.
 
-- `docs/Team_Ground_Rule.md`
+- `docs/shared/Team_Ground_Rule.md`
   팀 그라운드 룰 문서입니다.
+
+- `docs/shared/elevator_speech.md`
+  Pally 제품 한 줄 소개 및 짧은 피치 문서입니다.
 
 ## 사용 기술
 

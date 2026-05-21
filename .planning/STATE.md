@@ -7,7 +7,7 @@
 - **Core Value:** 내 영어 발화 스타일에 반응하는 Pally — 5축 분석 → Pally 시각·말투 변화 루프
 - **Demo deadline:** 2026-06-07 (17 days remaining)
 - **Current focus:** Phase 0 — Foundation (shared infra so A/B/C can build in parallel)
-- **Source-of-truth docs:** `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`, `docs/plan/PRD.md`, `docs/plan/2026-05-midterm-qa.md`
+- **Source-of-truth docs:** `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`, `docs/mvp/PRD.md`, `docs/mvp/2026-05-midterm-qa.md`
 
 ## Current Position
 

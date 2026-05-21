@@ -64,14 +64,14 @@
   - **A — FE 화면 + 피드백 UI**: Figma → 실제 화면(랜딩/대화/스크립트), `/feedback` 페이지
   - **B — Pally 캐릭터 변화**: Canvas2D Superformula 형태 변화 고도화, 5축 변화에 따른 트랜지션/색상/표정
   - **C — STT/TTS + 피드백 BE**: Whisper STT 안정화, GPT-4o-mini-tts, `/api/feedback` 엔드포인트, LLM 프롬프트
-- **중간발표 (2026-05) Q&A에서 검증된 설계 결정** (자세히는 [docs/plan/2026-05-midterm-qa.md](../docs/plan/2026-05-midterm-qa.md)):
+- **중간발표 (2026-05) Q&A에서 검증된 설계 결정** (자세히는 [docs/mvp/2026-05-midterm-qa.md](../docs/mvp/2026-05-midterm-qa.md)):
   - 콜드 스타트 대응: 초기 세션 EMA α 일시 상승 (0.3 → 0.7), 첫 3~5턴에 캐릭터 변화 체감
   - 페르소나 제어: Base Personality(고정) + Relationship Layer(EMA 갱신, ±20 클램프) 2층 구조
   - 단기 맥락(`session_messages`)과 장기 페르소나(`user_persona`) 분리 — MVP는 단기만, 장기는 Post-MVP
   - 비용 관리: 5축/MATRIX는 자체 엔진(GPT 호출 X), GPT-4o는 응답 생성에만, 프롬프트 캐싱
   - 과몰입 방지: 학습 도구 포지셔닝, "AI 캐릭터와 대화 중" 라벨 상시 노출
 - **기존 자산**: Python 핵심 엔진(`ai/`, `tests/`)은 검증 완료 상태. MVP에서는 이 로직을 Next.js 런타임에 통합하는 방식이 미정 (다음 단계에서 결정).
-- **MVP 정본 문서**: [docs/plan/PRD.md](../docs/plan/PRD.md), [docs/plan/2026-05-midterm-qa.md](../docs/plan/2026-05-midterm-qa.md), [README.md](../README.md). 옛 풀스코프 기획은 [docs/_archive/](../docs/_archive/)로 분리됨.
+- **MVP 정본 문서**: [docs/mvp/PRD.md](../docs/mvp/PRD.md), [docs/mvp/2026-05-midterm-qa.md](../docs/mvp/2026-05-midterm-qa.md), [README.md](../README.md). 전체 제품·Post-MVP 기획은 [docs/final/](../docs/final/), 양쪽 공유 문서는 [docs/shared/](../docs/shared/)에 위치.
 
 ## Constraints
 
