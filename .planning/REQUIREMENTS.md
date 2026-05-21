@@ -88,23 +88,31 @@ MVP 이후 다음 마일스톤에서 검토. 현재 roadmap에는 포함되지 �
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MAIN-01 | TBD | Pending |
-| VOICE-01 | TBD | Pending |
-| VOICE-02 | TBD | Pending |
-| ENGINE-01 | TBD | Pending |
-| PALLY-01 | TBD | Pending |
-| PALLY-02 | TBD | Pending |
-| CHAT-01 | TBD | Pending |
-| FB-01 | TBD | Pending |
-| FB-02 | TBD | Pending |
-| SESSION-01 | TBD | Pending |
-| DEPLOY-01 | TBD | Pending |
+| MAIN-01 | Phase 1A | Pending |
+| VOICE-01 | Phase 1C | Pending |
+| VOICE-02 | Phase 1C | Pending |
+| ENGINE-01 | Phase 1C | Pending |
+| PALLY-01 | Phase 1B | Pending |
+| PALLY-02 | Phase 1B | Pending |
+| CHAT-01 | Phase 1A | Pending |
+| FB-01 | Phase 1C | Pending |
+| FB-02 | Phase 1C | Pending |
+| SESSION-01 | Phase 0 | Pending |
+| DEPLOY-01 | Phase 2 | Pending |
 
 **Coverage:**
 - v1 requirements: 11 total
-- Mapped to phases: 0 (roadmap 생성 시 채워짐)
-- Unmapped: 11 ⚠️ (roadmap 단계에서 0으로 만들어야 함)
+- Mapped to phases: 11 ✓
+- Unmapped: 0 ✓
+
+**Phase distribution:**
+- Phase 0 (Foundation): 1 requirement (SESSION-01)
+- Phase 1A (FE Screens): 2 requirements (MAIN-01, CHAT-01)
+- Phase 1B (Pally Canvas2D): 2 requirements (PALLY-01, PALLY-02)
+- Phase 1C (Voice + Feedback BE): 5 requirements (VOICE-01, VOICE-02, ENGINE-01, FB-01, FB-02)
+- Phase 2 (Integration & Demo): 1 requirement (DEPLOY-01)
 
 ---
+
 *Requirements defined: 2026-05-21*
-*Last updated: 2026-05-21 after initialization*
+*Last updated: 2026-05-21 after roadmap creation*
