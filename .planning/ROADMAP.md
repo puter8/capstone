@@ -45,7 +45,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 
 **Plans**: 1 plan, 1 wave
 Plans:
-- [ ] 00-01-PLAN.md — Scaffold Next.js 14 frontend, minimal UI types (Message/Session), Supabase anon client + connection check, /api/health, Tailwind + cn(), per-key env migration (root → frontend/backend split per D-14), OpenAI key revoke checkpoint
+- [x] 00-01-PLAN.md — Scaffold Next.js 14 frontend, minimal UI types (Message/Session), Supabase anon client + connection check, /api/health, Tailwind + cn(), per-key env migration (root → frontend/backend split per D-14), OpenAI key revoke checkpoint
 
 **Estimated effort**: 0.5 day (2026-05-21 오후 ~ 2026-05-22 오전)
 **UI hint**: minimal (scaffold만)

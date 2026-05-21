@@ -1,3 +1,17 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: executing
+last_updated: "2026-05-21T14:36:44.047Z"
+progress:
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 1
+  completed_plans: 0
+  percent: 0
+---
+
 # STATE: Pally — CharaShift MVP
 
 **Last updated:** 2026-05-21 (synchronized to ROADMAP.md)
@@ -6,17 +20,20 @@
 
 - **Core Value:** 내 영어 발화 스타일에 반응하는 Pally — 5축 분석 → Pally 시각·말투 변화 루프
 - **Demo deadline:** 2026-06-07 (17 days from roadmap creation)
-- **Current focus:** Phase 0 — Foundation (minimal frontend scaffold so 1A/1B/1C can build in parallel)
+- **Current focus:** Phase 00 — foundation-minimal
 - **Planning source of truth:** `.planning/ROADMAP.md`
 - **Synchronized planning docs:** `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md`, `.planning/STATE.md`
 - **Background docs only:** `docs/mvp/PRD.md`, `docs/mvp/2026-05-midterm-qa.md`
 
 ## Current Position
 
+Phase: 00 (foundation-minimal) — EXECUTING
+Plan: 1 of 1
+
 - **Milestone:** MVP v1 (June 7 demo)
 - **Phase:** Phase 0 — Foundation (Minimal)
 - **Plan:** Not yet planned (`/gsd-plan-phase 0` to generate)
-- **Status:** Not started
+- **Status:** Executing Phase 00
 - **Progress:** ▱▱▱▱▱ 0 / 5 phases complete
 
 | Phase | Status | Notes |
