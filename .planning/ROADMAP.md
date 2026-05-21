@@ -38,7 +38,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 **Requirements**: SESSION-01
 **Success Criteria** (what must be TRUE):
   1. Next.js 14 App Router 앱이 `frontend/` 폴더 안에 스캐폴드되고, `cd frontend && npm run dev` 한 번으로 띄울 수 있으며, `/api/health`가 200을 반환한다
-  2. `frontend/lib/types/`에 5축(`Axes`), 캐릭터 파라미터(`CharacterParams`), 메시지(`Message`), 세션(`Session`) 타입이 정의되어 있어 A/B/C 모두가 import해서 쓸 수 있다
+  2. `frontend/lib/types/`에 1A가 mock 데이터로 화면을 그리는 데 필요한 최소 UI 타입 — 메시지(`Message`), 세션(`Session`) — 만 정의되어 있다. **`Axes`, `CharacterParams`는 Phase 1B에서 김민주가 엔진 기반으로 정의** (출처가 `ai/analyzer.py` + `matrix_engine.py`이므로 엔진을 다루는 사람이 소유). 백엔드(Python)는 자체 Pydantic 모델을 `backend/`에서 따로 정의하고, FE↔BE 사이의 공유 계약은 `POST /api/chat`의 JSON wire format으로 동기화 (Phase 1C에서 확정)
   3. `frontend/lib/supabase/client.ts`(anon 키)가 작성되어 있고, 실제 Supabase 프로젝트 URL/anon key로 연결만 확인된다 (server.ts와 테이블은 Phase 1C에서 추가)
   4. `frontend/.env.example`(Vercel 배포용, Root Directory = `frontend/`)에 프론트가 쓰는 키(`NEXT_PUBLIC_BACKEND_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`)가 명시되어 있다. 백엔드 키(`GOOGLE_*`, `SUPABASE_SERVICE_ROLE_KEY`)는 `backend/.env.example`에서 별도 관리 (Phase 1C 배포 항목 참조). 루트에는 `.env.example`을 두지 않음
   5. Tailwind CSS + `cn()` 유틸이 `frontend/`에서 동작하고, `frontend/app/page.tsx`가 빈 placeholder만 렌더한다
@@ -79,7 +79,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
   2. Canvas2D 컴포넌트가 Pally를 Superformula 도형으로 렌더링하고, 60fps에 근접하게 동작한다 (모바일 브라우저 기준)
   3. `Formality` / `Energy` / `Intimacy` / `Humor` / `Curiosity` 값을 외부에서 주입하면 Pally의 형태·색·표정이 ~300ms 안에 부드럽게 트랜지션된다 (튐 없음)
   4. 데모용 컨트롤 페이지에서 슬라이더로 각 축을 움직여 시각 변화를 즉시 확인할 수 있다
-  5. Phase 0에서 정의한 `CharacterParams` 타입을 그대로 받아 렌더링한다 (별도 변환 레이어 없음)
+  5. `frontend/lib/types/`에 본 phase에서 `Axes`(5축 점수)와 `CharacterParams`(Canvas2D에 주입되는 시각 파라미터) TS 타입을 추가하고 (`ai/analyzer.py`와 `matrix_engine.py`의 실제 출력 모양 기반), Canvas2D 컴포넌트가 그 `CharacterParams` 타입을 그대로 받아 렌더링한다 (별도 변환 레이어 없음). 이찬희(1A)는 본 phase 머지 후 같은 타입을 import해서 mock 데이터를 정밀화할 수 있다
 
 **Plans**: TBD
 **Estimated effort**: 5 days (parallel with 1A/1C)
@@ -180,4 +180,4 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 ---
 
 *Roadmap created: 2026-05-21*
-*Last updated: 2026-05-21 — Phase 0 minimized, OpenAI replaced with GCP Vertex AI, Supabase schema moved to Phase 1C, Python engine ADR moved to Phase 1B; Phase 1A reduced to 2 screens (메인 대화 + 피드백), onboarding removed from MVP (character_name/level use defaults until v2); **monorepo 폴더 분리 명시**: Repo Layout 섹션 추가(`frontend/` + `backend/` + `ai/` 역할 + 작업 충돌 방지), Phase 0 SC를 `frontend/` 기준으로 재작성 (`cd frontend && npm run dev`, `frontend/lib/types/`, `frontend/lib/supabase/client.ts`, `frontend/.env.example`, `frontend/app/page.tsx`), 루트 `.env.example` 제거, Phase 2 배포 구조에 Vercel/Railway Root Directory 명시*
+*Last updated: 2026-05-21 — Phase 0 minimized, OpenAI replaced with GCP Vertex AI, Supabase schema moved to Phase 1C, Python engine ADR moved to Phase 1B; Phase 1A reduced to 2 screens (메인 대화 + 피드백), onboarding removed from MVP (character_name/level use defaults until v2); **monorepo 폴더 분리 명시**: Repo Layout 섹션 추가(`frontend/` + `backend/` + `ai/` 역할 + 작업 충돌 방지), Phase 0 SC를 `frontend/` 기준으로 재작성 (`cd frontend && npm run dev`, `frontend/lib/types/`, `frontend/lib/supabase/client.ts`, `frontend/.env.example`, `frontend/app/page.tsx`), 루트 `.env.example` 제거, Phase 2 배포 구조에 Vercel/Railway Root Directory 명시; **공유 타입 소유권 분담**: Phase 0은 1A에 필요한 최소 UI 타입(`Message`/`Session`)만 정의, `Axes`/`CharacterParams`는 Phase 1B(김민주)로 이관 — 엔진(`ai/analyzer.py` + `matrix_engine.py`)을 다루는 사람이 정확한 타입을 정의하기 위해. 백엔드(Python)는 자체 Pydantic 모델 사용, FE↔BE 공유 계약은 JSON wire format으로*
