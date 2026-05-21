@@ -261,14 +261,14 @@ capstone/
 │  ├─ PMF/
 │  │  ├─ AI transparency report.md
 │  │  └─ COMPETITIVE_ANALYSIS.md
-│  ├─ design/
-│  │  └─ Design_Document.MD
 │  ├─ plan/
-│  │  ├─ 2026-05-development-plan.md
-│  │  ├─ Ideation.MD
-│  │  ├─ Implementation_Plan.MD
-│  │  └─ Project Briefs.MD
-│  └─ Team_Ground_Rule.md
+│  │  ├─ PRD.md                          ← MVP 기능 명세 (June 7 데모)
+│  │  └─ 2026-05-midterm-qa.md           ← 중간발표 Q&A 및 설계 결정
+│  ├─ _archive/                          ← 옛 풀스코프 문서 (참조용)
+│  │  ├─ design/Design_Document.MD
+│  │  └─ plan/{Ideation, Implementation_Plan, Project Briefs, 2026-05-development-plan}.md
+│  ├─ Team_Ground_Rule.md
+│  └─ elevator_speech.md
 ├─ .env.example
 ├─ CLAUDE.md
 └─ .gitignore
@@ -299,17 +299,14 @@ capstone/
 
 ### 문서
 
-- `docs/plan/Project Briefs.MD`
-  프로젝트 개요, 팀 구성, 사용 기술 요약본입니다.
+- `docs/plan/PRD.md`
+  June 7 데모 기준 MVP 기능 명세서입니다.
 
-- `docs/plan/2026-05-development-plan.md`
-  2026년 5월~10월 전체 개발 로드맵과 Phase별 세부 계획입니다.
+- `docs/plan/2026-05-midterm-qa.md`
+  중간발표 Q&A와 설계 결정(콜드 스타트, 페르소나 제어, 비용 구조 등)을 정리한 문서입니다.
 
-- `docs/design/Design_Document.MD`
-  프로젝트 설계 배경과 전체 방향을 정리한 문서입니다.
-
-- `docs/plan/Implementation_Plan.MD`
-  구현 계획과 확장 방향을 정리한 문서입니다.
+- `docs/_archive/`
+  옛 풀스코프 기획 문서(Ideation, Implementation_Plan, Project Briefs, 2026-05-development-plan, Design_Document)를 보관한 디렉토리입니다. 현재 MVP 범위 외 참조용입니다.
 
 - `docs/PMF/COMPETITIVE_ANALYSIS.md`
   경쟁 서비스 분석 및 차별화 전략 문서입니다.
