@@ -12,6 +12,15 @@
 
 Every phase exists to make the core loop (사용자 발화 → 5축 분석 → Pally 시각·말투 변화) demoable on a mobile browser by June 7. Phase 0 unblocks parallel work with minimal foundation; Phases 1A/1B/1C are the three slices of the core loop built simultaneously; Phase 2 stitches them into the demo flow.
 
+## Repo Layout (Monorepo)
+
+- `frontend/` — Next.js (Vercel 배포 root, 이찬희 작업 영역)
+- `backend/` — FastAPI (Railway 배포 root, 백은혜 작업 영역, `sys.path`로 루트 `ai/`를 import)
+- `ai/` — Python 5축 엔진 (`analyzer.py`, `matrix_engine.py`, 김민주 + 백은혜 공동)
+- 루트 — 공통 문서(`CLAUDE.md`, `README.md`) + `.planning/`만. 루트에 `.env.example`을 두지 않음 (Vercel/Railway가 각자 root directory의 `.env.example`을 읽음).
+
+이찬희는 `frontend/`, 백은혜는 `backend/` 안에서만 작업해 파일 충돌이 발생하지 않도록 한다.
+
 ## Phases
 
 - [ ] **Phase 0: Foundation (Minimal)** — Next.js 스캐폴드 + 공유 타입 + `.env.example` + Supabase 클라이언트 + Tailwind. 1A/1B/1C가 즉시 시작할 수 있게 최소만 (이찬희, 0.5일)
@@ -28,11 +37,11 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 **Owner**: 이찬희 (단독)
 **Requirements**: SESSION-01
 **Success Criteria** (what must be TRUE):
-  1. 로컬에서 `npm run dev` 한 번으로 Next.js 14 App Router 앱을 띄울 수 있고, `/api/health`가 200을 반환한다
-  2. `lib/types/`에 5축(`Axes`), 캐릭터 파라미터(`CharacterParams`), 메시지(`Message`), 세션(`Session`) 타입이 정의되어 있어 A/B/C 모두가 import해서 쓸 수 있다
-  3. `lib/supabase/client.ts`(anon 키)가 작성되어 있고, 실제 Supabase 프로젝트 URL/anon key로 연결만 확인된다 (server.ts와 테이블은 Phase 1C에서 추가)
-  4. `.env.example`에 GCP Vertex AI 키 (`GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`) / Supabase URL / anon key / service role / Reddit / DATABASE_URL 항목이 모두 명시되어 있다
-  5. Tailwind CSS + `cn()` 유틸이 동작하고, 루트 page가 빈 placeholder만 렌더한다
+  1. Next.js 14 App Router 앱이 `frontend/` 폴더 안에 스캐폴드되고, `cd frontend && npm run dev` 한 번으로 띄울 수 있으며, `/api/health`가 200을 반환한다
+  2. `frontend/lib/types/`에 5축(`Axes`), 캐릭터 파라미터(`CharacterParams`), 메시지(`Message`), 세션(`Session`) 타입이 정의되어 있어 A/B/C 모두가 import해서 쓸 수 있다
+  3. `frontend/lib/supabase/client.ts`(anon 키)가 작성되어 있고, 실제 Supabase 프로젝트 URL/anon key로 연결만 확인된다 (server.ts와 테이블은 Phase 1C에서 추가)
+  4. `frontend/.env.example`(Vercel 배포용, Root Directory = `frontend/`)에 프론트가 쓰는 키(`NEXT_PUBLIC_BACKEND_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`)가 명시되어 있다. 백엔드 키(`GOOGLE_*`, `SUPABASE_SERVICE_ROLE_KEY`)는 `backend/.env.example`에서 별도 관리 (Phase 1C 배포 항목 참조). 루트에는 `.env.example`을 두지 않음
+  5. Tailwind CSS + `cn()` 유틸이 `frontend/`에서 동작하고, `frontend/app/page.tsx`가 빈 placeholder만 렌더한다
 
 **Plans**: TBD (1 plan, 1 wave)
 **Estimated effort**: 0.5 day (2026-05-21 오후 ~ 2026-05-22 오전)
@@ -100,7 +109,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 
 ### Phase 2: Integration & Demo Polish
 **Goal**: 세 슬라이스가 하나의 흐름으로 합쳐져 Vercel(프론트) + Railway(백엔드) 배포 URL에서 모바일로 데모 가능한 상태가 된다.
-**배포 구조**: 프론트엔드(Next.js) → Vercel (이찬희), 백엔드(FastAPI) → Railway (백은혜)
+**배포 구조**: 프론트엔드(Next.js) → Vercel, Root Directory = `frontend/` (이찬희), 백엔드(FastAPI) → Railway, Root Directory = `backend/` (백은혜)
 **Depends on**: Phase 1A, Phase 1B, Phase 1C
 **Owner**: 전원
 **Requirements**: DEPLOY-01
@@ -171,4 +180,4 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 ---
 
 *Roadmap created: 2026-05-21*
-*Last updated: 2026-05-21 — Phase 0 minimized, OpenAI replaced with GCP Vertex AI, Supabase schema moved to Phase 1C, Python engine ADR moved to Phase 1B; Phase 1A reduced to 2 screens (메인 대화 + 피드백), onboarding removed from MVP (character_name/level use defaults until v2)*
+*Last updated: 2026-05-21 — Phase 0 minimized, OpenAI replaced with GCP Vertex AI, Supabase schema moved to Phase 1C, Python engine ADR moved to Phase 1B; Phase 1A reduced to 2 screens (메인 대화 + 피드백), onboarding removed from MVP (character_name/level use defaults until v2); **monorepo 폴더 분리 명시**: Repo Layout 섹션 추가(`frontend/` + `backend/` + `ai/` 역할 + 작업 충돌 방지), Phase 0 SC를 `frontend/` 기준으로 재작성 (`cd frontend && npm run dev`, `frontend/lib/types/`, `frontend/lib/supabase/client.ts`, `frontend/.env.example`, `frontend/app/page.tsx`), 루트 `.env.example` 제거, Phase 2 배포 구조에 Vercel/Railway Root Directory 명시*
