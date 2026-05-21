@@ -51,7 +51,7 @@ BIAS = [50, 20, 10]
 # EMA 스무딩 계수 (0 < alpha <= 1)
 # alpha=0.3: 새 발화 30% + 이전 누적 70% → 급격한 캐릭터 변화 방지
 # → 사용자가 한 번 슬랭을 써도 캐릭터가 갑자기 바뀌지 않고 서서히 적응
-DEFAULT_ALPHA = 0.3
+DEFAULT_ALPHA = 0.7
 
 
 def compute_character(axes: dict) -> dict:

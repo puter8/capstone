@@ -63,6 +63,30 @@ class TTSRequest(BaseModel):
     speaking_rate: Optional[float] = 1.0
 
 
+class ChatMessage(BaseModel):
+    role: str   # "user" | "pally"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    utterance: str                              # STT 결과 텍스트 (FE에서 /api/stt 호출 후 전달)
+    session_id: Optional[str] = None
+    current_axes: Optional[Dict[str, int]] = None
+    conversation_history: Optional[list[ChatMessage]] = None
+    character_name: Optional[str] = "Pally"
+    level: Optional[str] = "B1"                # A2 / B1 / B2 / C1
+
+
+class ChatResponse(BaseModel):
+    status: str
+    transcript: str                            # 사용자 발화 텍스트 (echo)
+    reply: str                                 # Pally 응답 텍스트
+    tts_audio: Optional[str] = None           # base64 MP3 (Pally 응답 TTS)
+    axes: Dict[str, int]
+    character: Dict[str, int]
+    character_labels: Dict[str, str]
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 
@@ -357,4 +381,128 @@ async def feedback(req: FeedbackRequest):
         },
         "feedback": feedback_data,
         "tts_audio": tts_audio,
+    }
+
+
+# ── Chat — STT 결과 → Gemini 대화 응답 → TTS ─────────────────────────────────
+
+_LEVEL_GUIDE = {
+    "A2": "Use very simple words and short sentences (A2 beginner level).",
+    "B1": "Use everyday vocabulary and mid-length sentences (B1 intermediate level).",
+    "B2": "Use varied vocabulary and natural phrasing (B2 upper-intermediate level).",
+    "C1": "Use rich vocabulary and complex sentences naturally (C1 advanced level).",
+}
+
+
+def _build_chat_system_prompt(character_name: str, level: str) -> str:
+    level_guide = _LEVEL_GUIDE.get(level, _LEVEL_GUIDE["B1"])
+    return f"""\
+You are {character_name}, a warm and playful English conversation friend.
+{level_guide}
+Keep responses to 1-3 sentences — natural, friendly, and engaging.
+
+When the user makes a grammar or vocabulary mistake:
+- Do NOT explicitly point it out or say "you made a mistake".
+- Instead, naturally use the correct expression in your own reply so the user can pick it up.
+- Example: user says "I'm very boring today" → you reply "Oh, you're bored? What's going on?"
+
+Stay in character as {character_name} at all times. Never break the fourth wall."""
+
+
+async def _call_gemini_chat(
+    utterance: str,
+    history: list,
+    character_name: str,
+    level: str,
+) -> str:
+    """Gemini 2.5 Flash로 Pally 대화 응답 생성"""
+    system_prompt = _build_chat_system_prompt(character_name, level)
+
+    contents = []
+    for msg in (history or []):
+        role = "user" if msg.role == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": msg.content}]})
+    contents.append({"role": "user", "parts": [{"text": utterance}]})
+
+    payload = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 0.85,
+            "maxOutputTokens": 256,
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.5-flash:generateContent?key={GOOGLE_AI_API_KEY}",
+            json=payload,
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"Gemini chat error {resp.status_code}: {resp.text}")
+
+    return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest):
+    """
+    utterance(텍스트) → 5축 분석 → EMA → 캐릭터 파라미터 → Gemini 대화 응답 → TTS
+
+    흐름:
+      1. analyze_utterance()  → raw 5축 점수
+      2. apply_ema()          → EMA 평활화 (alpha=0.7)
+      3. compute_character()  → 캐릭터 파라미터
+      4. Gemini 2.5 Flash     → Pally 대화 응답 (자연스러운 교정 포함)
+      5. Google TTS           → Pally 응답을 MP3로 변환
+    """
+    if not GOOGLE_AI_API_KEY:
+        raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY not configured")
+    if not req.utterance.strip():
+        raise HTTPException(status_code=400, detail="utterance is required")
+
+    # 1. 5축 분석
+    raw_axes = analyze_utterance(req.utterance)
+
+    # 2. EMA
+    smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
+
+    # 3. 캐릭터 파라미터
+    character = compute_character(smoothed_axes)
+    tone_label, energy_label, humor_label = describe_character(character)
+
+    # 4. Gemini 대화 응답
+    try:
+        reply = await _call_gemini_chat(
+            req.utterance,
+            req.conversation_history or [],
+            req.character_name or "Pally",
+            req.level or "B1",
+        )
+    except Exception as e:
+        import logging
+        logging.warning(f"Gemini chat fallback: {e}")
+        reply = "I see! Tell me more."
+
+    # 5. TTS
+    tts_audio: Optional[str] = None
+    try:
+        tts_audio = await _call_google_tts(reply)
+    except Exception:
+        tts_audio = None
+
+    return {
+        "status": "ok",
+        "transcript": req.utterance,
+        "reply": reply,
+        "tts_audio": tts_audio,
+        "axes": smoothed_axes,
+        "character": character,
+        "character_labels": {
+            "tone": tone_label,
+            "energy": energy_label,
+            "humor": humor_label,
+        },
     }
