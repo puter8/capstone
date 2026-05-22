@@ -6,84 +6,113 @@ status: executing
 last_updated: "2026-05-22T00:00:00.000Z"
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 20
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
+  percent: 40
 ---
 
 # STATE: Pally — CharaShift MVP
 
-**Last updated:** 2026-05-22 (Phase 0 complete; ready for parallel 1A/1B/1C)
+**Last updated:** 2026-05-22 (Phase 1C complete; 1A/1B 진행 중)
 
 ## Project Reference
 
 - **Core Value:** 내 영어 발화 스타일에 반응하는 Pally — 5축 분석 → Pally 시각·말투 변화 루프
-- **Demo deadline:** 2026-06-07 (17 days from roadmap creation)
-- **Current focus:** Phase 1A / 1B / 1C — parallel kickoff (Phase 0 complete)
+- **Demo deadline:** 2026-06-07
+- **Current focus:** Phase 1A (이찬희) / Phase 1B (김민주) — parallel; Phase 1C 완료
 - **Planning source of truth:** `.planning/ROADMAP.md`
 - **Synchronized planning docs:** `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md`, `.planning/STATE.md`
-- **Background docs only:** `docs/mvp/PRD.md`, `docs/mvp/2026-05-midterm-qa.md`
 
 ## Current Position
 
-Phase: 00 (foundation-minimal) — COMPLETE (2026-05-21)
-Next: Phase 1A / 1B / 1C parallel
+Phase 1C — COMPLETE (2026-05-22, 백은혜)
 
 - **Milestone:** MVP v1 (June 7 demo)
-- **Phase complete:** Phase 0 — Foundation (Minimal) — 00-01 plan shipped, UAT 5/5 passed
-- **Next phases:** 1A (이찬희), 1B (김민주), 1C (백은혜) — parallel
-- **Status:** Phase 0 complete, ready to plan 1A/1B/1C
-- **Progress:** ▰▱▱▱▱ 1 / 5 phases complete (20%)
+- **Progress:** ▰▰▱▱▱ 2 / 5 phases complete (40%)
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 0. Foundation (Minimal) | Complete (2026-05-21) | Next.js scaffold + Message/Session types + Supabase anon client (real roundtrip verified) + Tailwind/cn() + /api/health + per-key env split (frontend/backend). See `.planning/phases/00-foundation-minimal/00-01-SUMMARY.md` |
-| 1A. FE Screens & Audio Shell | Not started | Parallel after Phase 0; 메인 화면 + rec/audio mock transport |
-| 1B. Pally Canvas2D + Python Engine Integration | Not started | Parallel after Phase 0; Pally renderer + character types + D+1 engine ADR |
-| 1C. Voice + Inline Feedback Backend + Supabase Schema | Not started | Parallel after Phase 0; FastAPI `/api/chat`, GCP STT/TTS/Gemini, Supabase schema/RLS |
-| 2. Integration & Demo Polish | Not started | Depends on 1A + 1B + 1C; Vercel/Railway real wiring + mobile rehearsal |
+| 0. Foundation (Minimal) | Complete (2026-05-21) | Next.js scaffold + types + Supabase anon client + Tailwind/cn() + /api/health |
+| 1A. FE Screens & Audio Shell | In progress | 이찬희 담당. 메인 화면 + rec/audio mock transport |
+| 1B. Pally Canvas2D + Python Engine Integration | In progress | 김민주 담당. Pally renderer + character types + D+1 engine ADR |
+| 1C. Voice + Inline Feedback Backend + Supabase Schema | **Complete (2026-05-22)** | 백은혜 담당. FastAPI 전 엔드포인트 + Supabase + Railway 배포 완료 |
+| 2. Integration & Demo Polish | Not started | 1A + 1B + 1C 머지 후 시작 |
+
+## Phase 1C 완료 상세 (2026-05-22)
+
+### 구현
+- `backend/main.py`: `/api/stt` (Google Cloud STT), `/api/tts` (Google Cloud TTS), `/api/feedback` (Gemini 2.5 Flash), `/api/chat` (5축→EMA→캐릭터→Gemini→TTS+한국어힌트)
+- `backend/lib/supabase.py`: service-role 싱글톤 클라이언트
+- `InlineHintKo` 모델: `hint_ko` 필드로 `/api/chat` 응답에 한국어 인라인 힌트 포함 (TTS와 asyncio.gather() 병렬)
+- EMA alpha=0.7 (데모에서 캐릭터 변화 빠르게 보이기 위해)
+- Supabase: session_id 기반 대화 이력 로드/저장, graceful degradation (미설정 시에도 동작)
+
+### DB
+- Supabase 마이그레이션 실행 완료: `sessions` + `messages` 테이블, RLS 활성화, `(session_id, created_at)` 인덱스
+- `supabase/migrations/20260522000000_sessions_messages.sql`
+
+### 배포
+- **Railway**: `https://capstone-production-e8c2.up.railway.app` — Online
+  - `/api/health` → `{"status":"ok"}` 확인
+  - 환경변수 4개 등록: GOOGLE_AI_API_KEY, GOOGLE_CLOUD_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+  - Root Directory 없음 (repo 전체 빌드, 루트 Procfile + requirements.txt 사용)
+- **Vercel**: `capstone-eight-virid.vercel.app`
+  - `NEXT_PUBLIC_BACKEND_URL=https://capstone-production-e8c2.up.railway.app` 등록 완료
+  - 현재 404 — Phase 1A(이찬희) 미구현 상태로 정상
+
+### Phase 1C wire format (`/api/chat` 응답)
+```json
+{
+  "status": "ok",
+  "transcript": "사용자 발화",
+  "reply": "Pally 응답",
+  "tts_audio": "base64 MP3",
+  "axes": {"Formality": 0, "Energy": 0, "Intimacy": 0, "Humor": 0, "Curiosity": 0},
+  "character": {"tone_casual": 0, "energy_level": 0, "humor_level": 0},
+  "character_labels": {"tone": "...", "energy": "...", "humor": "..."},
+  "hint_ko": {"hint": "한국어 힌트", "expression": "올바른 영어 표현"}
+}
+```
 
 ## Performance Metrics
 
-- **Requirements coverage:** 11/11 v1 requirements mapped to phases ✓
-- **Critical path:** 0.5d Phase 0 + 6d longest parallel slice + 3d integration = ~9.5 days
-- **Buffer:** ~7.5 days inside the 17-day window
-- **Team utilization plan:** 3 developers build 1A/1B/1C in parallel after Phase 0
-- **Plans completed:** 1 (Phase 0 · 00-01)
-- **Plans pending:** Phases 1A / 1B / 1C / 2 — TBD plans each
+- **Requirements coverage:** 11/11 v1 requirements mapped ✓
+- **Phase 1C SC 달성:** SC1~SC6 전부 ✓
+- **Critical path 잔여:** 1A/1B(5d) + Integration(3d) = ~8d (데모까지 약 16일 남음)
 
 ## Accumulated Context
 
 ### Key Decisions Logged
 
-> Authoritative list lives in `.planning/PROJECT.md` "Key Decisions". Mirror here only when state changes.
-
 - Monorepo split: `frontend/` (Vercel), `backend/` (Railway FastAPI), `ai/` (Python engine) — Accepted
-- LLM/voice vendor: GCP only (Gemini 2.5 Flash + Google Cloud STT/TTS), no OpenAI in MVP — Accepted
-- `/feedback` UI removed from MVP; feedback is inline structured payload from `/api/chat` — Accepted
-- Phase 0 is minimal foundation only; Supabase schema/RLS moves to Phase 1C — Accepted
-- Python engine integration ADR moves to Phase 1B and must be available D+1 for 1C — Accepted
-- 1A/1B/1C remain parallel; 1C consumes only the D+1 ADR, not full 1B completion — Accepted
-- 김민주 owns `ai/`, `frontend/components/pally/`, `frontend/app/dev/pally/`, `frontend/lib/types/character.ts` — Accepted
-- MVP uses rule-based 5-axis engine with EMA alpha=0.7 for visible demo response — Accepted
-- No onboarding in MVP; sessions use default `character_name = 'Pally'`, `level = 'B1'` — Accepted
+- LLM/voice vendor: GCP only (Gemini 2.5 Flash + Google Cloud STT/TTS), no OpenAI — Accepted
+- `/feedback` UI 없음; 피드백은 `/api/chat` 응답의 `hint_ko` inline payload — Accepted
+- EMA alpha=0.7 (기본값 0.3 대신, 데모에서 캐릭터 변화를 빠르게 보이기 위해) — Accepted
+- Railway: repo 전체를 빌드 컨텍스트로 사용 (root Procfile + root requirements.txt), Root Directory 설정 없음 — Accepted (ai/ 모듈 접근 필요)
+- Vercel: Root Directory = `frontend/` (dashboard 설정), Hobby plan이므로 팀원 초대 불가 — Accepted
+- Supabase: 백엔드 service-role key로만 접근 (RLS bypass), 프론트 직접 DB 접근 없음 — Accepted
 
-### Outstanding Todos / Open Questions
+### Outstanding Todos
 
-- [x] **Phase 0 — frontend scaffold**: Created Next.js 14 App Router under `frontend/`, Tailwind v3, `cn()`, placeholder `frontend/app/page.tsx`, `/api/health` (2026-05-21)
-- [x] **Phase 0 — minimal UI types**: Defined `Message` (with `MessageRole`) and `Session` (with `Level`). `Axes`/`CharacterParams` deferred to Phase 1B as planned (2026-05-21)
-- [x] **Phase 0 — Supabase client/env**: Added `frontend/lib/supabase/client.ts` (throws on missing env, no fallback), `frontend/.env.example` (3 NEXT_PUBLIC_* keys), and `backend/.env.example` for 1C key contract (2026-05-21)
-- [ ] **Phase 1A — audio shell**: Browser permission request, recording Blob, mock transport, sample/mock audio playback, state machine
-- [ ] **Phase 1B — Python engine ADR**: Decide FastAPI direct import / subprocess / external Python service / TS port; produce `docs/adr/0001-python-engine-integration.md` by D+1
-- [ ] **Phase 1C — GCP preflight**: Before implementation, perform real Google Cloud STT/TTS/Gemini test calls and confirm response shape/latency
-- [ ] **Phase 1C — Supabase schema**: Create `sessions`/`messages` tables with `session_id` RLS, `character_name`, `level`, `axes`, `character`
-- [ ] **Phase 2 — mobile demo**: Verify deployed Vercel + Railway URLs on demo device and backup device
+- [x] Phase 0 — frontend scaffold
+- [x] Phase 0 — minimal UI types (Message/Session)
+- [x] Phase 0 — Supabase client/env
+- [x] Phase 1C — /api/stt, /api/tts, /api/feedback, /api/chat 구현
+- [x] Phase 1C — Supabase sessions/messages 마이그레이션 + RLS
+- [x] Phase 1C — 인라인 한국어 힌트 (hint_ko)
+- [x] Phase 1C — Railway 배포 (Online)
+- [x] Phase 1C — Vercel NEXT_PUBLIC_BACKEND_URL 등록
+- [ ] Phase 1A — 메인 대화 화면 + rec 버튼 + 오디오 UX shell (이찬희)
+- [ ] Phase 1B — Python engine ADR (D+1 확정 필요, 김민주)
+- [ ] Phase 1B — Canvas2D Pally renderer + 5축 파라미터 연동
+- [ ] Phase 2 — mock transport → 실제 Railway /api/chat 교체
+- [ ] Phase 2 — 모바일 실기기 E2E 검증 (demo device + backup)
 
 ### Blockers
 
-- No active blocker at planning level.
-- Phase 1C will need GCP service account credentials, Supabase URL/service role, and Railway environment setup before real integration can pass.
+- Phase 2 시작 전 1A + 1B 완료 필요
+- Phase 1A 미완료로 Vercel 배포 URL 접근 시 404 (정상 상태)
 
 ## Session Continuity
 
@@ -91,29 +120,32 @@ Next: Phase 1A / 1B / 1C parallel
 
 | Date | Phase | Outcome |
 |------|-------|---------|
-| 2026-05-21 | Init | Initial PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md created. |
-| 2026-05-21 | Roadmap review | ROADMAP.md updated to GCP-only, Vercel/Railway split, `/feedback` UI removed, 1A audio shell + 1C backend + Phase 2 wiring split, 1A/1B/1C parallelism preserved. |
-| 2026-05-21 | Planning sync | PROJECT.md, REQUIREMENTS.md, STATE.md synchronized to ROADMAP.md. |
-| 2026-05-21 | Phase 0 build | 00-01 plan executed, UAT 5/5 passed (e2f6fc0), backend/.env.example added (87983f3). See `.planning/phases/00-foundation-minimal/00-01-SUMMARY.md`. |
-| 2026-05-22 | Phase 0 tracking sync | STATE.md + ROADMAP.md updated to reflect Phase 0 completion (the earlier 2324945 commit only flipped status to "Executing", not "Complete"). |
+| 2026-05-21 | Init | PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md 초기화 |
+| 2026-05-21 | Roadmap review | GCP-only, Vercel/Railway split, /feedback UI 제거, 1A/1B/1C 병렬 구조 확정 |
+| 2026-05-21 | Phase 0 build | 00-01 plan 실행, UAT 5/5 통과 |
+| 2026-05-22 | Phase 1C build | /api/chat 구현, Supabase 연동, 인라인 한국어 힌트, Railway/Vercel 배포 완료 |
 
 ### Next Action
 
-Phase 1A / 1B / 1C 병렬 시작. 각 오너가 본인 phase branch에서 `/gsd-discuss-phase` → `/gsd-plan-phase` 진행.
+Phase 1A (이찬희) / Phase 1B (김민주) 완료 후 Phase 2 통합 시작.
 
-- 이찬희 → `gsd/phase-1a-fe-audio-shell` → `/gsd-discuss-phase 1A`
-- 김민주 → `gsd/phase-1b-pally-canvas` → `/gsd-discuss-phase 1B` (ADR을 D+1까지 확정해 1C에 전달)
-- 백은혜 → `gsd/phase-1c-voice-backend` → `/gsd-discuss-phase 1C` (1B ADR 도착 후 엔진 연동 task 시작; 그 전 task — Supabase 스키마/RLS, GCP 프리플라이트 — 는 ADR 없이 진행 가능)
+- **이찬희**: 메인 대화 화면 + rec/audio UX shell → mock transport 완성 후 PR
+- **김민주**: Pally Canvas2D renderer + D+1 engine ADR (`docs/adr/0001-python-engine-integration.md`) → 1C 엔진 연동 완료 확인
+- **백은혜**: 1A/1B 완료 대기 → Phase 2 통합 참여 (mock transport → 실제 `/api/chat` 교체)
 
-### Hand-off Notes
+### Hand-off Notes (Phase 1C → Phase 1A/2)
 
-- Phase 0가 끝나면 1A/1B/1C를 병렬 시작한다. 1C는 1B 전체 머지를 기다리지 않고 D+1 engine ADR만 받아 진행한다.
-- 1A와 1B 모두 `frontend/`를 만지므로 ownership을 지킨다: 1A는 메인 화면/audio shell, 1B는 Pally renderer/demo/type file.
-- Phase 1C는 FastAPI/Python 기준이다. Node `@google-cloud/*` 패키지나 Next.js API route 백엔드 구현으로 되돌리지 않는다.
-- Phase 2는 mock audio transport를 실제 Railway `/api/chat`으로 교체하고, 모바일 실기기에서 녹음 Blob 업로드 + TTS 재생까지 검증한다.
-- `/feedback` route/page는 MVP에서 만들지 않는다. 한국어 힌트/피드백은 메인 화면 inline payload로만 처리한다.
+- **Railway URL:** `https://capstone-production-e8c2.up.railway.app`
+- **이찬희에게 전달할 env:**
+  ```
+  NEXT_PUBLIC_BACKEND_URL=https://capstone-production-e8c2.up.railway.app
+  NEXT_PUBLIC_SUPABASE_URL=https://orhodalbxhbzlvjsqalu.supabase.co
+  NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  ```
+- **`/api/chat` request 최소 필드:** `{ "utterance": "...", "session_id": "uuid", "level": "B1" }`
+- **Supabase 테이블:** sessions (id, character_name, level, created_at), messages (id, session_id, role, transcript, axes, character, created_at)
 
 ---
 
 *State initialized: 2026-05-21*
-*Last synchronized: 2026-05-22 — Phase 0 marked complete (00-01 SUMMARY + UAT shipped 2026-05-21).*
+*Last synchronized: 2026-05-22 — Phase 1C marked complete (백은혜). Railway Online, Vercel env 등록 완료.*
