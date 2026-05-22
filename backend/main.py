@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import base64
 import json
+import logging
 import os
 import sys
 
@@ -17,8 +19,19 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+BACKEND_DIR = os.path.abspath(os.path.dirname(__file__))
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+
 from ai.analyzer import analyze_utterance
 from ai.matrix_engine import apply_ema, compute_character, describe_character
+
+try:
+    from lib.supabase import get_supabase
+    _SUPABASE_ENABLED = True
+except Exception:
+    _SUPABASE_ENABLED = False
+    get_supabase = None  # type: ignore
 
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")    # Gemini (AI Studio)
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # STT / TTS (Cloud Console)
@@ -77,6 +90,11 @@ class ChatRequest(BaseModel):
     level: Optional[str] = "B1"                # A2 / B1 / B2 / C1
 
 
+class InlineHintKo(BaseModel):
+    hint: str        # 한국어 힌트 (교정 설명 또는 칭찬)
+    expression: str  # 올바른 영어 표현
+
+
 class ChatResponse(BaseModel):
     status: str
     transcript: str                            # 사용자 발화 텍스트 (echo)
@@ -85,6 +103,7 @@ class ChatResponse(BaseModel):
     axes: Dict[str, int]
     character: Dict[str, int]
     character_labels: Dict[str, str]
+    hint_ko: Optional[InlineHintKo] = None    # 인라인 한국어 힌트
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
@@ -357,7 +376,6 @@ async def feedback(req: FeedbackRequest):
             if key not in feedback_data:
                 raise ValueError(f"Missing key: {key}")
     except Exception as e:
-        import logging
         logging.warning(f"Gemini fallback triggered: {e}")
         feedback_data = _FEEDBACK_FALLBACK
 
@@ -384,7 +402,7 @@ async def feedback(req: FeedbackRequest):
     }
 
 
-# ── Chat — STT 결과 → Gemini 대화 응답 → TTS ─────────────────────────────────
+# ── Chat — STT 결과 → Gemini 대화 응답 → TTS + 한국어 힌트 ────────────────────
 
 _LEVEL_GUIDE = {
     "A2": "Use very simple words and short sentences (A2 beginner level).",
@@ -446,52 +464,148 @@ async def _call_gemini_chat(
     return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 
+_HINT_KO_SYSTEM_PROMPT = """\
+You are a Korean-speaking English tutor assistant. Given the user's English utterance and Pally's reply,
+identify whether Pally implicitly corrected a grammar or vocabulary mistake (by naturally using the correct form).
+Explain briefly in Korean, or give praise if no correction was needed.
+
+Return ONLY valid JSON:
+{
+  "hint": "한국어 설명 1-2문장. 교정이 있으면 무엇이 어떻게 교정됐는지 설명. 없으면 '자연스러운 표현이에요!'처럼 칭찬.",
+  "expression": "올바른 영어 표현 (짧은 구나 문장. 교정 없으면 사용자 표현 그대로)"
+}
+"""
+
+_HINT_KO_FALLBACK = InlineHintKo(
+    hint="잘 표현했어요! 계속 연습하면 더 자연스러워질 거예요.",
+    expression="Keep it up!",
+)
+
+
+async def _call_gemini_hint_ko(utterance: str, pally_reply: str) -> InlineHintKo:
+    """사용자 발화 + Pally 응답 → 한국어 인라인 힌트 (Gemini 2.5 Flash)"""
+    user_prompt = (
+        f'User said: "{utterance}"\n'
+        f'Pally replied: "{pally_reply}"\n\n'
+        "Provide Korean hint JSON:"
+    )
+    payload = {
+        "system_instruction": {"parts": [{"text": _HINT_KO_SYSTEM_PROMPT}]},
+        "contents": [{"parts": [{"text": user_prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.3,
+            "maxOutputTokens": 256,
+        },
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.5-flash:generateContent?key={GOOGLE_AI_API_KEY}",
+            json=payload,
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Gemini hint error {resp.status_code}: {resp.text}")
+    raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    data = json.loads(raw)
+    return InlineHintKo(hint=data.get("hint", ""), expression=data.get("expression", ""))
+
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     """
-    utterance(텍스트) → 5축 분석 → EMA → 캐릭터 파라미터 → Gemini 대화 응답 → TTS
+    utterance(텍스트) → 5축 분석 → EMA → 캐릭터 파라미터 → Gemini 대화 응답 → TTS + 한국어 힌트
 
     흐름:
-      1. analyze_utterance()  → raw 5축 점수
-      2. apply_ema()          → EMA 평활화 (alpha=0.7)
-      3. compute_character()  → 캐릭터 파라미터
-      4. Gemini 2.5 Flash     → Pally 대화 응답 (자연스러운 교정 포함)
-      5. Google TTS           → Pally 응답을 MP3로 변환
+      1. Supabase 세션 조회/생성 + 대화 이력 로드 (session_id 있을 때)
+      2. analyze_utterance()  → raw 5축 점수
+      3. apply_ema()          → EMA 평활화 (alpha=0.7)
+      4. compute_character()  → 캐릭터 파라미터
+      5. Gemini 2.5 Flash     → Pally 대화 응답 (자연스러운 교정 포함)
+      6. TTS + 한국어 힌트    → asyncio.gather()로 병렬 실행
+      7. Supabase 저장        → user + pally 메시지
     """
     if not GOOGLE_AI_API_KEY:
         raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY not configured")
     if not req.utterance.strip():
         raise HTTPException(status_code=400, detail="utterance is required")
 
-    # 1. 5축 분석
+    # 1. Supabase 세션 & 대화 이력
+    character_name = req.character_name or "Pally"
+    level = req.level or "B1"
+    history: list = req.conversation_history or []
+
+    if req.session_id and _SUPABASE_ENABLED:
+        try:
+            sb = get_supabase()
+            session_res = sb.table("sessions").select("id, character_name, level").eq("id", req.session_id).execute()
+            if session_res.data:
+                character_name = session_res.data[0]["character_name"]
+                level = session_res.data[0]["level"]
+            else:
+                sb.table("sessions").insert({
+                    "id": req.session_id,
+                    "character_name": character_name,
+                    "level": level,
+                }).execute()
+            msg_res = sb.table("messages").select("role, transcript").eq("session_id", req.session_id).order("created_at").execute()
+            if msg_res.data:
+                history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in msg_res.data]
+        except Exception as e:
+            logging.warning(f"Supabase session load failed: {e}")
+
+    # 2. 5축 분석
     raw_axes = analyze_utterance(req.utterance)
 
-    # 2. EMA
+    # 3. EMA
     smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
 
-    # 3. 캐릭터 파라미터
+    # 4. 캐릭터 파라미터
     character = compute_character(smoothed_axes)
     tone_label, energy_label, humor_label = describe_character(character)
 
-    # 4. Gemini 대화 응답
+    # 5. Gemini 대화 응답
     try:
-        reply = await _call_gemini_chat(
-            req.utterance,
-            req.conversation_history or [],
-            req.character_name or "Pally",
-            req.level or "B1",
-        )
+        reply = await _call_gemini_chat(req.utterance, history, character_name, level)
     except Exception as e:
-        import logging
         logging.warning(f"Gemini chat fallback: {e}")
         reply = "I see! Tell me more."
 
-    # 5. TTS
-    tts_audio: Optional[str] = None
-    try:
-        tts_audio = await _call_google_tts(reply)
-    except Exception:
-        tts_audio = None
+    # 6. TTS + 한국어 힌트 (병렬)
+    tts_result, hint_result = await asyncio.gather(
+        _call_google_tts(reply),
+        _call_gemini_hint_ko(req.utterance, reply),
+        return_exceptions=True,
+    )
+    tts_audio = tts_result if not isinstance(tts_result, Exception) else None
+    hint_ko: Optional[InlineHintKo] = (
+        hint_result if not isinstance(hint_result, Exception) else _HINT_KO_FALLBACK
+    )
+
+    # 7. Supabase 저장
+    if req.session_id and _SUPABASE_ENABLED:
+        try:
+            sb = get_supabase()
+            sb.table("messages").insert([
+                {
+                    "session_id": req.session_id,
+                    "role": "user",
+                    "transcript": req.utterance,
+                    "axes": smoothed_axes,
+                    "character": character,
+                },
+                {
+                    "session_id": req.session_id,
+                    "role": "pally",
+                    "transcript": reply,
+                    "axes": None,
+                    "character": character,
+                },
+            ]).execute()
+        except Exception as e:
+            logging.warning(f"Supabase save failed: {e}")
 
     return {
         "status": "ok",
@@ -505,4 +619,5 @@ async def chat(req: ChatRequest):
             "energy": energy_label,
             "humor": humor_label,
         },
+        "hint_ko": hint_ko,
     }
