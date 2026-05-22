@@ -23,7 +23,7 @@ Every phase exists to make the core loop (사용자 발화 → 5축 분석 → P
 
 ## Phases
 
-- [ ] **Phase 0: Foundation (Minimal)** — Next.js 스캐폴드 + 공유 타입 + `.env.example` + Supabase 클라이언트 + Tailwind. 1A/1B/1C가 즉시 시작할 수 있게 최소만 
+- [x] **Phase 0: Foundation (Minimal)** — Next.js 스캐폴드 + 공유 타입 + `.env.example` + Supabase 클라이언트 + Tailwind. 1A/1B/1C가 즉시 시작할 수 있게 최소만 (완료 2026-05-21)
 - [ ] **Phase 1A: FE Screens & Audio Shell** — 메인 대화 화면 + rec/audio UX shell (이찬희)
 - [ ] **Phase 1B: Pally Canvas2D + Python Engine Integration** — Superformula 렌더러 + 5축 엔진 통합 ADR (김민주)
 - [ ] **Phase 1C: Voice + Inline Feedback Backend + Supabase Schema** — Google Cloud STT/TTS + Vertex AI Gemini로 `/api/chat` + Supabase 테이블/RLS (백은혜)
@@ -137,7 +137,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 0. Foundation | 0/1 | Planned | - |
+| 0. Foundation | 1/1 | Complete | 2026-05-21 |
 | 1A. FE Screens & Audio Shell | 0/? | Not started | - |
 | 1B. Pally Canvas2D + Engine ADR | 0/? | Not started | - |
 | 1C. Voice + Inline Feedback BE + Schema | 0/? | Not started | - |
@@ -189,4 +189,4 @@ Plans:
 ---
 
 *Roadmap created: 2026-05-21*
-*Last updated: 2026-05-21 — Phase 0 minimized, OpenAI replaced with GCP Vertex AI, Supabase schema moved to Phase 1C, Python engine ADR moved to Phase 1B; Phase 1A reduced to one main screen, `/feedback` UI removed from MVP, onboarding removed from MVP (character_name/level use defaults until v2); **monorepo 폴더 분리 명시**: Repo Layout 섹션 추가(`frontend/` + `backend/` + `ai/` 역할 + 작업 충돌 방지), Phase 0 SC를 `frontend/` 기준으로 재작성 (`cd frontend && npm run dev`, `frontend/lib/types/`, `frontend/lib/supabase/client.ts`, `frontend/.env.example`, `frontend/app/page.tsx`), 루트 `.env.example` 제거, Phase 2 배포 구조에 Vercel/Railway Root Directory 명시; **공유 타입 소유권 분담**: Phase 0은 1A에 필요한 최소 UI 타입(`Message`/`Session`)만 정의, `Axes`/`CharacterParams`는 Phase 1B(김민주)로 이관 — 엔진(`ai/analyzer.py` + `matrix_engine.py`)을 다루는 사람이 정확한 타입을 정의하기 위해. 백엔드(Python)는 자체 Pydantic 모델 사용, FE↔BE 공유 계약은 JSON wire format으로; **2026-05-21 Codex review 반영**: 오디오 책임을 1A mock audio shell + 1C backend contract + Phase 2 real wiring으로 분리, 1C가 1B 전체가 아닌 D+1 ADR만 소비하도록 병렬성 보존, 김민주 frontend 작업 영역을 `components/pally`, `app/dev/pally`, `lib/types/character.ts`로 명시, FastAPI/Python 백엔드 기준으로 GCP SDK/환경변수 정리; **2026-05-21 Phase 0 planning**: 00-01-PLAN.md 작성, Plans/Progress 컬럼 갱신*
+*Last updated: 2026-05-22 — **Phase 0 complete** (00-01 plan shipped, UAT 5/5, see 00-01-SUMMARY.md); ready for parallel 1A/1B/1C start. Earlier history: Phase 0 minimized, OpenAI replaced with GCP Vertex AI, Supabase schema moved to Phase 1C, Python engine ADR moved to Phase 1B; Phase 1A reduced to one main screen, `/feedback` UI removed from MVP, onboarding removed from MVP (character_name/level use defaults until v2); **monorepo 폴더 분리 명시**: Repo Layout 섹션 추가(`frontend/` + `backend/` + `ai/` 역할 + 작업 충돌 방지), Phase 0 SC를 `frontend/` 기준으로 재작성 (`cd frontend && npm run dev`, `frontend/lib/types/`, `frontend/lib/supabase/client.ts`, `frontend/.env.example`, `frontend/app/page.tsx`), 루트 `.env.example` 제거, Phase 2 배포 구조에 Vercel/Railway Root Directory 명시; **공유 타입 소유권 분담**: Phase 0은 1A에 필요한 최소 UI 타입(`Message`/`Session`)만 정의, `Axes`/`CharacterParams`는 Phase 1B(김민주)로 이관 — 엔진(`ai/analyzer.py` + `matrix_engine.py`)을 다루는 사람이 정확한 타입을 정의하기 위해. 백엔드(Python)는 자체 Pydantic 모델 사용, FE↔BE 공유 계약은 JSON wire format으로; **2026-05-21 Codex review 반영**: 오디오 책임을 1A mock audio shell + 1C backend contract + Phase 2 real wiring으로 분리, 1C가 1B 전체가 아닌 D+1 ADR만 소비하도록 병렬성 보존, 김민주 frontend 작업 영역을 `components/pally`, `app/dev/pally`, `lib/types/character.ts`로 명시, FastAPI/Python 백엔드 기준으로 GCP SDK/환경변수 정리; **2026-05-21 Phase 0 planning**: 00-01-PLAN.md 작성, Plans/Progress 컬럼 갱신*
