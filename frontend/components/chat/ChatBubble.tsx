@@ -2,41 +2,53 @@
 
 import { cn } from '@/lib/utils';
 import type { Message } from '@/lib/types/message';
+import { MessageRow } from './MessageRow';
+import { DateDivider } from './DateDivider';
 
 export interface ChatBubbleProps {
   messages: readonly Message[];
-  historyOpen: boolean;
-  onToggleHistory: () => void;
+  expanded: boolean;
+  thinking?: boolean;
+  onToggleExpand: () => void;
 }
 
-function SenderLabel({ role }: { role: Message['role'] }) {
-  if (role === 'user') {
-    return <span className="text-accent text-body-2-sb">YOU</span>;
-  }
-  return <span className="text-primary text-body-2-sb">Pally</span>;
-}
+// Figma BoxShort (433:3266, h=450, w=402):
+//   - 노란 wrapper:  inset[0 0 19.08% 0]  → top 0 ~ 80.92%  (height ~364)
+//   - 흰 inner:      inset[0.01% 0 21.85% 0] → top 0 ~ 78.15% (height ~352)
+//   - 보이는 노란 띠 = 흰 inner 끝 ~ 노란 wrapper 끝 = ~12.5px (78.15→80.92%)
+//   - 그 아래 빈 영역 = 19.08% × 450 ≈ 86px (cream 배경)
+//   - Tail (Group 4): inset[61.68% 5.47% 0 68.16%] → right=22, top=277, w≈106, h≈173
+//     말풍선 꼬리 — 흰 영역 오른쪽 아래 모서리에서 노란 띠와 합쳐지는 곡선 모양
+//   - Chevron (Expand_down): right=22, top=281, 40×40 (흰 영역 안)
+//   - 메시지 영역: top=110, left=37, right=37, h=132 (Figma "short chat" instance)
+//
+// Figma BoxLong (433:3363, h=735, w=402):
+//   - 노란 wrapper:  inset 0 (full)
+//   - 흰 inner:      inset[0 0 2.85% 0] → top 0 ~ 97.15% (height ~714)
+//   - 보이는 노란 띠 = 2.85% × 735 ≈ 21px
+//   - Tail 없음
+//   - Chevron (Expand_up): right=22, top=651
+//   - 메시지 영역: top=24, left=16, right=16, padding 24/16, gap 12
 
-function Chevron({ open }: { open: boolean }) {
-  // 16x16 chevron — down when closed (open=false), up when open=true.
+function Chevron({ direction }: { direction: 'down' | 'up' }) {
   return (
     <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
       aria-hidden="true"
       className={cn(
         'transition-transform duration-200',
-        open ? 'rotate-180' : 'rotate-0',
+        direction === 'up' ? 'rotate-180' : 'rotate-0',
       )}
     >
-      {/* #6b7280 = text-muted token — SVG stroke attr cannot reference Tailwind tokens */}
       <path
-        d="M3 6l5 5 5-5"
-        stroke="#6b7280"
+        d="M6 9l6 6 6-6"
+        stroke="#33363f"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
-        fill="none"
       />
     </svg>
   );
@@ -44,57 +56,127 @@ function Chevron({ open }: { open: boolean }) {
 
 export function ChatBubble({
   messages,
-  historyOpen,
-  onToggleHistory,
+  expanded,
+  thinking = false,
+  onToggleExpand,
 }: ChatBubbleProps) {
-  const isEmpty = messages.length === 0;
-  // Last Pally reply is the latest entry; last user turn is the one before.
-  const lastPally = !isEmpty ? messages.at(-1) : undefined;
-  const lastUser = !isEmpty ? messages.at(-2) : undefined;
+  if (expanded) {
+    return <LongBubble messages={messages} onCollapse={onToggleExpand} />;
+  }
+  return <ShortBubble messages={messages} thinking={thinking} onExpand={onToggleExpand} />;
+}
+
+function ShortBubble({
+  messages,
+  thinking,
+  onExpand,
+}: {
+  messages: readonly Message[];
+  thinking: boolean;
+  onExpand: () => void;
+}) {
+  const lastPally = messages.findLast?.((m) => m.role === 'pally');
+  const lastUser = messages.findLast?.((m) => m.role === 'user');
 
   return (
     <section
-      className={cn(
-        'mx-auto w-full max-w-[370px]',
-        'bg-surface-raised rounded-2xl border border-border',
-        'px-4 py-3',
-        'shadow-sm',
-      )}
       aria-label="대화"
+      className="relative w-full max-w-[402px] h-[450px] mx-auto"
     >
-      {isEmpty ? (
-        // Empty state per UI-SPEC Copywriting Contract — two <p> for screen-reader correctness.
-        <div className="py-6 text-center">
-          <p className="text-title-1 text-text">오늘은 어떤 이야기를 해볼까요?</p>
-          <p className="text-body text-text-muted mt-2">
-            마이크를 눌러 영어로 말해보세요
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {lastUser && lastUser.role === 'user' && (
-            <p className="text-body text-text">
-              <SenderLabel role="user" />
-              <span className="ml-2">{lastUser.transcript}</span>
-            </p>
-          )}
-          {lastPally && lastPally.role === 'pally' && (
-            <p className="text-subtitle-sb text-text">
-              <SenderLabel role="pally" />
-              <span className="ml-2">{lastPally.transcript}</span>
-            </p>
-          )}
-        </div>
-      )}
+      {/* Order matters for z-stacking: 노란 wrapper → tail → 흰 inner.
+          흰 박스가 tail 위쪽을 덮어서 진짜 말풍선 꼬리 모양으로 보이게 함. */}
 
+      {/* 1. 노란 wrapper: bottom 19.08% 비움 (= 86px) */}
+      <div
+        className="absolute top-0 inset-x-0 bg-primary-soft rounded-b-[30px]"
+        style={{ bottom: '19.08%' }}
+        aria-hidden
+      />
+      {/* 2. Tail (노란 wrapper 위, 흰 박스 아래에 layered) */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/pally/chat-tail.svg"
+        alt=""
+        aria-hidden
+        className="absolute pointer-events-none"
+        style={{ right: '5.47%', top: '61.68%', width: '26.37%', height: '38.32%' }}
+      />
+      {/* 3. 흰 inner: bottom 21.85% 비움 (= 98px). tail의 위쪽 부분을 덮어
+              말풍선 꼬리가 흰 박스에서 흘러내리는 형태로 보이게 함 */}
+      <div
+        className="absolute top-0 inset-x-0 bg-surface-raised rounded-b-[30px]"
+        style={{ bottom: '21.85%' }}
+        aria-hidden
+      />
+
+      {/* 메시지 영역 */}
+      <div className="absolute top-[110px] left-[37px] right-[37px] h-[132px] flex flex-col gap-1">
+        {lastUser && (
+          <MessageRow speaker="you" transcript={lastUser.transcript} />
+        )}
+        {thinking ? (
+          <MessageRow speaker="pally" transcript="" state="thinking" />
+        ) : lastPally ? (
+          <MessageRow speaker="pally" transcript={lastPally.transcript} />
+        ) : null}
+      </div>
+
+      {/* Chevron at right=22, top=281 (Figma Expand_down 40×40) */}
       <button
         type="button"
-        onClick={onToggleHistory}
-        aria-label={historyOpen ? '대화 기록 닫기' : '대화 기록 열기'}
-        aria-expanded={historyOpen}
-        className="mx-auto mt-2 flex items-center justify-center w-full h-6 rounded-md hover:bg-surface"
+        onClick={onExpand}
+        aria-label="대화 기록 펼치기"
+        aria-expanded={false}
+        className="absolute right-[22px] top-[281px] w-10 h-10 flex items-center justify-center rounded-md hover:bg-surface/40"
       >
-        <Chevron open={historyOpen} />
+        <Chevron direction="down" />
+      </button>
+    </section>
+  );
+}
+
+function LongBubble({
+  messages,
+  onCollapse,
+}: {
+  messages: readonly Message[];
+  onCollapse: () => void;
+}) {
+  return (
+    <section
+      aria-label="전체 대화 기록"
+      className="relative w-full max-w-[402px] h-[735px] mx-auto"
+    >
+      {/* 노란 wrapper: 전체 */}
+      <div className="absolute inset-0 bg-primary-soft rounded-b-[30px]" aria-hidden />
+      {/* 흰 inner: bottom 2.85% 비움 (~21px 노란 띠) */}
+      <div
+        className="absolute top-0 inset-x-0 bg-surface-raised rounded-b-[30px]"
+        style={{ bottom: '2.85%' }}
+        aria-hidden
+      />
+
+      {/* 메시지 리스트 — Figma 427:2804 spec: padding 24px / 16px, gap 12px */}
+      <div className="absolute top-[24px] left-[16px] right-[16px] bottom-[80px] flex flex-col gap-3 overflow-y-auto">
+        <DateDivider kind="date" label="2026.05.25" />
+        {messages.map((m, idx) => (
+          <MessageRow
+            key={`${m.role}-${idx}`}
+            speaker={m.role === 'pally' ? 'pally' : 'you'}
+            transcript={m.transcript}
+          />
+        ))}
+      </div>
+
+      {/* Chevron expand-up at right=22, top=651 */}
+      <button
+        type="button"
+        onClick={onCollapse}
+        aria-label="대화 기록 접기"
+        aria-expanded={true}
+        className="absolute right-[22px] top-[651px] w-10 h-10 flex items-center justify-center rounded-md hover:bg-surface/40"
+      >
+        <Chevron direction="up" />
       </button>
     </section>
   );
