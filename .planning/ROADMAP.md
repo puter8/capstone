@@ -69,10 +69,10 @@ Plans:
 > **Note — 피드백 화면 없음 (MVP)**: `/feedback` route/page는 만들지 않는다. 한국어 힌트/피드백은 `/api/chat` 응답의 inline payload로만 전달하고, 메인 화면 안에서 필요한 만큼만 표시한다.
 **Plans**: 5 plans, 3 waves
 Plans:
-- [ ] 01A-01-PLAN.md — Tailwind color tokens + layout shell (viewport lock 402px, cream surface, Pally metadata)
-- [ ] 01A-02-PLAN.md — Wire types (chat.ts) + useReducer state machine + single-swap mock + MediaRecorder MIME probe
-- [ ] 01A-03-PLAN.md — Audio shell: useRecorder hook (getUserMedia + 30s auto-stop + cleanup) + 5-state TalkButton (96px disc + 132px ring)
-- [ ] 01A-04-PLAN.md — Chat surfaces: PallyPlaceholder (262×262 SVG) + ChatBubble + HistoryRow + HistorySheet + BottomNav (5 disabled tabs) + Toast
+- [x] 01A-01-PLAN.md — Tailwind color tokens + layout shell (viewport lock 402px, cream surface, Pally metadata)
+- [x] 01A-02-PLAN.md — Wire types (chat.ts) + useReducer state machine + single-swap mock + MediaRecorder MIME probe
+- [x] 01A-03-PLAN.md — Audio shell: useRecorder hook (getUserMedia + 30s auto-stop + cleanup) + 5-state TalkButton (96px disc + 132px ring)
+- [x] 01A-04-PLAN.md — Chat surfaces: PallyPlaceholder (262×262 SVG) + ChatBubble + HistoryRow + HistorySheet + BottomNav (5 disabled tabs) + Toast
 - [ ] 01A-05-PLAN.md — Main page assembly (app/page.tsx) + Playwright 402px E2E verification checkpoint
 **Estimated effort**: 5 days (parallel with 1B/1C)
 **UI hint**: yes
