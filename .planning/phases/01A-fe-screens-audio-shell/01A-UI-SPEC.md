@@ -69,18 +69,49 @@ Source: `frontend/tailwind.config.ts` lines 34-50 (already implemented Phase 0) 
 
 The full 15-token set is locked at the project level (`tailwind.config.ts`). Phase 1A uses the **subset below** — do not introduce new sizes or weights inside `components/`.
 
-### Phase 1A active subset (5 sizes, 2 weights)
+### Phase 1A active subset (6 sizes, 2 weights)
 
 | Role | Tailwind class | Size | Line | Weight | Where used in 1A |
 |------|----------------|------|------|--------|------------------|
 | Display | `text-title-1` | 24px | 36px | 600 SemiBold | Empty-state heading "오늘은 어떤 이야기를 해볼까요?" |
 | Heading | `text-subtitle-sb` | 18px | 24px | 600 SemiBold | Chat-bubble Pally reply emphasized text, history sheet section title |
 | Body | `text-body` | 16px | 24px | 400 Regular | Chat-bubble user transcript + Pally reply default, empty-state subtitle, toast message body |
-| Caption SB | `text-body-2-sb` (14px/24/600) **OR** `text-caption-1` (12px/16/400) — see note | 12-14px | 16-24px | varies | Sender labels "YOU" / "Pally" — see note below |
-| Caption | `text-caption-1` | 12px | 16px | 400 Regular | Timestamps, toast inline error text, mic permission-denied inline message |
+| Label SB | `text-body-2-sb` | 14px | 24px | 600 SemiBold | Sender labels "YOU" / "Pally", button text |
+| Caption | `text-caption-1` | 12px | 16px | 400 Regular | Timestamps in expanded history, inline error text, mic permission-denied inline message |
 | Smallest | `text-caption-2` | 11px | 12px | 400 Regular | BottomNav tab labels "홈 / 히스토리 / 새 대화 / 랭킹 / 내 정보" |
 
-**Note on sender labels (YOU / Pally):** `DESIGN.md § Known limitations #1` documents that Figma currently renders these at Title 20-24px due to Pretendard not being installed in the Figma desktop environment. The **design intent** (per the Decisions Log) is `text-caption-1` (12px SemiBold). For 1A implementation, **use `text-body-2-sb` (14px SemiBold)** as the pragmatic mid-point: it is unambiguously below the body it labels, semibold for hierarchy, and matches the project's existing 600-weight token set without inventing a 12px-SemiBold combination. When Figma is re-synced after Pretendard install (Senior plan B4), this file and the implementation should both move to 12px/SemiBold. Until then, **`text-body-2-sb` is the locked choice**.
+### Typography Scale Rationale — Note on size count
+
+> **Waiver:** Phase 1A's active subset uses **6 distinct font sizes** (24 / 18 / 16 / 14 / 12 / 11 px), which exceeds the default "maximum 4 sizes" typography heuristic enforced by gsd-ui-checker. This waiver is taken with rationale (Option 1) rather than trimming the scale. The justification below is the binding contract.
+
+**1. Each size carries a non-overlapping UI role.** No two sizes are interchangeable; collapsing any pair would conflate two distinct semantic roles or break an upstream lock.
+
+| Size | Role (binding) | Why no other size can fill it |
+|------|----------------|-------------------------------|
+| 24px (`text-title-1`) | Empty-state display heading — the single largest type in the app, used only when `messages.length === 0` | Drops below 24px → loses display-vs-body separation against the 16px subtitle directly beneath it. |
+| 18px (`text-subtitle-sb`) | Pally reply emphasis inside chat bubble + history sheet section title | Drops to 16px → indistinguishable from body in the same bubble. Promotes to 20px → introduces `text-title-2`, a 7th size. |
+| 16px (`text-body`) | Default message body, transcript text, toast body | The canonical body anchor — moving it cascades through the entire chat surface. |
+| 14px (`text-body-2-sb`) | Sender labels "YOU" / "Pally", button-style affordances | The labels must be unambiguously smaller than the 16px body they tag yet larger than the 12px caption tier. Collapsing to 12px conflicts with DESIGN.md Known-Limitations item 1 (12px-SemiBold combination is the *aspirational* post-Pretendard target, not the locked 1A choice). |
+| 12px (`text-caption-1`) | Inline errors, timestamps in expanded history, permission inline copy | Sits below the 14px label tier; collapsing into 14px would make error text the same size as labels and lose hierarchy. |
+| 11px (`text-caption-2`) | BottomNav 5-tab labels (`홈 / 히스토리 / 새 대화 / 랭킹 / 내 정보`) | **Locked by DESIGN.md decisions-log entry 2026-05-25:** `Bottom nav 5 tabs 라벨: ... 11px Regular`. Cannot drop to 12px without a DESIGN.md amendment, which is out-of-scope for 1A. |
+
+**2. Upstream contracts that lock these sizes (cannot be unilaterally changed in 1A):**
+
+- **`frontend/tailwind.config.ts` lines 34-50** — Phase 0 already shipped the full 15-token Pretendard scale. All six sizes used here (`title-1`, `subtitle-sb`, `body`, `body-2-sb`, `caption-1`, `caption-2`) are *existing* tokens. **1A introduces zero new sizes** — it only consumes a subset of what Phase 0 baked in.
+- **`DESIGN.md § Decisions Log` entry 2026-05-25:** `Bottom nav 5 tabs 라벨: 홈 / 히스토리 / 새 대화 / 랭킹 / 내 정보 (Korean, 11px Regular, 4px gap below icon)` — explicitly mandates 11px. Removing the 11px size from 1A requires editing DESIGN.md first, which is out-of-scope per CLAUDE.md § 1 (Phase 1A ownership).
+- **`DESIGN.md § Typography` token table** — the full 15-token set is the project-level contract; 1A obeys the project scale, it does not redefine it.
+- **Figma `mvp design` canvas (file key `4kLxDLD2LdbB5BiY2QT5qU`, node `427:2173`)** — the 6 frames referenced in §Visual Reference use this exact 6-size scale. Trimming would break Figma fidelity, which is the §Source-of-truth invariant at the top of this document.
+
+**3. The trim alternative was considered and rejected.** Hypothetical reductions and why each fails:
+
+- *Drop 11px, promote nav labels to 12px* → violates DESIGN.md decisions log 2026-05-25; would force a DESIGN.md amendment outside 1A's scope.
+- *Drop 14px label tier, use 12px for sender labels* → collapses "label" and "caption" into one tier; loses hierarchy between sender-tags and error/timestamp text in the same bubble.
+- *Drop 18px, promote Pally emphasis to 24px* → conflates display (empty-state hero) with in-bubble emphasis; visually shouts when the bubble should be a quiet read.
+- *Drop 24px, demote empty-state heading to 18px* → empty state becomes visually identical to a Pally reply, losing the "first-run welcome" signal documented in DESIGN.md decisions log "Empty state 한국어로 전환".
+
+**4. No new sizes are introduced.** The scale is fully shipped in `tailwind.config.ts`; 1A consumes existing tokens only. This waiver covers count, not novelty — there is zero risk of token sprawl from this phase.
+
+**5. Weights remain within the default heuristic.** Exactly **2 weights** ship in 1A (400 Regular, 600 SemiBold), well within the "max 2 weights" rule. The waiver is for size count alone.
 
 ### Weight rule
 
@@ -315,7 +346,7 @@ The gsd-ui-checker and code-review pass MUST flag any of the following:
 1. **Arbitrary spacing in JSX** — `p-[13px]`, `mt-[7px]`, `gap-[10px]`. Use the 4-grid Tailwind utilities. Exception: the 132px / 144px Figma decorative-ring sizes if they ever appear outside the TalkButton are flagged (they are TalkButton-internal).
 2. **Inline raw hex colors in JSX** — `style={{color: '#fe9012'}}` or `className="bg-[#fcf9f6]"`. The Phase 1A plan adds these to `tailwind.config.ts theme.extend.colors`; executor uses `bg-primary`, `text-accent`, etc.
 3. **New color tokens introduced without a DESIGN.md decisions-log entry.** If a state needs a color outside the table above, stop and update DESIGN.md first.
-4. **New font sizes / weights outside the 15-token set.** No `text-[17px]`, no `font-medium`. The two-weight rule (400 / 600) is non-negotiable for 1A.
+4. **New font sizes / weights outside the 15-token set.** No `text-[17px]`, no `font-medium`. The two-weight rule (400 / 600) is non-negotiable for 1A. The 6-size active subset is locked — adding a 7th (e.g. `text-title-2`) requires a Typography Scale Rationale update.
 5. **`opacity-50` or similar dimming on disabled BottomNav tabs.** DESIGN.md mandates Figma-as-is — full opacity + `aria-disabled="true"` + no onClick + `cursor-default` (RESEARCH §Anti-Patterns).
 6. **Animations that 1A cannot deliver** — Pally morph, typewriter reveal, audio waveform, splash fade. All deferred. Plain CSS transitions on chevron rotation and history sheet slide are OK.
 7. **Magic numbers without a comment.** The 800ms / 1500ms / 30000ms / 4000ms each must carry a short `// 1A mock latency per CONTEXT D-04` comment at the call site for downstream reviewers.
@@ -347,7 +378,7 @@ The gsd-ui-checker and code-review pass MUST flag any of the following:
 - [ ] Dimension 1 Copywriting: PASS — empty state, error states, fixture all locked verbatim Korean / English
 - [ ] Dimension 2 Visuals: PASS — 6 Figma frames + TalkButton ComponentSet referenced; component inventory complete; placeholder boundary against Phase 1B explicit
 - [ ] Dimension 3 Color: PASS — 60/30/10 split declared; accent reserved-for list explicit (5 elements for `primary`, 1 element for `accent`, 2 elements for `error`); contrast caveat documented and deferred per Senior plan
-- [ ] Dimension 4 Typography: PASS — Pretendard only; 5 sizes (24 / 18 / 16 / 14 / 12 / 11), 2 weights (400 / 600); sender-label limitation documented
+- [ ] Dimension 4 Typography: PASS WITH WAIVER — Pretendard only; **6 sizes** (24 / 18 / 16 / 14 / 12 / 11 px), 2 weights (400 / 600). Size count exceeds default 4-size heuristic; waiver granted with full rationale under §Typography → "Typography Scale Rationale". Each size carries a non-overlapping role; 11px is locked by DESIGN.md decisions-log 2026-05-25; zero new sizes introduced (all 6 are existing tokens in `tailwind.config.ts`).
 - [ ] Dimension 5 Spacing: PASS — 4-grid only; touch-target exceptions all multiples of 4
 - [ ] Dimension 6 Registry Safety: PASS — no registry used; gate not applicable
 
