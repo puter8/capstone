@@ -1,120 +1,118 @@
 'use client';
 
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
-type TabId = 'home' | 'history' | 'new' | 'ranking' | 'profile';
-interface Tab {
-  id: TabId;
-  label: string;
-  isFab: boolean;
-}
+// GNB: black pill bar + protruding FAB. Icons are tinted via CSS mask-image
+// so a single SVG can render white (idle) or #FFB84A (active route).
 
-// Korean labels locked by DESIGN.md decisions log 2026-05-25 + UI-SPEC § Copywriting Contract.
-const TABS: readonly Tab[] = [
-  { id: 'home', label: '홈', isFab: false },
-  { id: 'history', label: '히스토리', isFab: false },
-  { id: 'new', label: '새 대화', isFab: true },
-  { id: 'ranking', label: '랭킹', isFab: false },
-  { id: 'profile', label: '내 정보', isFab: false },
-];
+const ACTIVE_COLOR = '#FFB84A';
+const IDLE_COLOR = '#ffffff';
+const ICON_SIZE = 30;
 
-// 24x24 stroke icons — minimal placeholder shapes (Figma exact glyphs deferred to Phase B polish).
-function TabIcon({ id }: { id: TabId }) {
-  // #33363f = icon token — SVG stroke attr cannot reference Tailwind tokens.
-  const stroke = '#33363f';
+const SIDE_TABS = [
+  { id: 'home', label: '홈', side: 'left', href: '/home' },
+  { id: 'history', label: '학습', side: 'left', href: '/history' },
+  { id: 'ranking', label: '랭킹', side: 'right', href: '/ranking' },
+  { id: 'my', label: '내 정보', side: 'right', href: '/my' },
+] as const;
+
+function TabIcon({ id, active }: { id: string; active: boolean }) {
+  // CSS mask-image: the SVG defines the shape (alpha channel),
+  // background-color paints it. Lets one file render in multiple colors.
+  const url = `url(/icons/${id}.svg)`;
   return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      {id === 'home' && (
-        <path
-          d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1v-9z"
-          stroke={stroke}
-          strokeWidth="2"
-          strokeLinejoin="round"
-        />
-      )}
-      {id === 'history' && (
-        <g
-          stroke={stroke}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="12" cy="12" r="8" fill="none" />
-          <path d="M12 7v5l3 2" />
-        </g>
-      )}
-      {id === 'ranking' && (
-        <path
-          d="M5 21V10M12 21V4M19 21v-7"
-          stroke={stroke}
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
-      )}
-      {id === 'profile' && (
-        <g
-          stroke={stroke}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          fill="none"
-        >
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 21a8 8 0 0 1 16 0" />
-        </g>
-      )}
-    </svg>
+    <span
+      aria-hidden
+      className="inline-block"
+      style={{
+        width: ICON_SIZE,
+        height: ICON_SIZE,
+        backgroundColor: active ? ACTIVE_COLOR : IDLE_COLOR,
+        WebkitMaskImage: url,
+        maskImage: url,
+        WebkitMaskRepeat: 'no-repeat',
+        maskRepeat: 'no-repeat',
+        WebkitMaskPosition: 'center',
+        maskPosition: 'center',
+        WebkitMaskSize: 'contain',
+        maskSize: 'contain',
+      }}
+    />
   );
 }
 
 export function BottomNav() {
+  const pathname = usePathname();
+
+  const renderTab = (tab: (typeof SIDE_TABS)[number]) => {
+    const active = pathname === tab.href;
+    return (
+      <Link
+        key={tab.id}
+        href={tab.href}
+        aria-label={tab.label}
+        aria-current={active ? 'page' : undefined}
+        className="w-12 h-12 flex items-center justify-center"
+      >
+        <TabIcon id={tab.id} active={active} />
+      </Link>
+    );
+  };
+
   return (
     <nav
       aria-label="하단 내비게이션"
-      className={cn(
-        'fixed bottom-0 inset-x-0 z-30',
-        'mx-auto w-full max-w-[402px]',
-        'bg-surface border-t border-border',
-        // Upward soft drop shadow per DESIGN.md "Navbar separator" decision 2026-05-25.
-        'shadow-[0_-2px_10px_rgba(0,0,0,0.06)]',
-      )}
+      className="absolute bottom-[10px] left-[10px] right-[10px] z-30 h-[120px]"
     >
-      <ul className="flex items-center justify-around h-16">
-        {TABS.map((tab) => (
-          <li key={tab.id} className="flex-1 flex justify-center">
-            {tab.isFab ? (
-              // 새 대화 FAB — 56px black disc, white cross. NOT orange (DESIGN.md decisions log).
-              <div
-                aria-disabled="true"
-                aria-label={tab.label}
-                className="flex flex-col items-center gap-1 cursor-default"
-              >
-                <div className="w-14 h-14 rounded-full bg-fab flex items-center justify-center">
-                  {/* #ffffff white cross — SVG stroke attr cannot reference Tailwind tokens */}
-                  <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-                    <path
-                      d="M10 4v12M4 10h12"
-                      stroke="#ffffff"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </div>
-                <span className="text-caption-2 text-text-muted">{tab.label}</span>
-              </div>
-            ) : (
-              <div
-                aria-disabled="true"
-                aria-label={tab.label}
-                className="flex flex-col items-center gap-1 cursor-default w-16 h-14 justify-center"
-              >
-                <TabIcon id={tab.id} />
-                <span className="text-caption-2 text-text-muted">{tab.label}</span>
-              </div>
-            )}
-          </li>
-        ))}
+      {/* Black rounded bar */}
+      <div
+        className={cn(
+          'absolute inset-x-0 bottom-0 h-[80px]',
+          'bg-fab rounded-[40px]',
+          'shadow-[0_4px_14px_rgba(0,0,0,0.18)]',
+        )}
+        aria-hidden
+      />
+
+      {/* Side icons (2 each) layered on the bar */}
+      <ul className="absolute inset-x-0 bottom-0 h-[80px] flex items-center px-2">
+        <li className="flex flex-1 justify-around">
+          {SIDE_TABS.filter((t) => t.side === 'left').map(renderTab)}
+        </li>
+        {/* Spacer where FAB sits */}
+        <li className="w-[96px]" aria-hidden />
+        <li className="flex flex-1 justify-around">
+          {SIDE_TABS.filter((t) => t.side === 'right').map(renderTab)}
+        </li>
       </ul>
+
+      {/* FAB: black ring → white disc → black plus */}
+      <button
+        type="button"
+        aria-label="새 대화"
+        aria-disabled="true"
+        disabled
+        className={cn(
+          'absolute left-1/2 -translate-x-1/2 top-[14px]',
+          'w-[80px] h-[80px] rounded-full bg-fab',
+          'flex items-center justify-center',
+          'shadow-[0_3px_10px_rgba(0,0,0,0.2)]',
+          'cursor-default',
+        )}
+      >
+        <span className="w-[64px] h-[64px] rounded-full bg-surface-raised flex items-center justify-center">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M12 5v14M5 12h14"
+              stroke="#1a1a1a"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+            />
+          </svg>
+        </span>
+      </button>
     </nav>
   );
 }

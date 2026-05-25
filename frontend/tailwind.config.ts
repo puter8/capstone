@@ -19,6 +19,7 @@ const config: Config = {
         text: "#1a1a1a",
         "text-secondary": "#212529",
         "text-muted": "#6b7280",
+        "text-tertiary": "#9e9e9e",
         icon: "#33363f",
         border: "#e5e0d8",
         success: "#10b981",
