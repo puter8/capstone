@@ -1,5 +1,5 @@
-import { cn } from '@/lib/utils';
+import { redirect } from 'next/navigation';
 
-export default function Page() {
-  return <main className={cn('p-4 text-sm')}>Pally</main>;
+export default function RootPage() {
+  redirect('/home');
 }
