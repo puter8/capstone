@@ -67,7 +67,13 @@ Plans:
 
 > **Note — 온보딩 없음 (MVP)**: 별도 온보딩/랜딩 화면을 두지 않는다. Pally 이름과 영어 레벨은 v2에서 받기로 하고, MVP에서는 Phase 1C가 sessions row를 생성할 때 데모 기본값(`character_name = 'Pally'`, `level = 'B1'`)으로 채운다.
 > **Note — 피드백 화면 없음 (MVP)**: `/feedback` route/page는 만들지 않는다. 한국어 힌트/피드백은 `/api/chat` 응답의 inline payload로만 전달하고, 메인 화면 안에서 필요한 만큼만 표시한다.
-**Plans**: TBD
+**Plans**: 5 plans, 3 waves
+Plans:
+- [ ] 01A-01-PLAN.md — Tailwind color tokens + layout shell (viewport lock 402px, cream surface, Pally metadata)
+- [ ] 01A-02-PLAN.md — Wire types (chat.ts) + useReducer state machine + single-swap mock + MediaRecorder MIME probe
+- [ ] 01A-03-PLAN.md — Audio shell: useRecorder hook (getUserMedia + 30s auto-stop + cleanup) + 5-state TalkButton (96px disc + 132px ring)
+- [ ] 01A-04-PLAN.md — Chat surfaces: PallyPlaceholder (262×262 SVG) + ChatBubble + HistoryRow + HistorySheet + BottomNav (5 disabled tabs) + Toast
+- [ ] 01A-05-PLAN.md — Main page assembly (app/page.tsx) + Playwright 402px E2E verification checkpoint
 **Estimated effort**: 5 days (parallel with 1B/1C)
 **UI hint**: yes
 
@@ -138,7 +144,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 0. Foundation | 1/1 | Complete | 2026-05-21 |
-| 1A. FE Screens & Audio Shell | 0/? | Not started | - |
+| 1A. FE Screens & Audio Shell | 0/5 | In progress | - |
 | 1B. Pally Canvas2D + Engine ADR | 0/? | Not started | - |
 | 1C. Voice + Inline Feedback BE + Schema | 1/1 | Complete | 2026-05-22 |
 | 2. Integration & Demo Polish | 0/? | Not started | - |
