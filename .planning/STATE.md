@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-last_updated: "2026-05-22T00:00:00.000Z"
+status: Executing Phase 01A
+last_updated: "2026-05-25T07:18:13.025Z"
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
-  percent: 40
+  completed_phases: 1
+  total_plans: 6
+  completed_plans: 1
+  percent: 17
 ---
 
 # STATE: Pally — CharaShift MVP
@@ -20,12 +20,14 @@ progress:
 
 - **Core Value:** 내 영어 발화 스타일에 반응하는 Pally — 5축 분석 → Pally 시각·말투 변화 루프
 - **Demo deadline:** 2026-06-07
-- **Current focus:** Phase 1A (이찬희) / Phase 1B (김민주) — parallel; Phase 1C 완료
+- **Current focus:** Phase 01A — fe-screens-audio-shell
 - **Planning source of truth:** `.planning/ROADMAP.md`
 - **Synchronized planning docs:** `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md`, `.planning/STATE.md`
 
 ## Current Position
 
+Phase: 01A (fe-screens-audio-shell) — EXECUTING
+Plan: 1 of 5
 Phase 1C — COMPLETE (2026-05-22, 백은혜)
 
 - **Milestone:** MVP v1 (June 7 demo)
@@ -42,6 +44,7 @@ Phase 1C — COMPLETE (2026-05-22, 백은혜)
 ## Phase 1C 완료 상세 (2026-05-22)
 
 ### 구현
+
 - `backend/main.py`: `/api/stt` (Google Cloud STT), `/api/tts` (Google Cloud TTS), `/api/feedback` (Gemini 2.5 Flash), `/api/chat` (5축→EMA→캐릭터→Gemini→TTS+한국어힌트)
 - `backend/lib/supabase.py`: service-role 싱글톤 클라이언트
 - `InlineHintKo` 모델: `hint_ko` 필드로 `/api/chat` 응답에 한국어 인라인 힌트 포함 (TTS와 asyncio.gather() 병렬)
@@ -49,10 +52,12 @@ Phase 1C — COMPLETE (2026-05-22, 백은혜)
 - Supabase: session_id 기반 대화 이력 로드/저장, graceful degradation (미설정 시에도 동작)
 
 ### DB
+
 - Supabase 마이그레이션 실행 완료: `sessions` + `messages` 테이블, RLS 활성화, `(session_id, created_at)` 인덱스
 - `supabase/migrations/20260522000000_sessions_messages.sql`
 
 ### 배포
+
 - **Railway**: `https://capstone-production-e8c2.up.railway.app` — Online
   - `/api/health` → `{"status":"ok"}` 확인
   - 환경변수 4개 등록: GOOGLE_AI_API_KEY, GOOGLE_CLOUD_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
@@ -62,6 +67,7 @@ Phase 1C — COMPLETE (2026-05-22, 백은혜)
   - 현재 404 — Phase 1A(이찬희) 미구현 상태로 정상
 
 ### Phase 1C wire format (`/api/chat` 응답)
+
 ```json
 {
   "status": "ok",
@@ -142,6 +148,7 @@ Phase 1A (이찬희) / Phase 1B (김민주) 완료 후 Phase 2 통합 시작.
   NEXT_PUBLIC_SUPABASE_URL=https://orhodalbxhbzlvjsqalu.supabase.co
   NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
   ```
+
 - **`/api/chat` request 최소 필드:** `{ "utterance": "...", "session_id": "uuid", "level": "B1" }`
 - **Supabase 테이블:** sessions (id, character_name, level, created_at), messages (id, session_id, role, transcript, axes, character, created_at)
 
