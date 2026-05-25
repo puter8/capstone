@@ -7,7 +7,7 @@
 <domain>
 ## Phase Boundary
 
-모바일 메인 대화 화면 1개 + rec/audio UX shell이 모바일 폭(~360px)에서 **mock transport**로 동작한다. 실제 `/api/chat` 호출, 음성 인식, TTS 재생은 전부 Phase 2 wiring. 1A는 **FE only**.
+모바일 메인 대화 화면 1개 + rec/audio UX shell이 **Figma 디자인 폭(402px) 기준**으로 **mock transport**로 동작한다. 실제 `/api/chat` 호출, 음성 인식, TTS 재생은 전부 Phase 2 wiring. 1A는 **FE only**.
 
 **핵심 (must work):**
 - rec 버튼: start → stop만 잘 동작
@@ -23,7 +23,7 @@
 - Mock chat transport (`lib/mocks/chat-mock.ts` 같은 단일 함수)
 - MediaRecorder로 브라우저 녹음 → Blob 생성 (전송은 mock으로 흘려보냄)
 - sessionId 클라이언트 생성 + localStorage 영속화 (mock 흐름에 동반)
-- mobile ~360px 우선 + 디자인 토큰 DESIGN.md / Figma 동기화
+- **Figma 디자인 폭(402px) 기준 구현** + 디자인 토큰 DESIGN.md / Figma 동기화 (다른 viewport 폭 대응은 1A scope 밖)
 
 **범위 밖 (out of scope, 다른 phase로):**
 - 실제 `/api/chat` 네트워크 호출, STT, TTS 재생 → Phase 2 wiring
@@ -34,7 +34,7 @@
 - 다른 nav 탭(home/book/trophy/profile) routing → Post-MVP
 - 온보딩 / character_name / level 입력 화면 → v2 (MVP는 default 'Pally' / 'B1')
 - Splash screen, sound, haptic, A11y full audit → Senior plan Phase B/C/D (post-demo)
-- 360px viewport variant 별도 디자인 → Senior plan Phase A1 (이찬희 디자인 작업, 1A 구현과 병행)
+- 다른 viewport 폭 대응(반응형) → Senior plan Phase A1 또는 post-demo
 
 </domain>
 
@@ -109,20 +109,20 @@
 ### Phase 1A Scope (planning source of truth)
 - `.planning/ROADMAP.md` § Phase 1A — Success Criteria 1~4, "Note — 온보딩 없음", "Note — 피드백 화면 없음"
 - `.planning/REQUIREMENTS.md` § MAIN-01, CHAT-01 (Traceability 표 Phase 1A 매핑)
-- `.planning/PROJECT.md` § Constraints (Mobile-first, ~360px), Key Decisions (`/feedback` 없음, 온보딩 없음, GCP only)
+- `.planning/PROJECT.md` § Constraints (Mobile-first; 1A 구현 폭은 Figma 402px 기준), Key Decisions (`/feedback` 없음, 온보딩 없음, GCP only)
 - `.planning/STATE.md` § Hand-off Notes (Phase 1C → Phase 1A/2) — Railway URL, env 키, `/api/chat` request 최소 필드, Supabase 테이블
 
 ### Design (Figma + 시스템 문서)
 - `DESIGN.md` (전체) — color/typography/spacing tokens
 - Figma `mvp design` canvas — node 427:2173 — 6 frames: `새 채팅(427:2216)` / `생각중(427:2174)` / `대화중(427:2194)` / `유저 발화 history(427:2235)` / `유저 발화 + thinking(427:2246)` / `유저 발화 + Pally current(427:2265)`. TalkButton component (441:30, states idle/thinking). 5-tab GNB (`GNB` 인스턴스). Pally Chat bubble (427:2197). 5-tab bottom nav.
-- `docs/plan/2026-05-25-senior-design-elevation.md` — 디자인 elevation plan (Phase A~D), 13 state coverage 표, 11 unresolved decisions. 1A 범위 안에 들어갈 부분은 위 D-12/D-13에 반영됨. 나머지 (splash, 360px variant, error 4종 등)는 Senior Plan Phase A/B/C로 deferred.
+- `docs/plan/2026-05-25-senior-design-elevation.md` — 디자인 elevation plan (Phase A~D), 13 state coverage 표, 11 unresolved decisions. 1A 범위 안에 들어갈 부분은 위 D-12/D-13에 반영됨. 나머지 (splash, 반응형 variant, error 4종 등)는 Senior Plan Phase A/B/C로 deferred.
 
 ### Wire Format (Phase 1C 산출, mock도 따라야 함)
 - `backend/main.py` `/api/chat` 엔드포인트 — request `{utterance, session_id, level}`, response `{status, transcript, reply, tts_audio, axes, character, character_labels, hint_ko: {hint, expression}}`. 1A mock은 이 shape을 그대로 반환.
 - 1A는 wire 타입을 `frontend/lib/types/chat.ts`(신규) 같은 곳에 정의. **Source of truth는 1C 응답** — 변환 레이어 없이 직결.
 
 ### Team Conventions
-- `CLAUDE.md` § 1 (Phase Ownership — 1A vs 1B 영역 분리), § 7 (Code Rules — TS/Next.js, Tailwind, Error handling), § 5 (E2E 검증 — 모바일 ~360px), § 10 (NEVER/ALWAYS)
+- `CLAUDE.md` § 1 (Phase Ownership — 1A vs 1B 영역 분리), § 7 (Code Rules — TS/Next.js, Tailwind, Error handling), § 5 (E2E 검증 — 모바일 폭은 1A의 경우 Figma 402px), § 10 (NEVER/ALWAYS)
 - `frontend/lib/types/message.ts`, `frontend/lib/types/session.ts` — Phase 0 산출, 1A가 mock 데이터/UI 상태로 사용
 
 ### Existing Assets
@@ -165,7 +165,7 @@
 ### Constraints
 - **iOS Safari MediaRecorder**: `audio/webm`을 지원하지 않을 수 있음. 1A는 brower MIME detection으로 fallback하되, 실제 STT 호환성 검증은 Phase 2 (user 요청 "간단하게").
 - **localStorage SSR**: Next.js App Router server render 단계에서는 `window`/`localStorage` 미존재. `useEffect` 안에서만 접근.
-- **Figma 402px vs 디자인 target 360px**: Figma 프레임이 402px. 1A 구현은 ~360px도 정상 동작해야 함 (overflow 없음). 별도 360 variant 디자인은 Senior Plan A1로 deferred.
+- **Viewport target = Figma 402px**: 1A 구현은 Figma 프레임 폭(402px)을 그대로 따른다. 다른 viewport 폭 대응(반응형)은 1A scope 밖.
 
 </code_context>
 
@@ -183,7 +183,7 @@
 ## Deferred Ideas
 
 - **Splash screen 1.5s** (Senior plan A7) — post-demo Phase D
-- **360px viewport variant 디자인** (Senior plan A1) — 이찬희가 1A 구현과 병행해서 디자인. 1A 구현은 기본 360 대응만.
+- **반응형(다양한 viewport 폭) 대응** (Senior plan A1) — 1A는 Figma 402px 폭만 구현. 다른 폭 대응은 post-demo 또는 별도 phase.
 - **Error states 4종 디자인** (mic-denied / STT-fail / network-offline / API-timeout, Senior plan A2) — Phase A/B 디자인, Phase 2 wiring에서 활용
 - **Mic permission 친근화 카피 + 일러스트** (Senior plan A3) — Phase B
 - **Speaking state morph + waveform** (Senior plan A5, C1) — 1B의 Canvas2D 연동 이후
