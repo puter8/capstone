@@ -45,6 +45,29 @@ export default function Page() {
     dispatch({ type: 'sessionId/set', id });
   }, [state.sessionId]);
 
+  const transcribeAudio = useCallback(async (blob: Blob) => {
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+    if (!backendUrl) {
+      throw new Error('NEXT_PUBLIC_BACKEND_URL is not configured');
+    }
+
+    const formData = new FormData();
+    formData.append('audio', blob, 'recording.webm');
+
+    const response = await fetch(`${backendUrl}/api/stt`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`STT failed ${response.status}: ${text}`);
+    }
+
+    const data = await response.json();
+    return data.transcript as string;
+  }, []);
+
   const handleProcessed = useCallback(
     async (utterance: string) => {
       if (!state.sessionId) return;
@@ -69,14 +92,22 @@ export default function Page() {
           createdAt: new Date().toISOString(),
         };
         dispatch({ type: 'rec/processed', userMsg, pallyMsg });
-        // Update Pally character morph from response.axes.
-        // mock ChatResponse vs 1B's ChatApiResponse only diverge on optional
-        // fields the hook ignores — usePally only reads `axes`. Phase 2 swap
-        // to real /api/chat returns ChatApiResponse directly.
         updateFromChatResponse(res as unknown as ChatApiResponse);
-        // 1A has no TTS audio — hold speaking long enough to inspect the bubble.
-        // Phase 2 (1C 연결) 때 실제 TTS playback end 시점으로 교체.
-        window.setTimeout(() => dispatch({ type: 'rec/speakingDone' }), 6000);
+
+        if (res.tts_audio) {
+          const bytes = Uint8Array.from(atob(res.tts_audio), (c) => c.charCodeAt(0));
+          const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+          const audio = new Audio(url);
+          const finish = () => {
+            URL.revokeObjectURL(url);
+            dispatch({ type: 'rec/speakingDone' });
+          };
+          audio.onended = finish;
+          audio.onerror = finish;
+          void audio.play().catch(finish);
+        } else {
+          window.setTimeout(() => dispatch({ type: 'rec/speakingDone' }), 3000);
+        }
       } catch {
         dispatch({
           type: 'rec/error',
@@ -90,11 +121,40 @@ export default function Page() {
 
   const recorder = useRecorder({
     onStart: () => dispatch({ type: 'rec/start' }),
-    onStop: (blob) => {
+    onStop: async (blob) => {
       dispatch({ type: 'rec/stop' });
-      // 1A: use Figma sample utterance. Phase 1C swaps to real STT result.
-      void handleProcessed("I had no lunch I'm diet");
-      void blob;
+      if (!state.sessionId) {
+        dispatch({
+          type: 'rec/error',
+          reason: 'generic',
+          message: '세션 ID를 생성하는 중입니다. 잠시 후 다시 시도해주세요.',
+        });
+        return;
+      }
+
+      if (!blob) {
+        dispatch({
+          type: 'rec/error',
+          reason: 'generic',
+          message: '녹음된 오디오를 찾을 수 없습니다. 다시 시도해주세요.',
+        });
+        return;
+      }
+
+      try {
+        const utterance = await transcribeAudio(blob);
+        if (!utterance.trim()) {
+          throw new Error('음성 인식 결과가 비어있습니다. 다시 시도해주세요.');
+        }
+        await handleProcessed(utterance);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '오디오 처리에 실패했습니다.';
+        dispatch({
+          type: 'rec/error',
+          reason: 'generic',
+          message,
+        });
+      }
     },
     onPermissionDenied: () =>
       dispatch({
