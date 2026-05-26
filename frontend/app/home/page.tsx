@@ -243,8 +243,8 @@ export default function Page() {
         </div>
       )}
 
-      {/* TalkButton at y=616/625 */}
-      {!historyCoversScreen && (
+      {/* TalkButton: hidden during processing/speaking — user already tapped, no double input */}
+      {!historyCoversScreen && state.rec.kind !== 'processing' && state.rec.kind !== 'speaking' && (
         <div
           className="absolute left-1/2 -translate-x-1/2 z-20"
           style={{ top: talkButtonTop }}
