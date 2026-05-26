@@ -182,6 +182,7 @@ export default function Page() {
   }, [recorder]);
 
   const handlePressStop = useCallback(() => {
+    dispatch({ type: 'rec/stop' }); // Immediately switch to processing UI before onstop fires
     recorder.stop();
   }, [recorder]);
 
