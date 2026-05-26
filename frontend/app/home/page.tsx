@@ -25,7 +25,7 @@ import { Toast } from '@/components/ui/Toast';
 
 export default function Page() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { axes, updateFromChatResponse } = usePally();
+  const { axes, updateFromChatResponse, revealAxes } = usePally();
 
   // Persist sessionId in localStorage so refresh reuses the same session.
   // SSR-safe: window check, only runs client-side.
@@ -167,6 +167,7 @@ export default function Page() {
   });
 
   const handleSessionEnd = useCallback(() => {
+    revealAxes(); // Apply accumulated axes to Pally before clearing conversation
     const KEY = 'pally:sessionId';
     const newId =
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -174,7 +175,7 @@ export default function Page() {
         : `session-${Date.now()}`;
     window.localStorage.setItem(KEY, newId);
     dispatch({ type: 'session/end', newId });
-  }, []);
+  }, [revealAxes]);
 
   const handlePressStart = useCallback(() => {
     void recorder.start();
@@ -188,10 +189,11 @@ export default function Page() {
   const isProcessing = state.rec.kind === 'processing';
   const isRecording = state.rec.kind === 'recording';
   const errorVisible = state.rec.kind === 'error';
-  // Home is the entry surface. Greeting + character + orange mic in idle.
-  // ChatBubble only appears during active conversation (processing/speaking).
-  const showChatBubble = !isIdle && !isRecording && !errorVisible;
-  const showEmptyGreeting = isIdle;
+  // ChatBubble shows whenever there are messages (stays visible through idle/speaking).
+  // Disappears only during recording (mic active) or error state.
+  // X button clears messages → ChatBubble hides → empty greeting returns.
+  const showChatBubble = state.messages.length > 0 && !isRecording && !errorVisible;
+  const showEmptyGreeting = isIdle && state.messages.length === 0;
   // Character + TalkButton: hidden only when history is expanded *during* a live conversation.
   // In idle the greeting takes over, so historyOpen residue must not blank the screen.
   const historyCoversScreen = state.historyOpen && !isIdle;
