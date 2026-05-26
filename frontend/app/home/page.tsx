@@ -166,6 +166,16 @@ export default function Page() {
       dispatch({ type: 'rec/error', reason: 'generic', message }),
   });
 
+  const handleSessionEnd = useCallback(() => {
+    const KEY = 'pally:sessionId';
+    const newId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `session-${Date.now()}`;
+    window.localStorage.setItem(KEY, newId);
+    dispatch({ type: 'session/end', newId });
+  }, []);
+
   const handlePressStart = useCallback(() => {
     void recorder.start();
   }, [recorder]);
@@ -192,6 +202,18 @@ export default function Page() {
 
   return (
     <main className="relative mx-auto w-full max-w-[402px] min-h-[874px] bg-surface overflow-hidden">
+      {/* X button — session end, always visible (Figma 상단 좌측) */}
+      <button
+        type="button"
+        aria-label="세션 종료"
+        onClick={handleSessionEnd}
+        className="absolute top-4 left-4 z-50 w-8 h-8 flex items-center justify-center"
+      >
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M4 4l12 12M16 4L4 16" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      </button>
+
       {/* Top: ChatBubble (covers top region from y=0). Long mode covers character + button. */}
       {showChatBubble && (
         <div className="absolute top-0 inset-x-0 z-10">
