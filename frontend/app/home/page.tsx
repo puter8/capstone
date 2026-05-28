@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useReducer } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { reducer, initialState } from '@/lib/state/conversation';
 import { useRecorder } from '@/lib/audio/useRecorder';
 import { mockChat } from '@/lib/mocks/chat-mock';
@@ -26,6 +26,7 @@ import { Toast } from '@/components/ui/Toast';
 export default function Page() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const { axes, updateFromChatResponse, revealAxes } = usePally();
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Persist sessionId in localStorage so refresh reuses the same session.
   // SSR-safe: window check, only runs client-side.
@@ -97,9 +98,16 @@ export default function Page() {
         if (res.tts_audio) {
           const bytes = Uint8Array.from(atob(res.tts_audio), (c) => c.charCodeAt(0));
           const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+          // Stop any previous audio before starting new one
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current = null;
+          }
           const audio = new Audio(url);
+          audioRef.current = audio; // Prevent GC while playing
           const finish = () => {
             URL.revokeObjectURL(url);
+            audioRef.current = null;
             dispatch({ type: 'rec/speakingDone' });
           };
           audio.onended = finish;
@@ -142,7 +150,14 @@ export default function Page() {
       }
 
       try {
-        const utterance = await transcribeAudio(blob);
+        let utterance: string;
+        try {
+          utterance = await transcribeAudio(blob);
+        } catch {
+          // Retry once after brief delay for transient STT failures (e.g. Google API hiccup)
+          await new Promise<void>((resolve) => setTimeout(resolve, 600));
+          utterance = await transcribeAudio(blob);
+        }
         if (!utterance.trim()) {
           throw new Error('음성 인식 결과가 비어있습니다. 다시 시도해주세요.');
         }
@@ -190,10 +205,10 @@ export default function Page() {
   const isProcessing = state.rec.kind === 'processing';
   const isRecording = state.rec.kind === 'recording';
   const errorVisible = state.rec.kind === 'error';
-  // ChatBubble shows whenever there are messages (stays visible through idle/speaking).
-  // Disappears only during recording (mic active) or error state.
+  // ChatBubble shows when there are messages, OR during recording/processing (shows Listening.../Thinking...).
+  // Disappears only on error state.
   // X button clears messages → ChatBubble hides → empty greeting returns.
-  const showChatBubble = state.messages.length > 0 && !isRecording && !errorVisible;
+  const showChatBubble = (state.messages.length > 0 || isRecording || isProcessing) && !errorVisible;
   const showEmptyGreeting = isIdle && state.messages.length === 0;
   // Character + TalkButton: hidden only when history is expanded *during* a live conversation.
   // In idle the greeting takes over, so historyOpen residue must not blank the screen.
@@ -224,6 +239,7 @@ export default function Page() {
             messages={state.messages}
             expanded={state.historyOpen}
             thinking={isProcessing}
+            listening={isRecording}
             onToggleExpand={() => dispatch({ type: 'history/toggle' })}
           />
         </div>
@@ -243,8 +259,8 @@ export default function Page() {
         </div>
       )}
 
-      {/* TalkButton: hidden during processing/speaking — user already tapped, no double input */}
-      {!historyCoversScreen && state.rec.kind !== 'processing' && state.rec.kind !== 'speaking' && (
+      {/* TalkButton: hidden when history expanded (regardless of rec state). */}
+      {!state.historyOpen && (
         <div
           className="absolute left-1/2 -translate-x-1/2 z-20"
           style={{ top: talkButtonTop }}

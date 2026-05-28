@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import re
 import sys
 
 import httpx
@@ -134,11 +135,13 @@ def _detect_encoding(content_type: str) -> str:
         return "WEBM_OPUS"
     if "mp3" in ct or "mpeg" in ct:
         return "MP3"
+    if "mp4" in ct or "m4a" in ct or "aac" in ct:
+        return "MP3"  # iOS Safari MediaRecorder: audio/mp4 (AAC) → closest STT v1 encoding
     if "wav" in ct:
         return "LINEAR16"
     if "flac" in ct:
         return "FLAC"
-    return "WEBM_OPUS"  # browser MediaRecorder 기본값
+    return "WEBM_OPUS"  # browser MediaRecorder 기본값 (Chrome/Firefox)
 
 
 @app.post("/api/stt")
@@ -154,12 +157,18 @@ async def stt(audio: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
 
     audio_bytes = await audio.read()
+    encoding = _detect_encoding(audio.content_type or "")
+    logging.info(
+        f"STT request: content_type={audio.content_type!r}, "
+        f"size={len(audio_bytes)} bytes, encoding={encoding}"
+    )
+
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty audio file")
 
     payload = {
         "config": {
-            "encoding": _detect_encoding(audio.content_type),
+            "encoding": encoding,
             "languageCode": "en-US",
             "model": "latest_long",
             "enableAutomaticPunctuation": True,
@@ -174,20 +183,43 @@ async def stt(audio: UploadFile = File(...)):
         )
 
     if resp.status_code != 200:
+        logging.error(
+            f"Google STT failed: status={resp.status_code}, "
+            f"content_type={audio.content_type!r}, size={len(audio_bytes)}, "
+            f"encoding={encoding}, google_response={resp.text[:500]}"
+        )
         raise HTTPException(status_code=502, detail=f"Google STT error: {resp.text}")
 
     results = resp.json().get("results", [])
     if not results:
         return {"transcript": "", "confidence": 0.0}
 
-    alt = results[0]["alternatives"][0]
+    alt = results[0].get("alternatives", [{}])[0]
     return {
-        "transcript": alt["transcript"].strip(),
+        "transcript": alt.get("transcript", "").strip(),
         "confidence": alt.get("confidence", 1.0),
     }
 
 
 # ── TTS — Google Cloud Text-to-Speech ────────────────────────────────────────
+
+
+_EMOJI_RE = re.compile(
+    "[\U0001F600-\U0001F64F"   # emoticons
+    "\U0001F300-\U0001F5FF"   # symbols & pictographs
+    "\U0001F680-\U0001F6FF"   # transport & map symbols
+    "\U0001F900-\U0001F9FF"   # supplemental symbols
+    "\U00002702-\U000027B0"
+    "\U000024C2-\U0001F251"
+    "\U0001FA00-\U0001FA6F"
+    "\U0001FA70-\U0001FAFF"
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def _strip_emoji(text: str) -> str:
+    return _EMOJI_RE.sub("", text).strip()
 
 
 async def _call_google_tts(
@@ -581,9 +613,9 @@ async def chat(req: ChatRequest):
         logging.warning(f"Gemini chat fallback: {e}")
         reply = "I see! Tell me more."
 
-    # 6. TTS + 한국어 힌트 (병렬)
+    # 6. TTS + 한국어 힌트 (병렬) — 이모지 제거 후 TTS 호출
     tts_result, hint_result = await asyncio.gather(
-        _call_google_tts(reply),
+        _call_google_tts(_strip_emoji(reply)),
         _call_gemini_hint_ko(req.utterance, reply),
         return_exceptions=True,
     )
