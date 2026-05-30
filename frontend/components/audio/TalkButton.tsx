@@ -24,7 +24,8 @@ const ARIA: Record<RecState['kind'], string> = {
 };
 
 export function TalkButton({ rec, disabled = false, onPressStart, onPressStop }: TalkButtonProps) {
-  const isThinkingVariant = rec.kind === 'recording' || rec.kind === 'processing';
+  // Only recording shows red-stop variant; processing/speaking show orange-mic (disabled)
+  const isThinkingVariant = rec.kind === 'recording';
   const isInteractive =
     !disabled &&
     (rec.kind === 'idle' || rec.kind === 'error' || rec.kind === 'recording');
@@ -52,7 +53,7 @@ export function TalkButton({ rec, disabled = false, onPressStart, onPressStop }:
       className={cn(
         'block bg-transparent border-0 p-0',
         'transition-transform duration-150 active:scale-95',
-        'disabled:cursor-default',
+        'disabled:opacity-50 disabled:cursor-default',
         'touch-manipulation', // Eliminate 300ms tap delay on mobile
       )}
       style={{ width: 104, height }}

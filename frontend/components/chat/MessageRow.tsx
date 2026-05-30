@@ -5,11 +5,23 @@ type Speaker = 'you' | 'pally';
 type MessageRowProps = {
   speaker: Speaker;
   transcript: string;
-  state?: 'default' | 'thinking';
+  state?: 'default' | 'thinking' | 'listening';
+  compact?: boolean;
 };
 
-export function MessageRow({ speaker, transcript, state = 'default' }: MessageRowProps) {
+export function MessageRow({ speaker, transcript, state = 'default', compact = false }: MessageRowProps) {
   const isPally = speaker === 'pally';
+
+  if (state === 'listening') {
+    return (
+      <div className="flex flex-col items-center w-full text-center">
+        <p className="font-sans font-semibold text-[20px] leading-7 text-primary">
+          Listening...
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col items-center gap-1 w-full text-center">
       <p
@@ -24,6 +36,7 @@ export function MessageRow({ speaker, transcript, state = 'default' }: MessageRo
         className={cn(
           'font-sans font-normal text-[16px] leading-6',
           isPally ? 'text-text' : 'text-text-tertiary',
+          compact && 'line-clamp-2',
         )}
       >
         {state === 'thinking' ? 'Thinking...' : transcript}

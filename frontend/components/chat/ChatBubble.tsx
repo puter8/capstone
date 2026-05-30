@@ -9,6 +9,7 @@ export interface ChatBubbleProps {
   messages: readonly Message[];
   expanded: boolean;
   thinking?: boolean;
+  listening?: boolean;
   onToggleExpand: () => void;
 }
 
@@ -58,21 +59,31 @@ export function ChatBubble({
   messages,
   expanded,
   thinking = false,
+  listening = false,
   onToggleExpand,
 }: ChatBubbleProps) {
   if (expanded) {
-    return <LongBubble messages={messages} onCollapse={onToggleExpand} />;
+    return <LongBubble messages={messages} thinking={thinking} onCollapse={onToggleExpand} />;
   }
-  return <ShortBubble messages={messages} thinking={thinking} onExpand={onToggleExpand} />;
+  return (
+    <ShortBubble
+      messages={messages}
+      thinking={thinking}
+      listening={listening}
+      onExpand={onToggleExpand}
+    />
+  );
 }
 
 function ShortBubble({
   messages,
   thinking,
+  listening,
   onExpand,
 }: {
   messages: readonly Message[];
   thinking: boolean;
+  listening: boolean;
   onExpand: () => void;
 }) {
   const lastPally = messages.findLast?.((m) => m.role === 'pally');
@@ -110,15 +121,28 @@ function ShortBubble({
       />
 
       {/* 메시지 영역 */}
-      <div className="absolute top-[110px] left-[37px] right-[37px] h-[132px] flex flex-col gap-1">
-        {lastUser && (
-          <MessageRow speaker="you" transcript={lastUser.transcript} />
+      <div className="absolute top-[110px] left-[37px] right-[37px] h-[132px] flex flex-col gap-1 overflow-hidden">
+        {listening ? (
+          // 첫 발화: Listening... 단독 / 2번째~: 마지막 Pally + Listening...
+          <>
+            {lastPally && (
+              <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
+            )}
+            <MessageRow speaker="pally" transcript="" state="listening" />
+          </>
+        ) : thinking ? (
+          // Thinking: 마지막 유저 메시지 + Thinking...
+          <>
+            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
+            <MessageRow speaker="pally" transcript="" state="thinking" />
+          </>
+        ) : (
+          // 대화중 / idle: 마지막 유저 + 마지막 Pally
+          <>
+            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
+            {lastPally && <MessageRow speaker="pally" transcript={lastPally.transcript} compact />}
+          </>
         )}
-        {thinking ? (
-          <MessageRow speaker="pally" transcript="" state="thinking" />
-        ) : lastPally ? (
-          <MessageRow speaker="pally" transcript={lastPally.transcript} />
-        ) : null}
       </div>
 
       {/* Chevron at right=22, top=281 (Figma Expand_down 40×40) */}
@@ -137,9 +161,11 @@ function ShortBubble({
 
 function LongBubble({
   messages,
+  thinking,
   onCollapse,
 }: {
   messages: readonly Message[];
+  thinking: boolean;
   onCollapse: () => void;
 }) {
   return (
@@ -166,6 +192,10 @@ function LongBubble({
             transcript={m.transcript}
           />
         ))}
+        {/* Thinking 상태: 메시지 리스트 맨 아래에 pending 응답으로 표시 */}
+        {thinking && (
+          <MessageRow speaker="pally" transcript="" state="thinking" />
+        )}
       </div>
 
       {/* Chevron expand-up at right=22, top=651 */}
