@@ -121,26 +121,26 @@ function ShortBubble({
       />
 
       {/* 메시지 영역 */}
-      <div className="absolute top-[110px] left-[37px] right-[37px] h-[132px] flex flex-col gap-1 overflow-hidden">
+      <div className="absolute top-[100px] left-[16px] right-[16px] bottom-[60px] flex flex-col gap-3 overflow-y-auto">
         {listening ? (
           // 첫 발화: Listening... 단독 / 2번째~: 마지막 Pally + Listening...
           <>
             {lastPally && (
-              <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
+              <MessageRow speaker="pally" transcript={lastPally.transcript} />
             )}
             <MessageRow speaker="pally" transcript="" state="listening" />
           </>
         ) : thinking ? (
           // Thinking: 마지막 유저 메시지 + Thinking...
           <>
-            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
+            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} />}
             <MessageRow speaker="pally" transcript="" state="thinking" />
           </>
         ) : (
           // 대화중 / idle: 마지막 유저 + 마지막 Pally
           <>
-            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
-            {lastPally && <MessageRow speaker="pally" transcript={lastPally.transcript} compact />}
+            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} />}
+            {lastPally && <MessageRow speaker="pally" transcript={lastPally.transcript} />}
           </>
         )}
       </div>
@@ -183,7 +183,7 @@ function LongBubble({
       />
 
       {/* 메시지 리스트 — Figma 427:2804 spec: padding 24px / 16px, gap 12px */}
-      <div className="absolute top-[24px] left-[16px] right-[16px] bottom-[80px] flex flex-col gap-3 overflow-y-auto">
+      <div className="absolute top-[56px] left-[16px] right-[16px] bottom-[80px] flex flex-col gap-3 overflow-y-auto">
         <DateDivider kind="date" label="2026.05.25" />
         {messages.map((m, idx) => (
           <MessageRow
