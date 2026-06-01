@@ -19,6 +19,8 @@ interface UsePallyReturn {
   updateFromChatResponse: (res: ChatApiResponse) => void;
   /** 세션 종료 시 호출 → 누적된 axes를 화면에 반영 */
   revealAxes: () => void;
+  /** 현재 누적된 axes 반환 — /api/chat current_axes로 전달용 */
+  getAccumulatedAxes: () => Axes;
   /** STT 녹음 중 / Gemini 응답 대기 중 여부 */
   isLoading: boolean;
   setIsLoading: (v: boolean) => void;
@@ -41,10 +43,12 @@ export function usePally(): UsePallyReturn {
     pendingAxes.current = DEFAULT_AXES;
   }, []);
 
+  const getAccumulatedAxes = useCallback((): Axes => pendingAxes.current, []);
+
   const resetAxes = useCallback(() => {
     setAxes(DEFAULT_AXES);
     pendingAxes.current = DEFAULT_AXES;
   }, []);
 
-  return { axes, updateFromChatResponse, revealAxes, isLoading, setIsLoading, resetAxes };
+  return { axes, updateFromChatResponse, revealAxes, getAccumulatedAxes, isLoading, setIsLoading, resetAxes };
 }
