@@ -126,21 +126,21 @@ function ShortBubble({
           // 첫 발화: Listening... 단독 / 2번째~: 마지막 Pally + Listening...
           <>
             {lastPally && (
-              <MessageRow speaker="pally" transcript={lastPally.transcript} />
+              <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
             )}
             <MessageRow speaker="pally" transcript="" state="listening" />
           </>
         ) : thinking ? (
           // Thinking: 마지막 유저 메시지 + Thinking...
           <>
-            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} />}
+            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
             <MessageRow speaker="pally" transcript="" state="thinking" />
           </>
         ) : (
           // 대화중 / idle: 마지막 유저 + 마지막 Pally
           <>
-            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} />}
-            {lastPally && <MessageRow speaker="pally" transcript={lastPally.transcript} />}
+            {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
+            {lastPally && <MessageRow speaker="pally" transcript={lastPally.transcript} compact />}
           </>
         )}
       </div>
