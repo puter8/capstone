@@ -9,7 +9,7 @@ type MessageRowProps = {
   compact?: boolean;
 };
 
-export function MessageRow({ speaker, transcript, state = 'default', compact = false }: MessageRowProps) {
+export function MessageRow({ speaker, transcript, state = 'default' }: MessageRowProps) {
   const isPally = speaker === 'pally';
 
   if (state === 'listening') {
@@ -36,7 +36,6 @@ export function MessageRow({ speaker, transcript, state = 'default', compact = f
         className={cn(
           'font-sans font-normal text-[16px] leading-6',
           isPally ? 'text-text' : 'text-text-tertiary',
-          compact && 'line-clamp-2',
         )}
       >
         {state === 'thinking' ? 'Thinking...' : transcript}
