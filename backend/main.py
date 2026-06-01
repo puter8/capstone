@@ -347,6 +347,7 @@ async def _call_gemini_feedback(utterance: str, axes: dict) -> dict:
             "responseMimeType": "application/json",
             "temperature": 0.7,
             "maxOutputTokens": 512,
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 
@@ -360,8 +361,8 @@ async def _call_gemini_feedback(utterance: str, axes: dict) -> dict:
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text}")
 
-    raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    # Gemini가 간혹 ```json ... ``` 마크다운으로 감싸서 반환하는 경우 처리
+    parts = resp.json()["candidates"][0]["content"]["parts"]
+    raw = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     return json.loads(raw)
@@ -479,7 +480,8 @@ async def _call_gemini_chat(
         "contents": contents,
         "generationConfig": {
             "temperature": 0.85,
-            "maxOutputTokens": 256,
+            "maxOutputTokens": 1024,
+            "thinkingConfig": {"thinkingBudget": 512},  # 추론 512 + 실제 응답 512
         },
     }
 
@@ -493,7 +495,16 @@ async def _call_gemini_chat(
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini chat error {resp.status_code}: {resp.text}")
 
-    return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    candidate = resp.json()["candidates"][0]
+    if candidate.get("finishReason") == "MAX_TOKENS":
+        logging.warning("Gemini chat response cut off by MAX_TOKENS")
+
+    # Skip thought parts (thinkingBudget=0이어도 방어적으로 필터)
+    parts = candidate["content"]["parts"]
+    reply = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
+    if not reply:
+        raise RuntimeError("Gemini returned empty chat response")
+    return reply
 
 
 _HINT_KO_SYSTEM_PROMPT = """\
@@ -527,7 +538,8 @@ async def _call_gemini_hint_ko(utterance: str, pally_reply: str) -> InlineHintKo
         "generationConfig": {
             "responseMimeType": "application/json",
             "temperature": 0.3,
-            "maxOutputTokens": 256,
+            "maxOutputTokens": 512,
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -538,7 +550,8 @@ async def _call_gemini_hint_ko(utterance: str, pally_reply: str) -> InlineHintKo
         )
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini hint error {resp.status_code}: {resp.text}")
-    raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    parts = resp.json()["candidates"][0]["content"]["parts"]
+    raw = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
     data = json.loads(raw)
