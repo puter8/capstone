@@ -121,7 +121,7 @@ function ShortBubble({
       />
 
       {/* 메시지 영역 */}
-      <div className="absolute top-[100px] left-[16px] right-[16px] bottom-[60px] flex flex-col gap-3 overflow-y-auto">
+      <div className="absolute top-[100px] left-[16px] right-[16px] bottom-[60px] flex flex-col gap-1 overflow-y-auto">
         {listening ? (
           // 첫 발화: Listening... 단독 / 2번째~: 마지막 Pally + Listening...
           <>
