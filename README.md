@@ -119,18 +119,44 @@
 
 ### 현재 구현됨
 
-- 규칙 기반 5축 발화 분석기
-- CHARACTER MATRIX 가중합 연산
-- EMA 기반 점수 완화 로직
-- 수작업 라벨 데이터셋
-- 테스트 및 데모 스크립트
-- 시각화 HTML 프로토타입
+**AI 엔진 (`ai/`)**
+- 규칙 기반 5축 발화 분석기 (`analyzer.py`)
+- CHARACTER MATRIX 가중합 + EMA 보정 (`matrix_engine.py`)
+- 25개 수작업 라벨 데이터셋 (`data/dataset.py`)
+- 전체 파이프라인 데모 스크립트 (`tests/test_matrix.py`)
+- CHARACTER MATRIX 시각화 HTML 프로토타입 (`assets/visualizer.html`)
+
+**Backend (`backend/`, FastAPI · Railway 배포 중)**
+- `POST /api/stt` — Google Cloud Speech-to-Text 실호출 (영어)
+- `POST /api/chat` — 5축 분석 + Gemini 2.5 Flash 응답 + 인라인 한국어 힌트(structured payload) + 캐릭터 파라미터
+- `POST /api/tts` — Google Cloud Text-to-Speech 실호출 (base64 오디오)
+- `POST /api/feedback` — 발화 표현 교정 / 대안 표현
+- `GET /api/health` — 헬스 체크
+- Supabase service-role 클라이언트로 `sessions` / `messages` 테이블에 모든 턴 영속화
+
+**Frontend (`frontend/`, Next.js 14 App Router · Vercel 배포 중)**
+- 메인 홈 화면 (rec 버튼 · 채팅 영역 · 인라인 한국어 힌트) — 모바일 폭 ~360px 최적화
+- 브라우저 마이크 녹음 → `/api/stt` → `/api/chat` → `/api/tts` 자동 재생 E2E 연결
+- Canvas2D Superformula Pally 렌더러 (5축 → 형태·색·표정 변형)
+- Listening / Thinking UI 상태, ChatBubble + LongBubble (X 닫기 포함)
+- 세션 종료 컷신 — 우상단 X로 누적 변화 반영된 최종 Pally 공개
+- GNB 라우팅 (home · history · my · ranking) + `/dev/pally` 렌더러 테스트 화면
+- Supabase anon 클라이언트, Zod boundary 검증
+
+**Database (`supabase/migrations/`)**
+- `sessions` / `messages` 테이블 forward-only 마이그레이션
+- `session_id` 기반 RLS 정책 (익명 세션)
+
+**Infra**
+- Vercel (FE) + Railway (BE) — `main` push 시 자동 배포
+- 데모 URL 두 곳 모두 200 OK (헬스 체크 통과)
 
 ### 향후 확장 예정
 
-- LLM 기반 축 분석기 보완 또는 대체
-- 사용자별 상태 저장 (Supabase pgvector)
+- LLM 기반 축 분석기 보완 또는 대체 (현재는 규칙 기반)
+- 사용자별 장기 상태 저장 (Supabase pgvector)
 - 슬랭 RAG 파이프라인 (Reddit PRAW)
+- 학습 효과 추적 / 사용자 인증
 
 
 ## 폴더 구조
