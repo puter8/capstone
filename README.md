@@ -1,5 +1,17 @@
 # Pally — CharaShift MVP
 
+> **[English]** An AI English conversation partner whose personality shifts in real-time based on your speaking style.
+> Each turn, your utterance is scored on 5 axes (Formality · Energy · Intimacy · Humor · Curiosity),
+> passed through a **CHARACTER MATRIX** transform, and reflected instantly in Pally's shape, color, and tone.
+>
+> **Demo (mobile or F12 → mobile view on desktop):** [capstone-eight-virid.vercel.app/home](https://capstone-eight-virid.vercel.app/home) · [YouTube walkthrough](https://youtu.be/Ptlq6SM4C6g?si=ShOETKqPAWakxxjb)
+>
+> Stack: Next.js 14 · FastAPI · Google Cloud STT/TTS · Gemini 2.5 Flash · Supabase · Canvas2D Superformula
+>
+> *Full documentation below is in Korean (Ewha Womans University Capstone Design 2026, Team puter8).*
+
+---
+
 > 대화 진행에 따라 성격이 변하는 AI 캐릭터와의 정서적 유대감 기반 영어 회화 학습 지속 서비스
 
 이화여대 캡스톤 디자인 (산학 트랙) · 팀명 **퓨터(puter8)** · 지도교수 심재형 · 2026-06-07 데모

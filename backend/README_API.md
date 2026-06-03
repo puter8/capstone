@@ -3,7 +3,7 @@
 > 작성일: 2026-05-19  
 > 담당: 백은혜 (파트 C)  
 > Base URL (로컬): `http://localhost:8000`  
-> Base URL (배포 후): Railway URL로 교체 예정
+> Base URL (배포): `https://capstone-production-e8c2.up.railway.app`
 
 ---
 

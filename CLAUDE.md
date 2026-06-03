@@ -63,8 +63,8 @@ MCP가 본인 계정의 모든 리소스를 보여주므로, AI가 매 명령마
 | Supabase project | `orhodalbxhbzlvjsqalu` (org: `puter8`, region: `ap-northeast-1`) |
 | GitHub repo | `puter8/capstone` |
 | GCP project | `capstone-puter8` |
-| Vercel team / project | TBD (셋업 후 갱신) |
-| Railway project | TBD (셋업 후 갱신) |
+| Vercel team / project | `puter8` / `capstone-eight-virid` → `https://capstone-eight-virid.vercel.app` |
+| Railway project | `capstone-production-e8c2` → `https://capstone-production-e8c2.up.railway.app` |
 
 다른 본인 개인 계정 리소스와 혼동하지 않도록 위 ID로 명시. 새 리소스 추가 시 이 표를 먼저 업데이트하고 팀 채널 공지.
 
