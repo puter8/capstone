@@ -11,8 +11,7 @@
 | Surface | URL | 상태 |
 |---|---|---|
 | 데모 영상 | https://youtu.be/Ptlq6SM4C6g?si=ShOETKqPAWakxxjb | YouTube |
-| Frontend (Vercel) | https://capstone-eight-virid.vercel.app/home | 200 OK |
-| Backend (Railway) | https://capstone-production-e8c2.up.railway.app | `/api/health` 200 OK |
+| 라이브 데모 (Vercel) | https://capstone-eight-virid.vercel.app/home | 200 OK |
 
 > **모바일 폭 ~360px**에 최적화되어 있습니다. 데스크톱 브라우저는 반드시 개발자 도구의 모바일 뷰로 열어 주세요.
 
