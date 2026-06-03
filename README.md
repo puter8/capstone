@@ -16,6 +16,14 @@
 | 서비스 (Vercel) | https://capstone-eight-virid.vercel.app/home | 접속 가능 |
 
 
+### 스크린샷
+
+| 대화중 | 문법 교정 | 세션 후 Pally 변화 |
+|:---:|:---:|:---:|
+| ![대화중](assets/screenshots/demo-conversation.png) | ![문법 교정](assets/screenshots/demo-correction.png) | ![Pally 변화](assets/screenshots/demo-pally-change.png) |
+
+> "Yesterday I go to the store" → Pally가 "you went to the store"로 자연스럽게 교정. 세션 종료 후 에너지·호기심 축 상승 → 별 모양 초록 Pally로 변환.
+
 ### 데모에서 확인할 수 있는 흐름
 
 1. 홈 화면에서 마이크 버튼(rec)을 누르면 브라우저 권한 요청 후 녹음 시작
