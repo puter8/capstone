@@ -8,12 +8,12 @@
 
 ## 데모 (Live)
 
+> ⚠️ **데스크톱은 F12 → 모바일 뷰(~360px)로 열어주세요. 모바일 기기에서는 그냥 접속하면 됩니다.**
 | Surface | URL | 상태 |
 |---|---|---|
 | 데모 영상 | https://youtu.be/Ptlq6SM4C6g?si=ShOETKqPAWakxxjb | YouTube |
-| 라이브 데모 (Vercel) | https://capstone-eight-virid.vercel.app/home | 200 OK |
+| 서비스 (Vercel) | https://capstone-eight-virid.vercel.app/home | 접속 가능 |
 
-> **모바일 폭 ~360px**에 최적화되어 있습니다. 데스크톱 브라우저는 반드시 개발자 도구의 모바일 뷰로 열어 주세요.
 
 ### 데모에서 확인할 수 있는 흐름
 
@@ -222,7 +222,7 @@ capstone/
 
 ---
 
-## 로컬 실행
+## 로컬 실행(개발자용)
 
 ### 사전 준비
 
