@@ -17,6 +17,7 @@ export interface ChatRequest {
   utterance: string;
   session_id: string;
   level: Level;
+  current_axes?: Axes;
 }
 
 export interface Axes {

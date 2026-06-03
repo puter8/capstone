@@ -32,7 +32,11 @@
 2. 마이크 권한 허용 (최초 1회)
 3. 아래 문장 중 하나를 영어로 말하기
 
-**추천 발화 대사**
+**추천 발화 대사** — 핑크+별 변환 시나리오 (Intimacy↑ · Humor↑)
+```
+"OMG you're literally the funniest, I love you so much bestie, this is the best thing ever lmaoooo!"
+```
+또는 (일반)
 ```
 "Oh my gosh, I just had ramen for lunch and it was so spicy!"
 ```
@@ -134,6 +138,26 @@ Stop 버튼 탭 → Thinking → 두 번째 Pally 응답 재생
 | `"I is so happy today!"` | `you're` 또는 `you are` 사용 |
 | `"Yesterday I go to the park."` | `went` 사용 |
 | `"I very boring now."` | `"you're bored?"` 로 응답 |
+| `"Yesterday I go to the store and buyed the most funniest snack ever omg!"` | `went`, `bought` 교정; 슬랭(omg) 그대로 유지 — 핑크+별 시나리오 발화 |
+
+---
+
+## 핑크+별 변환 집중 시연 (선택 · 약 3분)
+
+Intimacy·Humor 축을 집중적으로 올려 **핑크 색상 + 별(뾰족) 형태** Pally를 만드는 시나리오.
+친근하고 유머러스한 발화를 4턴 연속 → X 세션 종료 시 변환 확인.
+
+**정상 발화 (2턴에 사용)**
+```
+"OMG you're literally the funniest, I love you so much bestie, this is the best thing ever lmaoooo!"
+```
+
+**문법 교정 포함 발화 (나머지 2턴에 사용)**
+```
+"Yesterday I go to the store and buyed the most funniest snack ever omg!"
+```
+
+> Intimacy·Humor가 기본값(20/10)에서 크게 상승 → X 버튼 세션 종료 → 핑크+별 Pally 공개
 
 ---
 

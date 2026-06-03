@@ -25,7 +25,7 @@ import { Toast } from '@/components/ui/Toast';
 
 export default function Page() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { axes, updateFromChatResponse, revealAxes } = usePally();
+  const { axes, updateFromChatResponse, revealAxes, getAccumulatedAxes } = usePally();
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Persist sessionId in localStorage so refresh reuses the same session.
@@ -77,6 +77,7 @@ export default function Page() {
           utterance,
           session_id: state.sessionId,
           level: 'B1',
+          current_axes: getAccumulatedAxes(),
         });
         const userMsg: Message = {
           id: `m-${Date.now()}-u`,
