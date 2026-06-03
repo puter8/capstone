@@ -50,7 +50,7 @@
 
 영어 회화 학습 서비스는 보통 질문에 답하는 기능 자체는 제공하지만, 사용자의 말투와 친밀도, 에너지 수준, 질문 성향까지 세밀하게 반영하는 경우는 많지 않습니다. 그 결과 사용자는 "나에게 맞춘 대화"보다 "정해진 챗봇 응답"을 받는 느낌을 받기 쉽습니다.
 
-자세한 설계 근거는 [`docs/mvp/PRD.md`](docs/mvp/PRD.md) 와 [`docs/mvp/2026-05-midterm-qa.md`](docs/mvp/2026-05-midterm-qa.md) 참고.
+자세한 설계 근거는 [`docs/mvp/2026-05-midterm-qa.md`](docs/mvp/2026-05-midterm-qa.md) 참고.
 
 ---
 
@@ -59,7 +59,7 @@
 - **음성 입력/출력** — 브라우저 마이크 → Google Cloud Speech-to-Text(EN) → Gemini 2.5 Flash → Google Cloud Text-to-Speech(EN) → 즉시 재생
 - **CHARACTER MATRIX 엔진** — 발화 1턴마다 5축 점수를 다시 계산하고, EMA(alpha=0.7)로 부드럽게 누적해 캐릭터 파라미터에 반영
 - **Pally 실시간 변형** — Canvas2D Superformula 도형이 형태·색·표정으로 5축 변화를 시각화
-- **인라인 한국어 힌트** — Gemini가 사용자 발화에서 어색한 영어를 감지하면 화면에 한국어 설명/교정/대안 표현을 표시
+- **자연스러운 문법 교정** — Gemini가 사용자의 문법/어휘 실수를 직접 지적하지 않고 올바른 표현을 자연스럽게 사용해 응답
 - **세션 종료 컷신** — X 버튼으로 세션 종료 시 누적된 변화가 적용된 최종 Pally를 공개
 - **익명 세션** — Supabase `sessions` / `messages` 테이블에 세션 ID 기반으로 모든 턴·5축·캐릭터 파라미터를 JSONB로 저장. RLS는 `session_id` 기준
 
@@ -253,7 +253,14 @@ npm run dev          # http://localhost:3000 → 자동 redirect /home
 cd backend
 cp .env.example .env
 # .env 작성: GOOGLE_AI_API_KEY · GOOGLE_CLOUD_API_KEY · SUPABASE_URL · SUPABASE_SERVICE_ROLE_KEY
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+
+# Mac / Linux
+source .venv/bin/activate
+
+# Windows
+# .venv\Scripts\activate
+
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 # 헬스 체크: curl http://localhost:8000/api/health → {"status":"ok"}
