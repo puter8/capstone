@@ -20,23 +20,27 @@ import re
 # 발화에서 이 단어들이 몇 개 등장하는지 세어서 각 축 점수를 계산하는 데 사용됨.
 # ---------------------------------------------------------------------------
 
-# 슬랭/비격식 단어 목록
+# 슬랭/비격식 단어 목록 (구어체 기준 — STT 입력에서 실제로 발화되는 표현만)
+# 문자 전용 축약어(lol, lmao, fr, ngl, tbh, idk 등) 제외
 # → Formality(격식도)를 낮추고, Energy·Intimacy·Humor를 높이는 신호
 SLANG_WORDS = {
-    "yo", "lol", "lmao", "lmfao", "omg", "omfg", "wtf", "bruh", "bro",
-    "sis", "fam", "ngl", "tbh", "imo", "idk", "idc", "smh", "fr",
-    "nah", "yep", "yup", "gonna", "wanna", "gotta", "kinda", "sorta",
-    "tryna", "dunno", "legit", "lowkey", "highkey", "vibe", "slay",
-    "bet", "sus", "cap", "no cap", "bussin", "goated", "rizz", "mid",
-    "chefs kiss", "hits different", "understood the assignment", "rent free",
-    "main character", "era", "it's giving", "ate", "periodt", "ick",
-    "touch grass", "understood", "sheesh", "based", "cringe", "chad",
-    "simp", "noob", "rekt", "gg", "af", "nvm", "rn", "asap", "fyi",
-    "iirc", "btw", "tbf", "istg", "irl", "dm", "hmu",
-    "what's up", "wassup", "sup", "whatup", "u", "ur", "r u", "cya",
-    "g2g", "ttyl", "brb", "bc", "cuz", "cause",
-    "dude", "literally", "obsessed", "totally", "bestie",
-    "so good", "so bad", "no way", "for real", "deadass",
+    # 구어 호칭·감탄사
+    "yo", "bruh", "bro", "sis", "fam", "dude", "man",
+    "nah", "yep", "yup",
+    # 구어 단축형 (발화 시 실제로 이렇게 말함)
+    "gonna", "wanna", "gotta", "kinda", "sorta", "tryna", "dunno",
+    "cuz", "cause",
+    # 현대 구어 표현 (Gen Z, 실제 발화됨)
+    "legit", "lowkey", "highkey", "vibe", "slay",
+    "bet", "sus", "no cap", "bussin", "rizz",
+    "sheesh", "based", "cringe", "deadass",
+    "hits different", "understood the assignment", "rent free",
+    "main character", "it's giving",
+    # 강조·구어 부사 (실제 발화에서 슬랭처럼 쓰임)
+    "literally", "obsessed", "totally", "bestie",
+    # 구어 감탄 표현
+    "what's up", "wassup", "sup",
+    "so good", "so bad", "no way", "for real",
 }
 
 # 격식체 단어/구 목록
@@ -89,23 +93,72 @@ INTIMATE_WORDS = {
     "did you know", "you won't believe",
 }
 
-# 유머/밈 단어 목록
-# → Humor(유머)를 높이는 신호 (웃음 표현, 밈 문구, 유머 이모지)
+# 유머/웃음 표현 목록 (구어체 기준 — STT 회화 입력에 실제로 등장하는 표현만)
+# 설계 원칙:
+#   1. 문자 전용(lol, lmao, xd, 이모지) 제거
+#   2. STT는 축약형을 보존하므로 "that's" / "i'm" 형태 유지
+#   3. 단독 형용사(hilarious, ridiculous 등) 포함 — 자연 발화에서 등장 빈도 높음
+#   4. 구어 과장 표현("i was dying", "cracking up") 집중 보강
+# → Humor(유머)를 높이는 신호
 HUMOR_WORDS = {
-    "lol", "lmao", "lmfao", "haha", "hehe", "hihi", "xd", "xD",
-    "💀", "😂", "🤣", "😭", "💀", "👀", "🙃", "😅",
-    "dead", "dying", "i'm crying", "i can't", "i literally cannot",
-    "periodt", "no but seriously", "not gonna lie but", "plot twist",
-    "caught in 4k", "rent free", "understood the assignment",
-    "hits different", "main character", "not me", "the way",
-    "bestie what", "okay but", "though", "tho", "ngl",
-    "imagine", "could you imagine", "the audacity",
-    "meme", "memes", "tweet", "twitter", "reddit", "tiktok",
-    "lowkey laughing", "crying laughing", "cry laughing", "made me laugh",
-    # high-frequency humor signals
-    "omg", "literally", "peak", "ate", "no crumbs", "ate and left",
-    "i'm so normal", "so normal", "ironic", "sarcastic",
-    "crying at", "cry at", "crying over",
+    # ── 단독 형용사 (거의 항상 유머 맥락에서만 쓰이는 단어) ─────────────────
+    # 주의: "insane"/"crazy"/"wild"는 일반 맥락에서도 쓰여 제외
+    "hilarious", "hysterical", "priceless",
+
+    # ── 웃음·반응 표현 (발화 가능) ──────────────────────────────────────────
+    "haha", "ha ha", "hahaha",
+    "that's hilarious", "so hilarious", "that is hilarious",
+    "that's so funny", "so funny", "that is so funny",
+    "really funny", "pretty funny", "super funny",
+    "that's hysterical", "that is hysterical",
+    "that's ridiculous", "so ridiculous", "that is ridiculous",
+    "that's absurd", "that is absurd",
+
+    # ── 과장된 웃음 반응 (구어 과장 표현) ──────────────────────────────────
+    "i'm dying", "i was dying", "dying laughing", "dying of laughter",
+    "that killed me", "that's killing me", "that is killing me",
+    "i was cracking up", "cracking up", "cracked me up",
+    "i burst out laughing", "burst out laughing",
+    "i couldn't stop laughing", "couldn't stop laughing",
+    "i was in stitches",
+    "i was rolling", "rolling on the floor",
+    "i lost it",
+    "i can't breathe",
+    "i'm dead", "i am dead",
+    "that's too much", "that is too much",
+    "i can't stop", "i couldn't stop",
+
+    # ── 믿기 어렵다는 반응 (유머 맥락에서 자주 쓰임) ────────────────────────
+    "no way", "you're kidding", "you are kidding",
+    "you're joking", "you are joking",
+    "are you serious", "are you kidding", "are you kidding me",
+    "shut up",
+    "i can't believe", "i can not believe",
+    "that's insane", "that is insane",
+    "that's crazy", "that is crazy",
+    "that's wild", "that is wild",
+    "that's unbelievable", "that is unbelievable",
+    "seriously though", "no but seriously",
+
+    # ── 유머 맥락·스토리텔링 표현 ───────────────────────────────────────────
+    "plot twist",
+    "the best part", "the funny part", "the funniest part",
+    "the funniest thing",
+    "you won't believe", "you will not believe",
+    "you'll never guess", "you will never guess",
+    "imagine if", "picture this", "get this",
+    "not gonna lie", "not going to lie",
+    "the audacity",
+    "wait for it",
+
+    # ── 공감·재미 반응 ───────────────────────────────────────────────────────
+    "that's so relatable", "that is so relatable", "so relatable",
+    "only me", "classic me",
+    "of course that happened",
+
+    # ── 아이러니·과장 (명확히 아이러니 구문만) ───────────────────────────────
+    "i'm totally fine", "i am totally fine",
+    "not dramatic at all",
 }
 
 # 호기심/탐구 단어 목록
@@ -280,14 +333,13 @@ def analyze_utterance(text: str) -> dict:
     intimacy = max(0, min(100, round(intimacy)))
 
     # Humor (유머): 기준값 10에서 시작
-    #   올라가는 신호: 유머 단어(+10), 이모지(+8), !!(+5), 슬랭(+3)
+    #   올라가는 신호: 유머 단어(+12), 슬랭(+4)
     #   내려가는 신호: 격식 단어(-5) → 격식체 = 진지한 분위기
+    #   이모지·반복구두점 제거: 회화 STT 입력에서 등장하지 않음
     humor = 10
-    humor += humor_hits * 10              # 유머 단어 1개당 +10 (가장 강한 신호)
-    humor += emoji_count * 8              # 이모지 = 유머/감정 표현
-    humor += repeated_punct_count * 5    # !! ?? = 과장된 반응
+    humor += humor_hits * 15             # 유머 단어 1개당 +15 (구어 humor 신호 강화)
     humor -= formal_hits * 5             # 격식 단어가 많으면 유머 점수 하락
-    humor += slang_hits * 3              # 슬랭도 유머 신호
+    humor += slang_hits * 4              # 캐주얼 구어 자체도 유머 분위기 신호
     humor = max(0, min(100, round(humor)))
 
     # Curiosity (탐구심): 기준값 15에서 시작
