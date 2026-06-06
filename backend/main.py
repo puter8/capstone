@@ -217,6 +217,8 @@ async def stt(audio: UploadFile = File(...)):
     }
     if encoding == "LINEAR16" and sample_rate:
         config["sampleRateHertz"] = sample_rate
+    if encoding == "WEBM_OPUS":
+        config["sampleRateHertz"] = 48000
     if num_channels and num_channels > 1:
         config["audioChannelCount"] = num_channels
 
