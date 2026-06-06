@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { reducer, initialState } from '@/lib/state/conversation';
 import { useRecorder } from '@/lib/audio/useRecorder';
+import { blobToMonoWav } from '@/lib/audio/blobToWav';
 import { mockChat } from '@/lib/mocks/chat-mock';
 import type { Message } from '@/lib/types/message';
 import type { ChatApiResponse } from '@/lib/types/character';
@@ -53,8 +54,22 @@ export default function Page() {
       throw new Error('NEXT_PUBLIC_BACKEND_URL is not configured');
     }
 
+    // Convert to mono 16 kHz WAV before sending to STT.
+    // Chrome WEBM_OPUS regularly returns empty results from Google Cloud STT v1;
+    // LINEAR16 WAV is the most reliably supported input format across all browsers.
+    let audioBlob: Blob;
+    let filename: string;
+    try {
+      audioBlob = await blobToMonoWav(blob);
+      filename = 'recording.wav';
+    } catch {
+      // If Web Audio API decode fails (e.g. very old browser), send original
+      audioBlob = blob;
+      filename = 'recording.webm';
+    }
+
     const formData = new FormData();
-    formData.append('audio', blob, 'recording.webm');
+    formData.append('audio', audioBlob, filename);
 
     const response = await fetch(`${backendUrl}/api/stt`, {
       method: 'POST',

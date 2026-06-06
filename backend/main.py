@@ -166,13 +166,18 @@ async def stt(audio: UploadFile = File(...)):
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty audio file")
 
+    config: dict = {
+        "encoding": encoding,
+        "languageCode": "en-US",
+        "model": "latest_short",
+        "enableAutomaticPunctuation": True,
+    }
+    # LINEAR16 WAV requires explicit sample rate; other formats auto-detect
+    if encoding == "LINEAR16":
+        config["sampleRateHertz"] = 16000
+
     payload = {
-        "config": {
-            "encoding": encoding,
-            "languageCode": "en-US",
-            "model": "latest_short",
-            "enableAutomaticPunctuation": True,
-        },
+        "config": config,
         "audio": {"content": base64.b64encode(audio_bytes).decode()},
     }
 
