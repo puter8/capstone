@@ -144,6 +144,32 @@ def _detect_encoding(content_type: str) -> str:
     return "WEBM_OPUS"  # browser MediaRecorder 기본값 (Chrome/Firefox)
 
 
+def _parse_wav(audio_bytes: bytes) -> tuple[bytes, int, int] | None:
+    """
+    WAV 파일 감지 및 파싱. RIFF 매직 바이트로 판별.
+    반환: (raw_pcm_bytes, sample_rate, num_channels) 또는 None (WAV 아닌 경우)
+
+    LINEAR16 인코딩은 raw PCM만 받음 — WAV 헤더를 포함해 보내면 헤더 바이트가
+    오디오 데이터로 해석돼 빈 결과가 반환됨. 헤더를 파싱해 제거 후 전달해야 함.
+    """
+    if len(audio_bytes) < 44:
+        return None
+    if audio_bytes[:4] != b"RIFF" or audio_bytes[8:12] != b"WAVE":
+        return None
+    num_channels = int.from_bytes(audio_bytes[22:24], "little")
+    sample_rate = int.from_bytes(audio_bytes[24:28], "little")
+    # Walk RIFF chunks to find 'data'
+    offset = 12
+    while offset + 8 <= len(audio_bytes):
+        chunk_id = audio_bytes[offset : offset + 4]
+        chunk_size = int.from_bytes(audio_bytes[offset + 4 : offset + 8], "little")
+        if chunk_id == b"data":
+            return audio_bytes[offset + 8 : offset + 8 + chunk_size], sample_rate, num_channels
+        offset += 8 + chunk_size
+    # Fallback: assume standard 44-byte header
+    return audio_bytes[44:], sample_rate, num_channels
+
+
 @app.post("/api/stt")
 async def stt(audio: UploadFile = File(...)):
     """
@@ -157,14 +183,28 @@ async def stt(audio: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
 
     audio_bytes = await audio.read()
-    encoding = _detect_encoding(audio.content_type or "")
-    logging.info(
-        f"STT request: content_type={audio.content_type!r}, "
-        f"size={len(audio_bytes)} bytes, encoding={encoding}"
-    )
 
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty audio file")
+
+    # WAV 감지: RIFF 매직 바이트로 판별 (Content-Type보다 신뢰도 높음)
+    wav_parsed = _parse_wav(audio_bytes)
+    if wav_parsed:
+        pcm_bytes, sample_rate, num_channels = wav_parsed
+        encoding = "LINEAR16"
+        audio_bytes = pcm_bytes  # WAV 헤더 제거 — raw PCM만 Google STT에 전달
+        logging.info(
+            f"STT WAV detected: sample_rate={sample_rate}, channels={num_channels}, "
+            f"pcm_size={len(audio_bytes)} bytes"
+        )
+    else:
+        encoding = _detect_encoding(audio.content_type or "")
+        sample_rate = None
+        num_channels = None
+        logging.info(
+            f"STT request: content_type={audio.content_type!r}, "
+            f"size={len(audio_bytes)} bytes, encoding={encoding}"
+        )
 
     config: dict = {
         "encoding": encoding,
@@ -172,9 +212,10 @@ async def stt(audio: UploadFile = File(...)):
         "model": "latest_short",
         "enableAutomaticPunctuation": True,
     }
-    # LINEAR16 WAV requires explicit sample rate; other formats auto-detect
-    if encoding == "LINEAR16":
-        config["sampleRateHertz"] = 16000
+    if encoding == "LINEAR16" and sample_rate:
+        config["sampleRateHertz"] = sample_rate
+    if num_channels and num_channels > 1:
+        config["audioChannelCount"] = num_channels
 
     payload = {
         "config": config,
