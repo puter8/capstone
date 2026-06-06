@@ -4,6 +4,7 @@ import { useCallback, useRef } from 'react';
 import { pickMimeType } from './pickMimeType';
 
 const MAX_DURATION_MS = 30_000;
+const SPEECH_TRANSCRIPT_GRACE_MS = 900;
 
 const ERR_NO_MIME = '이 브라우저는 음성 녹음을 지원하지 않아요.';
 const ERR_MIC_ACCESS = '마이크에 접근할 수 없어요.';
@@ -206,10 +207,11 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
       recorderRef.current = null;
       chunksRef.current = [];
 
-      const transcript = speechTranscriptRef.current.trim();
-      speechTranscriptRef.current = '';
-
-      handlers.onStop(blob, transcript || undefined);
+      window.setTimeout(() => {
+        const transcript = speechTranscriptRef.current.trim();
+        speechTranscriptRef.current = '';
+        handlers.onStop(blob, transcript || undefined);
+      }, SPEECH_TRANSCRIPT_GRACE_MS);
     };
 
     recorder.start(250);
