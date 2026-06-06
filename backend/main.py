@@ -206,10 +206,13 @@ async def stt(audio: UploadFile = File(...)):
             f"size={len(audio_bytes)} bytes, encoding={encoding}"
         )
 
+    # latest_short is optimized for <2s voice commands and returns empty for longer speech.
+    # Use latest_long for WAV/LINEAR16 (browser recordings are typically 3-30s).
+    model = "latest_long" if encoding == "LINEAR16" else "latest_short"
     config: dict = {
         "encoding": encoding,
         "languageCode": "en-US",
-        "model": "latest_short",
+        "model": model,
         "enableAutomaticPunctuation": True,
     }
     if encoding == "LINEAR16" and sample_rate:
