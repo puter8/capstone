@@ -39,6 +39,8 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
     }
     const r = recorderRef.current;
     if (r && r.state !== 'inactive') {
+      // Mac Safari: requestData() before stop() ensures buffered audio is flushed
+      try { r.requestData(); } catch (_) { /* not all browsers support this */ }
       r.stop();
     }
   }, []);
@@ -53,7 +55,9 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // channelCount ideal:1 → mono WEBM_OPUS; Google Cloud STT handles mono reliably
+      // (Chrome default stereo causes empty STT results with WEBM_OPUS encoding)
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: { ideal: 1 } } });
     } catch (err) {
       // Surface — never swallow (CLAUDE.md §7).
       const name = err instanceof DOMException ? err.name : '';

@@ -170,7 +170,7 @@ async def stt(audio: UploadFile = File(...)):
         "config": {
             "encoding": encoding,
             "languageCode": "en-US",
-            "model": "latest_long",
+            "model": "latest_short",
             "enableAutomaticPunctuation": True,
         },
         "audio": {"content": base64.b64encode(audio_bytes).decode()},
@@ -481,7 +481,7 @@ async def _call_gemini_chat(
         "generationConfig": {
             "temperature": 0.85,
             "maxOutputTokens": 1024,
-            "thinkingConfig": {"thinkingBudget": 512},  # 추론 512 + 실제 응답 512
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
 

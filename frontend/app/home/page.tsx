@@ -27,6 +27,7 @@ export default function Page() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const { axes, updateFromChatResponse, revealAxes, getAccumulatedAxes } = usePally();
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   // Persist sessionId in localStorage so refresh reuses the same session.
   // SSR-safe: window check, only runs client-side.
@@ -98,22 +99,38 @@ export default function Page() {
 
         if (res.tts_audio) {
           const bytes = Uint8Array.from(atob(res.tts_audio), (c) => c.charCodeAt(0));
-          const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
-          // Stop any previous audio before starting new one
-          if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current = null;
+          const finish = () => dispatch({ type: 'rec/speakingDone' });
+          let played = false;
+
+          // Primary: AudioContext (iOS-safe — context was unlocked in handlePressStop user gesture)
+          const audioCtx = audioCtxRef.current;
+          if (audioCtx && audioCtx.state !== 'closed') {
+            try {
+              if (audioCtx.state === 'suspended') await audioCtx.resume();
+              // slice(0) copies the buffer; decodeAudioData transfers ownership
+              const buffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
+              const source = audioCtx.createBufferSource();
+              source.buffer = buffer;
+              source.connect(audioCtx.destination);
+              source.onended = finish;
+              source.start();
+              played = true;
+            } catch {
+              // fall through to HTMLAudioElement
+            }
           }
-          const audio = new Audio(url);
-          audioRef.current = audio; // Prevent GC while playing
-          const finish = () => {
-            URL.revokeObjectURL(url);
-            audioRef.current = null;
-            dispatch({ type: 'rec/speakingDone' });
-          };
-          audio.onended = finish;
-          audio.onerror = finish;
-          void audio.play().catch(finish);
+
+          // Fallback: HTMLAudioElement (desktop / browsers without AudioContext)
+          if (!played) {
+            const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
+            if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            const done = () => { URL.revokeObjectURL(url); audioRef.current = null; finish(); };
+            audio.onended = done;
+            audio.onerror = done;
+            void audio.play().catch(done);
+          }
         } else {
           window.setTimeout(() => dispatch({ type: 'rec/speakingDone' }), 3000);
         }
@@ -199,6 +216,15 @@ export default function Page() {
 
   const handlePressStop = useCallback(() => {
     dispatch({ type: 'rec/stop' }); // Immediately switch to processing UI before onstop fires
+    // iOS Safari: unlock AudioContext during user gesture so TTS can play after async STT/chat
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      }
+      if (audioCtxRef.current.state === 'suspended') {
+        void audioCtxRef.current.resume();
+      }
+    } catch (_) { /* AudioContext not supported */ }
     recorder.stop();
   }, [recorder]);
 
