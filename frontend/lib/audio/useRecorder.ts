@@ -10,7 +10,7 @@ const ERR_MIC_ACCESS = '마이크에 접근할 수 없어요.';
 
 export interface RecorderHandlers {
   onStart: () => void;
-  /** blob: recorded audio. transcript: Web Speech API result if available (Chrome). */
+  /** blob: recorded audio. transcript: Web Speech API result if available. */
   onStop: (blob: Blob | null, transcript?: string) => void;
   onPermissionDenied: () => void;
   onError: (message: string) => void;
@@ -30,6 +30,15 @@ declare global {
   }
 }
 
+// Web Speech API is only used on desktop Chrome (not Android — causes permission popup on every use;
+// not iOS — already working via WAV STT backend path).
+function getSpeechRecognitionCtor(): unknown {
+  if (typeof window === 'undefined') return null;
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  if (isAndroid) return null;
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
+}
+
 export function useRecorder(handlers: RecorderHandlers): RecorderControls {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -38,24 +47,20 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
   const mimeRef = useRef<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
-  // Promise that resolves with the Web Speech API transcript when recognition ends.
-  const recognitionResultRef = useRef<Promise<string>>(Promise.resolve(''));
+  // Updated in real-time via onresult (interimResults:true) so onstop always has the latest text.
+  const liveTranscriptRef = useRef<string>('');
 
   const stop = useCallback((): void => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    // Stop SpeechRecognition first so it processes any remaining audio
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch { /* ignore */ }
-      recognitionRef.current = null;
-    }
     const r = recorderRef.current;
     if (r && r.state !== 'inactive') {
       try { r.requestData(); } catch { /* not all browsers support this */ }
       r.stop();
     }
+    // NOTE: recognition is stopped AFTER onstop fires (500ms flush window) — not here.
   }, []);
 
   const start = useCallback(async (): Promise<void> => {
@@ -65,6 +70,7 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
       return;
     }
     mimeRef.current = mime;
+    liveTranscriptRef.current = '';
 
     let stream: MediaStream;
     try {
@@ -80,31 +86,29 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
     }
     streamRef.current = stream;
 
-    // Web Speech API (Chrome desktop / Android) — bypasses backend STT entirely.
-    // Start after getUserMedia so mic permission is already granted (no double prompt).
-    const SpeechRecognitionCtor = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    // Start Web Speech API after getUserMedia (mic permission already granted, no second prompt).
+    // interimResults:true → liveTranscriptRef updated continuously so onstop always has latest text.
+    const SpeechRecognitionCtor = getSpeechRecognitionCtor();
     if (SpeechRecognitionCtor) {
-      recognitionResultRef.current = new Promise<string>((resolve) => {
-        const recognition = new SpeechRecognitionCtor();
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const recognition = new (SpeechRecognitionCtor as any)();
         recognition.lang = 'en-US';
         recognition.continuous = true;
-        recognition.interimResults = false;
-        let accumulated = '';
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        recognition.onresult = (e: any) => {
-          // Results is a SpeechRecognitionResultList — cast through unknown for TS compat
-          accumulated = (Array.from(e.results as unknown as ArrayLike<{ 0: { transcript: string } }>))
-            .map((r) => r[0].transcript)
-            .join(' ')
-            .trim();
+        recognition.interimResults = true;
+        recognition.onresult = (e: { results: { length: number; [i: number]: { [j: number]: { transcript: string } } } }) => {
+          let text = '';
+          for (let i = 0; i < e.results.length; i++) {
+            text += e.results[i][0].transcript + ' ';
+          }
+          liveTranscriptRef.current = text.trim();
         };
-        recognition.onend = () => resolve(accumulated);
-        recognition.onerror = () => resolve(''); // fall back to WAV STT
-        try { recognition.start(); } catch { resolve(''); return; }
+        recognition.onerror = () => { /* fall through to WAV STT */ };
+        recognition.start();
         recognitionRef.current = recognition;
-      });
-    } else {
-      recognitionResultRef.current = Promise.resolve('');
+      } catch {
+        recognitionRef.current = null;
+      }
     }
 
     const recorder = new MediaRecorder(stream, { mimeType: mime });
@@ -126,11 +130,16 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
       recorderRef.current = null;
       chunksRef.current = [];
 
-      // Wait for SpeechRecognition to finish before surfacing the result.
-      // Resolves immediately if Web Speech API is not available.
-      void recognitionResultRef.current.then((transcript) => {
+      // Give SpeechRecognition 500ms to flush any remaining results before reading transcript.
+      window.setTimeout(() => {
+        const transcript = liveTranscriptRef.current;
+        if (recognitionRef.current) {
+          try { recognitionRef.current.stop(); } catch { /* ignore */ }
+          recognitionRef.current = null;
+        }
+        liveTranscriptRef.current = '';
         handlers.onStop(blob, transcript || undefined);
-      });
+      }, 500);
     };
 
     recorder.start(250);
