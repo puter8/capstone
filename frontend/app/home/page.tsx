@@ -162,7 +162,7 @@ export default function Page() {
 
   const recorder = useRecorder({
     onStart: () => dispatch({ type: 'rec/start' }),
-    onStop: async (blob) => {
+    onStop: async (blob, webSpeechTranscript) => {
       dispatch({ type: 'rec/stop' });
       if (!state.sessionId) {
         dispatch({
@@ -173,27 +173,33 @@ export default function Page() {
         return;
       }
 
-      if (!blob) {
-        dispatch({
-          type: 'rec/error',
-          reason: 'generic',
-          message: '녹음된 오디오를 찾을 수 없습니다. 다시 시도해주세요.',
-        });
-        return;
-      }
-
       try {
         let utterance: string;
-        try {
-          utterance = await transcribeAudio(blob);
-        } catch {
-          // Retry once after brief delay for transient STT failures (e.g. Google API hiccup)
-          await new Promise<void>((resolve) => setTimeout(resolve, 600));
-          utterance = await transcribeAudio(blob);
+
+        if (webSpeechTranscript) {
+          // Chrome: Web Speech API result — no backend STT call needed
+          utterance = webSpeechTranscript;
+        } else {
+          // iOS / fallback: convert to WAV and call backend STT
+          if (!blob) {
+            dispatch({
+              type: 'rec/error',
+              reason: 'generic',
+              message: '녹음된 오디오를 찾을 수 없습니다. 다시 시도해주세요.',
+            });
+            return;
+          }
+          try {
+            utterance = await transcribeAudio(blob);
+          } catch {
+            await new Promise<void>((resolve) => setTimeout(resolve, 600));
+            utterance = await transcribeAudio(blob);
+          }
+          if (!utterance.trim()) {
+            throw new Error('음성 인식 결과가 비어있습니다. 다시 시도해주세요.');
+          }
         }
-        if (!utterance.trim()) {
-          throw new Error('음성 인식 결과가 비어있습니다. 다시 시도해주세요.');
-        }
+
         await handleProcessed(utterance);
       } catch (error) {
         const message = error instanceof Error ? error.message : '오디오 처리에 실패했습니다.';
