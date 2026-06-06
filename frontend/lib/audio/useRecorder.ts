@@ -24,12 +24,59 @@ export interface RecorderControls {
   stop: () => void;
 }
 
+interface SpeechRecognitionAlternativeLike {
+  transcript: string;
+}
+
+interface SpeechRecognitionResultLike {
+  readonly length: number;
+  readonly isFinal: boolean;
+  [index: number]: SpeechRecognitionAlternativeLike;
+}
+
+interface SpeechRecognitionEventLike {
+  readonly results: {
+    readonly length: number;
+    [index: number]: SpeechRecognitionResultLike;
+  };
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+interface SpeechRecognitionConstructorLike {
+  new (): SpeechRecognitionLike;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructorLike;
+    webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
+  }
+}
+
+function getDesktopSpeechRecognitionCtor(): SpeechRecognitionConstructorLike | null {
+  if (typeof window === 'undefined') return null;
+  if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) return null;
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition ?? null;
+}
+
 export function useRecorder(handlers: RecorderHandlers): RecorderControls {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const mimeRef = useRef<string | null>(null);
   const timerRef = useRef<number | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechTranscriptRef = useRef('');
 
   const cleanupStream = useCallback(() => {
     const stream = streamRef.current;
@@ -49,8 +96,25 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
 
     const recorder = recorderRef.current;
     if (!recorder || recorder.state === 'inactive') {
+      const recognition = recognitionRef.current;
+      if (recognition) {
+        try {
+          recognition.stop();
+        } catch {
+          // SpeechRecognition may already be stopped.
+        }
+      }
       cleanupStream();
       return;
+    }
+
+    const recognition = recognitionRef.current;
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch {
+        // SpeechRecognition may already be stopped.
+      }
     }
 
     try {
@@ -62,6 +126,8 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
   }, [cleanupStream]);
 
   const start = useCallback(async (): Promise<void> => {
+    speechTranscriptRef.current = '';
+
     const mime = pickMimeType();
     if (!mime) {
       handlers.onError(ERR_NO_MIME);
@@ -86,6 +152,34 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
 
     streamRef.current = stream;
     chunksRef.current = [];
+
+    const SpeechRecognitionCtor = getDesktopSpeechRecognitionCtor();
+    if (SpeechRecognitionCtor) {
+      try {
+        const recognition = new SpeechRecognitionCtor();
+        recognition.lang = 'en-US';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.onresult = (event) => {
+          const parts: string[] = [];
+          for (let i = 0; i < event.results.length; i++) {
+            const transcript = event.results[i][0]?.transcript;
+            if (transcript) parts.push(transcript);
+          }
+          speechTranscriptRef.current = parts.join(' ').trim();
+        };
+        recognition.onerror = () => {
+          recognitionRef.current = null;
+        };
+        recognition.onend = () => {
+          recognitionRef.current = null;
+        };
+        recognition.start();
+        recognitionRef.current = recognition;
+      } catch {
+        recognitionRef.current = null;
+      }
+    }
 
     const recorder = new MediaRecorder(stream, { mimeType: mime });
     recorderRef.current = recorder;
@@ -112,7 +206,10 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
       recorderRef.current = null;
       chunksRef.current = [];
 
-      handlers.onStop(blob, undefined);
+      const transcript = speechTranscriptRef.current.trim();
+      speechTranscriptRef.current = '';
+
+      handlers.onStop(blob, transcript || undefined);
     };
 
     recorder.start(250);
