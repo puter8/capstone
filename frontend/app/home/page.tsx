@@ -224,7 +224,7 @@ export default function Page() {
       if (audioCtxRef.current.state === 'suspended') {
         void audioCtxRef.current.resume();
       }
-    } catch (_) { /* AudioContext not supported */ }
+    } catch { /* AudioContext not supported */ }
     recorder.stop();
   }, [recorder]);
 

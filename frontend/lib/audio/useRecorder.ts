@@ -40,7 +40,7 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
     const r = recorderRef.current;
     if (r && r.state !== 'inactive') {
       // Mac Safari: requestData() before stop() ensures buffered audio is flushed
-      try { r.requestData(); } catch (_) { /* not all browsers support this */ }
+      try { r.requestData(); } catch { /* not all browsers support this */ }
       r.stop();
     }
   }, []);
