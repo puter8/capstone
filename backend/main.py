@@ -677,16 +677,12 @@ async def chat(req: ChatRequest):
         logging.warning(f"Gemini chat fallback: {e}")
         reply = "I see! Tell me more."
 
-    # 6. TTS + 한국어 힌트 (병렬) — 이모지 제거 후 TTS 호출
-    tts_result, hint_result = await asyncio.gather(
+    # 6. TTS — 이모지 제거 후 TTS 호출
+    tts_result = await asyncio.gather(
         _call_google_tts(_strip_emoji(reply)),
-        _call_gemini_hint_ko(req.utterance, reply),
         return_exceptions=True,
     )
-    tts_audio = tts_result if not isinstance(tts_result, Exception) else None
-    hint_ko: Optional[InlineHintKo] = (
-        hint_result if not isinstance(hint_result, Exception) else _HINT_KO_FALLBACK
-    )
+    tts_audio = tts_result[0] if not isinstance(tts_result[0], Exception) else None
 
     # 7. Supabase 저장
     if req.session_id and _SUPABASE_ENABLED:
@@ -725,5 +721,5 @@ async def chat(req: ChatRequest):
             "energy": energy_label,
             "humor": humor_label,
         },
-        "hint_ko": hint_ko,
+        "hint_ko": None,
     }
