@@ -26,3 +26,6 @@ out/
 *.mp3
 *.wav
 .gstack/
+
+# Supabase CLI 임시 파일
+supabase/.temp/
