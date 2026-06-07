@@ -213,7 +213,7 @@ async def stt(audio: UploadFile = File(...)):
         "encoding": encoding,
         "languageCode": "en-US",
         "model": model,
-        "enableAutomaticPunctuation": True,
+        "enableAutomaticPunctuation": False,
     }
     if encoding == "LINEAR16" and sample_rate:
         config["sampleRateHertz"] = sample_rate
