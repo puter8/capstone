@@ -544,7 +544,7 @@ async def _call_gemini_chat(
         "contents": contents,
         "generationConfig": {
             "temperature": 0.85,
-            "maxOutputTokens": 1024,
+            "maxOutputTokens": 512,
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
