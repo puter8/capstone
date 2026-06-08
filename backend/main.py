@@ -405,7 +405,7 @@ async def _call_gemini_feedback(utterance: str, axes: dict) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-flash:generateContent?key={GOOGLE_AI_API_KEY}",
+            f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
             json=payload,
         )
 
@@ -552,7 +552,7 @@ async def _call_gemini_chat(
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-flash:generateContent?key={GOOGLE_AI_API_KEY}",
+            f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
             json=payload,
         )
 
@@ -609,7 +609,7 @@ async def _call_gemini_hint_ko(utterance: str, pally_reply: str) -> InlineHintKo
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-flash:generateContent?key={GOOGLE_AI_API_KEY}",
+            f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
             json=payload,
         )
     if resp.status_code != 200:
