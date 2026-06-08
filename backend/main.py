@@ -354,7 +354,7 @@ async def tts(req: TTSRequest):
         raise HTTPException(status_code=400, detail="text is required")
 
     audio_b64 = await _call_google_tts(
-        req.text,
+        _strip_emoji(req.text),
         req.voice or "en-US-Journey-F",
         req.speaking_rate or 1.0,
     )
@@ -690,7 +690,7 @@ async def chat(req: ChatRequest):
         logging.warning(f"Gemini chat fallback: {e}")
         reply = "I see! Tell me more."
 
-    # 6. TTS — 이모지 제거 후 TTS 호출
+    # 6. TTS — 이모지 제거 후 호출
     tts_result = await asyncio.gather(
         _call_google_tts(_strip_emoji(reply)),
         return_exceptions=True,
