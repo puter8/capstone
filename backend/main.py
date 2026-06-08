@@ -534,7 +534,7 @@ async def _call_gemini_chat(
     system_prompt = _build_chat_system_prompt(character_name, level)
 
     contents = []
-    for msg in (history or []):
+    for msg in (history or [])[-10:]:
         role = "user" if msg.role == "user" else "model"
         contents.append({"role": role, "parts": [{"text": msg.content}]})
     contents.append({"role": "user", "parts": [{"text": utterance}]})
