@@ -1,4 +1,11 @@
 # Pally — CharaShift MVP
+![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=next.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python_3.11-009688?logo=fastapi&logoColor=white)
+![Gemini](https://img.shields.io/badge/AI-Gemini_2.5_Flash-4285F4?logo=google&logoColor=white)
+![Supabase](https://img.shields.io/badge/DB-Supabase-3ECF8E?logo=supabase&logoColor=white)
+![Vercel](https://img.shields.io/badge/FE-Vercel-000000?logo=vercel&logoColor=white)
+![Railway](https://img.shields.io/badge/BE-Railway-0B0D0E?logo=railway&logoColor=white)
 
 > **[English]** An AI English conversation partner whose personality shifts in real-time based on your speaking style.
 > Each turn, your utterance is scored on 5 axes (Formality · Energy · Intimacy · Humor · Curiosity),
