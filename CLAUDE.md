@@ -1,4 +1,5 @@
 # Pally — CharaShift MVP · Team CLAUDE.md
+> 이 파일은 Claude Code(AI 코딩 도구)용 프로젝트 컨텍스트 파일입니다. 일반 방문자는 무시하세요.
 
 > 사람 팀원 + AI 에이전트(Claude Code / Codex / Cursor) 공용 가이드.
 > **Source of truth: `.planning/ROADMAP.md`** — 충돌 시 ROADMAP 우선.
