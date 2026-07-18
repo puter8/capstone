@@ -1,22 +1,22 @@
-
 <a id="team-16"></a>
 ## Team 16 퓨터
 
 | 항목 | 내용 |
 |------|------|
-| 프로젝트명 | 대화 진행에 따라 성격이 변하는 AI 캐릭터와의 정서적 유대감 기반 영어 회화 학습 지속 서비스 |
+| 프로젝트명 | 성향 변화형 AI 캐릭터 기반 영어 회화 학습 서비스  |
+| 서비스명(브랜드) | Pally |
 | 트랙 | 산학 |
 | 팀명 | 퓨터 |
-| 팀구성 | 김민주, 백은혜, 이찬희, 최윤서 |
+| 팀구성 | 김민주, 백은혜, 이찬희, 최윤서  |
 | 팀지도교수 | 심재형 |
-| 무엇을 만들고자 하는가 | 사용자의 발화 스타일을 5축(격식도·에너지·친밀도·유머·탐구심)으로 분석하고, 그 결과를 바탕으로 AI 캐릭터의 성격이 대화마다 실시간으로 변화하는 영어 회화 학습 웹 서비스. 단순 맞춤형 응답이 아니라, 대화가 쌓일수록 캐릭터와의 정서적 유대감이 형성되어 학습을 자연스럽게 지속하게 만드는 것이 핵심 목표 |
-| 고객 (누구를 위해) | 영어 회화를 꾸준히 지속하지 못하는 20~30대 중급(B1 이상) 학습자. 기존 앱의 획일적 응답에 흥미를 잃은 사용자 |
-| Pain Point (해결할 문제) | 기존 영어 학습 앱은 응답이 고정되어 있어 사용자가 금방 흥미를 잃고 이탈함. AI가 사용자의 말투와 감정을 반영하지 못해 "나에게 맞춘 대화"가 아닌 "정해진 챗봇 응답"처럼 느껴지는 문제 |
-| 사용 기술 | Next.js 14 (Vercel), FastAPI (Railway), Supabase (PostgreSQL · Auth · RLS · pgvector), Canvas2D + Superformula, GPT-4o, Reddit PRAW, GitHub Actions |
-| 기대 효과 | AI 캐릭터와의 정서적 유대감 형성으로 학습 지속률 향상 / 발화 스타일 분석 기반 개인화 대화로 몰입도 증가 / 최신 슬랭 RAG 파이프라인으로 실용 영어 학습 |
+| 무엇을 만들고자 하는가 | 사용자와 대화할수록 성격이 변화하는 AI 캐릭터 기반 영어 회화 학습 서비스 |
+| 고객 (누구를 위해) | 영어 회화를 재미있게 꾸준히 학습하고 싶은 10~20대 사용자 |
+| Pain Point (해결할 문제) | 기존 영어 학습 앱은 고정된 응답으로 흥미가 금방 떨어지고 지속 사용이 어려움 |
+| 사용 기술 | Google Cloud STT/TTS, Gemini 2.5 Flash, FastAPI, Next.js 14, Supabase, Canvas2D + Superformula 렌더링 |
+| 개발환경 | 1. PC (Windows, Mac) 및 Mobile 웹 브라우저 (모바일 폭 ~360px 최적화)<br>2. FE - Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS, Canvas2D + Superformula<br>3. BE - FastAPI, Python 3.11, Pydantic v2, httpx<br>4. DB - Supabase (PostgreSQL · RLS)<br>5. AI - Google Cloud Speech-to-Text / Text-to-Speech, Gemini 2.5 Flash (Google AI Studio), 자체 5축 분석기(Python)<br>6. Infra - Vercel (FE) · Railway (BE) — `main` push 자동 배포 |
+| 사용하는 소프트웨어 URL | 1. PC (Windows, Mac) 및 Mobile 웹 브라우저 (모바일 폭 ~360px 최적화)<br>2. FE - Next.js 14 (App Router), React 18, TypeScript, Tailwind CSS, Canvas2D + Superformula<br>3. BE - FastAPI, Python 3.11, Pydantic v2, httpx<br>4. DB - Supabase (PostgreSQL · RLS)<br>5. AI - Google Cloud Speech-to-Text / Text-to-Speech, Gemini 2.5 Flash (Google AI Studio), 자체 5축 분석기(Python)<br>6. Infra - Vercel (FE) · Railway (BE) — `main` push 자동 배포 |
+| 기대 효과 | 캐릭터와의 정서적 유대감 형성으로 학습 지속률 향상, 최신 슬랭 기반 실용 영어 습득 |
 | GitHub Repo | [https://github.com/puter8/capstone](https://github.com/puter8/capstone) |
-| Team Ground Rule | https://github.com/puter8/capstone/blob/main/docs/Team_Ground_Rule.md |
-| 최종수정일 | 2026.04.27 |
-
-
-
+| 데모 (Live) | FE: https://capstone-eight-virid.vercel.app<br>BE: https://capstone-production-e8c2.up.railway.app/api/health |
+| Team Ground Rule | https://github.com/puter8/capstone/blob/main/docs/shared/Team_Ground_Rule.md |
+| 최종수정일 | 2026.06.01 |
