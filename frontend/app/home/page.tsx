@@ -1,234 +1,202 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { reducer, initialState } from '@/lib/state/conversation';
-import { useRecorder } from '@/lib/audio/useRecorder';
-import { blobToMonoWav } from '@/lib/audio/blobToWav';
-import { mockChat } from '@/lib/mocks/chat-mock';
-import type { Message } from '@/lib/types/message';
-import type { ChatApiResponse } from '@/lib/types/character';
-import { usePally } from '@/lib/hooks/usePally';
-import PallyCanvas from '@/components/pally/PallyCanvas';
-import { EmptyGreeting } from '@/components/chat/EmptyGreeting';
-import { ChatBubble } from '@/components/chat/ChatBubble';
-import { TalkButton } from '@/components/audio/TalkButton';
-import { BottomNav } from '@/components/nav/BottomNav';
-import { Toast } from '@/components/ui/Toast';
+import { useCallback, useEffect, useReducer, useRef } from "react";
 
-// Layout coordinates from Figma 427:2216 "Pally talk - 새 채팅" (402×874):
-//   empty-title       y=253  (gap 16 from hint)
-//   empty-hint        y=293
-//   Pally character   y=370  w=h=262 → ends y=632
-//   TalkButton idle   y=616  w=h=104 → ends y=720 (overlaps character bottom 16px)
-//   GNB               y=753  w=389 h=110
-// All absolute-positioned relative to the 402-wide main container so the
-// composition matches Figma 1:1 on mobile.
+import { TalkButton } from "@/components/audio/TalkButton";
+import { ChatBubble } from "@/components/chat/ChatBubble";
+import { MobileShell } from "@/components/layout/MobileShell";
+import { BottomNav } from "@/components/nav/BottomNav";
+import PallyCanvas from "@/components/pally/PallyCanvas";
+import { Toast } from "@/components/ui/Toast";
+import { blobToMonoWav } from "@/lib/audio/blobToWav";
+import { useRecorder } from "@/lib/audio/useRecorder";
+import { usePally } from "@/lib/hooks/usePally";
+import { mockChat } from "@/lib/mocks/chat-mock";
+import { initialState, reducer } from "@/lib/state/conversation";
+import type { ChatApiResponse } from "@/lib/types/character";
+import type { Message } from "@/lib/types/message";
 
-export default function Page() {
+const SESSION_KEY = "pally:sessionId";
+
+function createSessionId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `session-${Date.now()}`;
+}
+
+export default function HomePage() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { axes, updateFromChatResponse, revealAxes, getAccumulatedAxes } = usePally();
+  const { axes, getAccumulatedAxes, revealAxes, updateFromChatResponse } = usePally();
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
-  // Persist sessionId in localStorage so refresh reuses the same session.
-  // SSR-safe: window check, only runs client-side.
   useEffect(() => {
     if (state.sessionId !== null) return;
-    const KEY = 'pally:sessionId';
-    const stored = window.localStorage.getItem(KEY);
+    const stored = window.localStorage.getItem(SESSION_KEY);
     if (stored) {
-      dispatch({ type: 'sessionId/set', id: stored });
+      dispatch({ type: "sessionId/set", id: stored });
       return;
     }
-    const id =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `session-${Date.now()}`;
-    window.localStorage.setItem(KEY, id);
-    dispatch({ type: 'sessionId/set', id });
+    const id = createSessionId();
+    window.localStorage.setItem(SESSION_KEY, id);
+    dispatch({ type: "sessionId/set", id });
   }, [state.sessionId]);
 
   const transcribeAudio = useCallback(async (blob: Blob) => {
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
-    if (!backendUrl) {
-      throw new Error('NEXT_PUBLIC_BACKEND_URL is not configured');
-    }
+    if (!backendUrl) throw new Error("NEXT_PUBLIC_BACKEND_URL is not configured");
 
-    // Convert to mono 16 kHz WAV before sending to STT.
-    // Chrome WEBM_OPUS regularly returns empty results from Google Cloud STT v1;
-    // LINEAR16 WAV is the most reliably supported input format across all browsers.
     let audioBlob: Blob;
     let filename: string;
     try {
       audioBlob = await blobToMonoWav(blob);
-      filename = 'recording.wav';
-    } catch {
-      // If Web Audio API decode fails (e.g. very old browser), send original
+      filename = "recording.wav";
+    } catch (error) {
+      console.warn("WAV conversion failed; sending the original recording.", error);
       audioBlob = blob;
-      filename = 'recording.webm';
+      filename = "recording.webm";
     }
 
     const formData = new FormData();
-    formData.append('audio', audioBlob, filename);
-
-    const response = await fetch(`${backendUrl}/api/stt`, {
-      method: 'POST',
-      body: formData,
-    });
-
+    formData.append("audio", audioBlob, filename);
+    const response = await fetch(`${backendUrl}/api/stt`, { method: "POST", body: formData });
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`STT failed ${response.status}: ${text}`);
     }
+    const data = (await response.json()) as { transcript: string };
+    return data.transcript;
+  }, []);
 
-    const data = await response.json();
-    return data.transcript as string;
+  const playTts = useCallback(async (encodedAudio: string) => {
+    const bytes = Uint8Array.from(atob(encodedAudio), (character) => character.charCodeAt(0));
+    const finish = () => dispatch({ type: "rec/speakingDone" });
+    let played = false;
+    const audioContext = audioContextRef.current;
+
+    if (audioContext && audioContext.state !== "closed") {
+      try {
+        if (audioContext.state === "suspended") await audioContext.resume();
+        const buffer = await audioContext.decodeAudioData(bytes.buffer.slice(0));
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        source.onended = finish;
+        source.start();
+        played = true;
+      } catch (error) {
+        console.warn("AudioContext playback failed; using HTMLAudioElement.", error);
+      }
+    }
+
+    if (played) return;
+    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" }));
+    audioRef.current?.pause();
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    const done = () => {
+      URL.revokeObjectURL(url);
+      audioRef.current = null;
+      finish();
+    };
+    audio.onended = done;
+    audio.onerror = done;
+    void audio.play().catch((error) => {
+      console.warn("TTS playback failed.", error);
+      done();
+    });
   }, []);
 
   const handleProcessed = useCallback(
     async (utterance: string) => {
       if (!state.sessionId) return;
       try {
-        const res = await mockChat({
+        const response = await mockChat({
           utterance,
           session_id: state.sessionId,
-          level: 'B1',
+          level: "B1",
           current_axes: getAccumulatedAxes(),
+          conversation_history: state.messages.map((message) => ({
+            role: message.role,
+            content: message.transcript,
+          })),
         });
-        const userMsg: Message = {
-          id: `m-${Date.now()}-u`,
+        const now = Date.now();
+        const userMessage: Message = {
+          id: `m-${now}-u`,
           sessionId: state.sessionId,
-          role: 'user',
-          transcript: res.transcript,
+          role: "user",
+          transcript: response.transcript,
           createdAt: new Date().toISOString(),
         };
-        const pallyMsg: Message = {
-          id: `m-${Date.now()}-p`,
+        const pallyMessage: Message = {
+          id: `m-${now}-p`,
           sessionId: state.sessionId,
-          role: 'pally',
-          transcript: res.reply,
+          role: "pally",
+          transcript: response.reply,
           createdAt: new Date().toISOString(),
         };
-        dispatch({ type: 'rec/processed', userMsg, pallyMsg });
-        updateFromChatResponse(res as unknown as ChatApiResponse);
+        dispatch({ type: "rec/processed", userMsg: userMessage, pallyMsg: pallyMessage });
+        updateFromChatResponse(response as unknown as ChatApiResponse);
 
-        if (res.tts_audio) {
-          const bytes = Uint8Array.from(atob(res.tts_audio), (c) => c.charCodeAt(0));
-          const finish = () => dispatch({ type: 'rec/speakingDone' });
-          let played = false;
-
-          // Primary: AudioContext (iOS-safe — context was unlocked in handlePressStop user gesture)
-          const audioCtx = audioCtxRef.current;
-          if (audioCtx && audioCtx.state !== 'closed') {
-            try {
-              if (audioCtx.state === 'suspended') await audioCtx.resume();
-              // slice(0) copies the buffer; decodeAudioData transfers ownership
-              const buffer = await audioCtx.decodeAudioData(bytes.buffer.slice(0));
-              const source = audioCtx.createBufferSource();
-              source.buffer = buffer;
-              source.connect(audioCtx.destination);
-              source.onended = finish;
-              source.start();
-              played = true;
-            } catch {
-              // fall through to HTMLAudioElement
-            }
-          }
-
-          // Fallback: HTMLAudioElement (desktop / browsers without AudioContext)
-          if (!played) {
-            const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }));
-            if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-            const audio = new Audio(url);
-            audioRef.current = audio;
-            const done = () => { URL.revokeObjectURL(url); audioRef.current = null; finish(); };
-            audio.onended = done;
-            audio.onerror = done;
-            void audio.play().catch(done);
-          }
+        if (response.tts_audio) {
+          await playTts(response.tts_audio);
         } else {
-          window.setTimeout(() => dispatch({ type: 'rec/speakingDone' }), 3000);
+          window.setTimeout(() => dispatch({ type: "rec/speakingDone" }), 3000);
         }
-      } catch {
+      } catch (error) {
+        console.error("Conversation request failed.", error);
         dispatch({
-          type: 'rec/error',
-          reason: 'generic',
-          message: '응답을 가져오지 못했어요. 다시 시도해 주세요.',
+          type: "rec/error",
+          reason: "generic",
+          message: error instanceof Error ? error.message : "응답을 가져오지 못했어요. 다시 시도해 주세요.",
         });
       }
     },
-    [state.sessionId, updateFromChatResponse],
+    [getAccumulatedAxes, playTts, state.messages, state.sessionId, updateFromChatResponse],
   );
 
   const recorder = useRecorder({
-    onStart: () => dispatch({ type: 'rec/start' }),
+    onStart: () => dispatch({ type: "rec/start" }),
     onStop: async (blob, webSpeechTranscript) => {
-      dispatch({ type: 'rec/stop' });
+      dispatch({ type: "rec/stop" });
       if (!state.sessionId) {
-        dispatch({
-          type: 'rec/error',
-          reason: 'generic',
-          message: '세션 ID를 생성하는 중입니다. 잠시 후 다시 시도해주세요.',
-        });
+        dispatch({ type: "rec/error", reason: "generic", message: "세션을 만드는 중이에요. 잠시 후 다시 시도해 주세요." });
         return;
       }
 
       try {
-        let utterance: string;
-
-        if (webSpeechTranscript) {
-          // Chrome: Web Speech API result — no backend STT call needed
-          utterance = webSpeechTranscript;
-        } else {
-          // iOS / fallback: convert to WAV and call backend STT
-          if (!blob) {
-            dispatch({
-              type: 'rec/error',
-              reason: 'generic',
-              message: '녹음된 오디오를 찾을 수 없습니다. 다시 시도해주세요.',
-            });
-            return;
-          }
+        let utterance = webSpeechTranscript;
+        if (!utterance) {
+          if (!blob) throw new Error("녹음된 오디오를 찾을 수 없어요. 다시 시도해 주세요.");
           try {
             utterance = await transcribeAudio(blob);
-          } catch {
-            await new Promise<void>((resolve) => setTimeout(resolve, 600));
+          } catch (firstError) {
+            console.warn("First STT request failed; retrying once.", firstError);
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 600));
             utterance = await transcribeAudio(blob);
           }
-          if (!utterance.trim()) {
-            throw new Error('음성 인식 결과가 비어있습니다. 다시 시도해주세요.');
-          }
         }
-
+        if (!utterance.trim()) throw new Error("음성 인식 결과가 비어 있어요. 다시 말해 주세요.");
         await handleProcessed(utterance);
       } catch (error) {
-        const message = error instanceof Error ? error.message : '오디오 처리에 실패했습니다.';
+        console.error("Audio processing failed.", error);
         dispatch({
-          type: 'rec/error',
-          reason: 'generic',
-          message,
+          type: "rec/error",
+          reason: "generic",
+          message: error instanceof Error ? error.message : "오디오 처리에 실패했어요.",
         });
       }
     },
-    onPermissionDenied: () =>
-      dispatch({
-        type: 'rec/error',
-        reason: 'permission-denied',
-        message: '마이크 권한이 필요해요. 브라우저 설정에서 허용해주세요.',
-      }),
-    onError: (message) =>
-      dispatch({ type: 'rec/error', reason: 'generic', message }),
+    onPermissionDenied: () => dispatch({ type: "rec/error", reason: "permission-denied", message: "마이크 권한이 필요해요. 브라우저 설정에서 허용해 주세요." }),
+    onError: (message) => dispatch({ type: "rec/error", reason: "generic", message }),
   });
 
   const handleSessionEnd = useCallback(() => {
-    revealAxes(); // Apply accumulated axes to Pally before clearing conversation
-    const KEY = 'pally:sessionId';
-    const newId =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `session-${Date.now()}`;
-    window.localStorage.setItem(KEY, newId);
-    dispatch({ type: 'session/end', newId });
+    revealAxes();
+    const newId = createSessionId();
+    window.localStorage.setItem(SESSION_KEY, newId);
+    dispatch({ type: "session/end", newId });
   }, [revealAxes]);
 
   const handlePressStart = useCallback(() => {
@@ -236,102 +204,63 @@ export default function Page() {
   }, [recorder]);
 
   const handlePressStop = useCallback(() => {
-    dispatch({ type: 'rec/stop' }); // Immediately switch to processing UI before onstop fires
-    // iOS Safari: unlock AudioContext during user gesture so TTS can play after async STT/chat
+    dispatch({ type: "rec/stop" });
     try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      if (!audioContextRef.current) {
+        const AudioContextConstructor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        audioContextRef.current = new AudioContextConstructor();
       }
-      if (audioCtxRef.current.state === 'suspended') {
-        void audioCtxRef.current.resume();
-      }
-    } catch { /* AudioContext not supported */ }
+      if (audioContextRef.current.state === "suspended") void audioContextRef.current.resume();
+    } catch (error) {
+      console.warn("AudioContext is unavailable.", error);
+    }
     recorder.stop();
   }, [recorder]);
 
-  const isIdle = state.rec.kind === 'idle';
-  const isProcessing = state.rec.kind === 'processing';
-  const isRecording = state.rec.kind === 'recording';
-  const errorVisible = state.rec.kind === 'error';
-  // ChatBubble shows when there are messages, OR during recording/processing (shows Listening.../Thinking...).
-  // Disappears only on error state.
-  // X button clears messages → ChatBubble hides → empty greeting returns.
+  const isIdle = state.rec.kind === "idle";
+  const isProcessing = state.rec.kind === "processing";
+  const isRecording = state.rec.kind === "recording";
+  const errorVisible = state.rec.kind === "error";
   const showChatBubble = (state.messages.length > 0 || isRecording || isProcessing) && !errorVisible;
-  const showEmptyGreeting = isIdle && state.messages.length === 0;
-  // Character + TalkButton: hidden only when history is expanded *during* a live conversation.
-  // In idle the greeting takes over, so historyOpen residue must not blank the screen.
   const historyCoversScreen = state.historyOpen && !isIdle;
-  const showCharacter = !historyCoversScreen;
-
-  // TalkButton y shifts when ChatBubble is above it.
-  const talkButtonTop = showChatBubble ? 625 : 616;
 
   return (
-    <main className="relative mx-auto w-full max-w-[402px] min-h-[874px] bg-surface overflow-hidden">
-      {/* X button — session end, always visible (Figma 상단 좌측) */}
-      <button
-        type="button"
-        aria-label="세션 종료"
-        onClick={handleSessionEnd}
-        className="absolute top-4 left-4 z-50 w-8 h-8 flex items-center justify-center"
-      >
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M4 4l12 12M16 4L4 16" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      </button>
+    <MobileShell>
+      {showChatBubble ? (
+        <>
+          <button aria-label="대화 종료" className="absolute left-4 top-[23px] z-50 grid size-[41px] place-items-center border-0 bg-transparent p-0" onClick={handleSessionEnd} type="button">
+            <svg aria-hidden="true" className="size-5" fill="none" viewBox="0 0 20 20">
+              <path d="M4 4l12 12M16 4 4 16" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+            </svg>
+          </button>
+          <div className="absolute inset-x-0 top-0 z-10">
+            <ChatBubble
+              expanded={state.historyOpen}
+              listening={isRecording}
+              messages={state.messages}
+              onToggleExpand={() => dispatch({ type: "history/toggle" })}
+              thinking={isProcessing}
+            />
+          </div>
+        </>
+      ) : null}
 
-      {/* Top: ChatBubble (covers top region from y=0). Long mode covers character + button. */}
-      {showChatBubble && (
-        <div className="absolute top-0 inset-x-0 z-10">
-          <ChatBubble
-            messages={state.messages}
-            expanded={state.historyOpen}
-            thinking={isProcessing}
-            listening={isRecording}
-            onToggleExpand={() => dispatch({ type: 'history/toggle' })}
-          />
-        </div>
-      )}
+      {!historyCoversScreen ? (
+        <>
+          <div className={`absolute left-1/2 -translate-x-1/2 ${showChatBubble ? "top-[382px]" : "top-[369px]"}`}>
+            <PallyCanvas axes={axes} size={308} />
+          </div>
+          <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${showChatBubble ? "top-[690px]" : "top-[649px]"}`}>
+            <TalkButton onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
+          </div>
+        </>
+      ) : null}
 
-      {/* EmptyGreeting at y=253 (Figma empty-title) */}
-      {showEmptyGreeting && (
-        <div className="absolute top-[253px] inset-x-0 flex justify-center z-10">
-          <EmptyGreeting />
-        </div>
-      )}
-
-      {/* Pally character at y=370 (Figma Group 7) — 1B PallyCanvas with axes */}
-      {showCharacter && (
-        <div className="absolute top-[370px] left-1/2 -translate-x-1/2 z-0">
-          <PallyCanvas axes={axes} size={262} />
-        </div>
-      )}
-
-      {/* TalkButton: hidden when history expanded (regardless of rec state). */}
-      {!state.historyOpen && (
-        <div
-          className="absolute left-1/2 -translate-x-1/2 z-20"
-          style={{ top: talkButtonTop }}
-        >
-          <TalkButton
-            rec={state.rec}
-            onPressStart={handlePressStart}
-            onPressStop={handlePressStop}
-          />
-        </div>
-      )}
-
-      {/* Toast above BottomNav */}
-      <div className="absolute bottom-[100px] inset-x-0 px-4 z-40">
-        <Toast
-          message={state.rec.kind === 'error' ? state.rec.message : ''}
-          visible={errorVisible}
-          onDismiss={() => dispatch({ type: 'rec/dismissError' })}
-        />
+      <div className="absolute bottom-[100px] inset-x-0 z-40 px-4">
+        <Toast message={state.rec.kind === "error" ? state.rec.message : ""} onDismiss={() => dispatch({ type: "rec/dismissError" })} visible={errorVisible} />
       </div>
 
-      {/* GNB fixed at bottom */}
-      <BottomNav />
-    </main>
+      {!showChatBubble ? <BottomNav /> : null}
+    </MobileShell>
   );
 }

@@ -1,7 +1,7 @@
-'use client';
+"use client";
 
-import { cn } from '@/lib/utils';
-import type { RecState } from '@/lib/state/conversation';
+import type { RecState } from "@/lib/state/conversation";
+import { cn } from "@/lib/utils";
 
 export interface TalkButtonProps {
   rec: RecState;
@@ -10,63 +10,44 @@ export interface TalkButtonProps {
   onPressStop: () => void;
 }
 
-// Figma TalkButton ComponentSet (441:30) — two variants exported as PNG:
-//   - state=idle    (node 441:18)   → orange disc + white mic + drop shadow
-//   - state=thinking (node 427:2622) → red disc + white square stop + drop shadow
-// PNGs include the drop shadow baked in (transparent background).
-
-const ARIA: Record<RecState['kind'], string> = {
-  idle: '녹음 시작',
-  recording: '녹음 정지',
-  processing: '처리 중',
-  speaking: 'Pally가 응답 중',
-  error: '녹음 시작',
+const ARIA: Record<RecState["kind"], string> = {
+  idle: "녹음 시작",
+  recording: "녹음 정지",
+  processing: "처리 중",
+  speaking: "Pally가 응답 중",
+  error: "녹음 시작",
 };
 
 export function TalkButton({ rec, disabled = false, onPressStart, onPressStop }: TalkButtonProps) {
-  // Only recording shows red-stop variant; processing/speaking show orange-mic (disabled)
-  const isThinkingVariant = rec.kind === 'recording';
-  const isInteractive =
-    !disabled &&
-    (rec.kind === 'idle' || rec.kind === 'error' || rec.kind === 'recording');
+  const isRecording = rec.kind === "recording";
+  const isInteractive = !disabled && (rec.kind === "idle" || rec.kind === "error" || isRecording);
+  const src = isRecording ? "/pally/talkbtn-thinking.png" : "/pally/talkbtn-idle.png";
+  const height = isRecording ? 109 : 104;
 
   const handleClick = () => {
     if (!isInteractive) return;
-    if (rec.kind === 'recording') {
+    if (isRecording) {
       onPressStop();
-    } else {
-      onPressStart();
+      return;
     }
+    onPressStart();
   };
-
-  // Thinking PNG is 104×109 (drop shadow extends 5px below). idle is 104×104.
-  const src = isThinkingVariant ? '/pally/talkbtn-thinking.png' : '/pally/talkbtn-idle.png';
-  const height = isThinkingVariant ? 109 : 104;
 
   return (
     <button
-      type="button"
-      aria-label={ARIA[rec.kind]}
       aria-disabled={!isInteractive}
+      aria-label={ARIA[rec.kind]}
+      className={cn(
+        "block touch-manipulation border-0 bg-transparent p-0 transition-transform duration-150 active:scale-95",
+        "disabled:cursor-default disabled:opacity-50",
+      )}
       disabled={!isInteractive}
       onClick={handleClick}
-      className={cn(
-        'block bg-transparent border-0 p-0',
-        'transition-transform duration-150 active:scale-95',
-        'disabled:opacity-50 disabled:cursor-default',
-        'touch-manipulation', // Eliminate 300ms tap delay on mobile
-      )}
       style={{ width: 104, height }}
+      type="button"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={src}
-        alt=""
-        width={104}
-        height={height}
-        className="block w-full h-full select-none pointer-events-none"
-        aria-hidden
-      />
+      <img alt="" aria-hidden className="pointer-events-none block h-full w-full select-none" height={height} src={src} width={104} />
     </button>
   );
 }

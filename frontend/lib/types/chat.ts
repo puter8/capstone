@@ -18,6 +18,10 @@ export interface ChatRequest {
   session_id: string;
   level: Level;
   current_axes?: Axes;
+  conversation_history?: Array<{
+    role: 'user' | 'pally';
+    content: string;
+  }>;
 }
 
 export interface Axes {
