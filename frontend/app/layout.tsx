@@ -1,6 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import "pretendard/dist/web/variable/pretendardvariable.css";
+import { Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
+
+const notoSansKr = Noto_Sans_KR({
+  display: "swap",
+  preload: false,
+  variable: "--font-noto-sans-kr",
+  weight: ["400", "700"],
+});
 
 export const metadata: Metadata = {
   title: "Pally",
@@ -25,7 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body className="bg-surface text-text font-sans antialiased min-h-screen">
+      <body className={`${notoSansKr.variable} min-h-screen bg-surface font-sans text-text antialiased`}>
         {children}
       </body>
     </html>

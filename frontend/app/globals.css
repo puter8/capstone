@@ -2,11 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
-/*
- * Phase 1A: light mode only (DESIGN.md "Dark mode out of scope for MVP").
- * Page background + text colors are applied via Tailwind tokens on <body>
- * (see frontend/app/layout.tsx — `bg-surface text-text`).
- */
+html {
+  background: #fcf9f6;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font: inherit;
+}
 
 @layer utilities {
   .text-balance {
