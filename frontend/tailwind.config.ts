@@ -14,6 +14,8 @@ const config: Config = {
         primary: "#fe9012",
         "primary-soft": "#ffb84a",
         accent: "#00c3d0",
+        "accent-soft": "#e8f8f9",
+        "accent-strong": "#007d84",
         text: "#1c1a17",
         "text-secondary": "#55504a",
         "text-muted": "#6b645d",

@@ -11,7 +11,9 @@ export function SelectionIndicator({ selected = false, className }: SelectionInd
       aria-hidden="true"
       className={cn(
         "grid size-10 place-items-center rounded-full border-2",
-        selected ? "border-white bg-white text-primary" : "border-primary bg-transparent text-primary",
+        selected
+          ? "border-accent-strong bg-accent-strong text-white"
+          : "border-text-tertiary bg-transparent text-text-tertiary",
         className,
       )}
     >
