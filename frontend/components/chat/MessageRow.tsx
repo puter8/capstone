@@ -1,5 +1,3 @@
-import { cn } from '@/lib/utils';
-
 type Speaker = 'you' | 'pally';
 
 type MessageRowProps = {
@@ -15,7 +13,7 @@ export function MessageRow({ speaker, transcript, state = 'default' }: MessageRo
   if (state === 'listening') {
     return (
       <div className="flex flex-col items-center w-full text-center">
-        <p className="font-sans font-semibold text-[20px] leading-7 text-primary">
+        <p className="font-sans text-[20px] font-semibold leading-7 text-accent">
           Listening...
         </p>
       </div>
@@ -25,18 +23,12 @@ export function MessageRow({ speaker, transcript, state = 'default' }: MessageRo
   return (
     <div className="flex flex-col items-center gap-1 w-full text-center">
       <p
-        className={cn(
-          'font-sans font-semibold text-[20px] leading-7',
-          isPally ? 'text-primary' : 'text-accent',
-        )}
+        className={`font-sans text-[20px] font-semibold leading-7 ${isPally ? 'text-accent' : 'text-primary'}`}
       >
         {isPally ? 'Pally' : 'YOU'}
       </p>
       <p
-        className={cn(
-          'font-sans font-normal text-[16px] leading-6',
-          isPally ? 'text-text' : 'text-text-tertiary',
-        )}
+        className={`font-sans text-[16px] font-normal leading-6 ${isPally ? 'text-text' : 'text-text-tertiary'}`}
       >
         {state === 'thinking' ? 'Thinking...' : transcript}
       </p>
