@@ -1,0 +1,51 @@
+[
+  {
+    "term": "lowkey",
+    "normalizedTerm": "lowkey",
+    "meaningKo": "은근히, 살짝",
+    "usageContext": "Casual emphasis for a mild opinion or feeling.",
+    "subreddit": "EnglishLearning",
+    "sourceId": "reddit-fixture-001",
+    "sourceUrl": "https://www.reddit.com/r/EnglishLearning/comments/example001",
+    "observedAt": "2026-07-25T00:00:00Z",
+    "confidence": 0.85,
+    "safety": "safe"
+  },
+  {
+    "term": "main character energy",
+    "normalizedTerm": "main character energy",
+    "meaningKo": "주인공 같은 분위기",
+    "usageContext": "Playful praise for confident or dramatic behavior.",
+    "subreddit": "EnglishLearning",
+    "sourceId": "reddit-fixture-001",
+    "sourceUrl": "https://www.reddit.com/r/EnglishLearning/comments/example001",
+    "observedAt": "2026-07-25T00:00:00Z",
+    "confidence": 0.85,
+    "safety": "safe"
+  },
+  {
+    "term": "no cap",
+    "normalizedTerm": "no cap",
+    "meaningKo": "진짜로, 거짓말 없이",
+    "usageContext": "Casual assurance that the speaker is being honest.",
+    "subreddit": "slang",
+    "sourceId": "reddit-fixture-002",
+    "sourceUrl": "https://www.reddit.com/r/slang/comments/example002",
+    "observedAt": "2026-07-25T00:00:00Z",
+    "confidence": 0.85,
+    "safety": "safe"
+  },
+  {
+    "term": "sus",
+    "normalizedTerm": "sus",
+    "meaningKo": "수상한, 의심스러운",
+    "usageContext": "Casual reaction to something suspicious.",
+    "subreddit": "slang",
+    "sourceId": "reddit-fixture-002",
+    "sourceUrl": "https://www.reddit.com/r/slang/comments/example002",
+    "observedAt": "2026-07-25T00:00:00Z",
+    "confidence": 0.65,
+    "safety": "review"
+  }
+]
+
