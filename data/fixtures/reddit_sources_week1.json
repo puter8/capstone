@@ -1,0 +1,19 @@
+[
+  {
+    "sourceId": "reddit-fixture-001",
+    "sourceUrl": "https://www.reddit.com/r/EnglishLearning/comments/example001",
+    "subreddit": "EnglishLearning",
+    "title": "Words my friends use in casual chat",
+    "text": "My friend said the movie was lowkey amazing and the ending had main character energy. Is that natural?",
+    "observedAt": "2026-07-25T00:00:00Z"
+  },
+  {
+    "sourceId": "reddit-fixture-002",
+    "sourceUrl": "https://www.reddit.com/r/slang/comments/example002",
+    "subreddit": "slang",
+    "title": "What does no cap mean?",
+    "text": "People keep saying no cap when they mean they are being honest. Sometimes they also say sus for suspicious things.",
+    "observedAt": "2026-07-25T00:00:00Z"
+  }
+]
+
