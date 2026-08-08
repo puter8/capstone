@@ -1,4 +1,4 @@
-﻿# Pally AI 파트 8월 말 실행 계획: ML 전환과 Reddit Vocabulary
+# Pally AI 파트 8월 말 실행 계획: ML 전환과 Reddit Vocabulary
 
 > 대상 기간: 2026-07-25 ~ 2026-08-31
 >
@@ -81,6 +81,7 @@ export type ChatResponseForFrontend = {
 - `axes`, `character`, `feedback`, `tts_audio` 필드 이름과 타입을 깨지 않는다.
 - 에러 시 빈 화면이 아니라 기존 error state가 표시될 수 있도록 안전한 오류 메시지를 반환한다.
 - 캐릭터 변화 범위는 기존 Pally renderer가 처리할 수 있는 0~100 범위를 유지한다.
+- Pally의 시각적 변화는 5축 점수 변화에 따라 형태/색/표정이 부드럽게 변하는 방향으로 유지한다.
 
 ### 2.2 백엔드와의 관련
 
@@ -403,10 +404,11 @@ Pally는 slang을 남발하지 않는다. 목표는 사용자의 casual 표현�
 
 ### Week 3: 2026-08-10 ~ 2026-08-16
 
-목표: Reddit candidate extractor를 실제 source shape에 맞춘다.
+목표: Reddit candidate extractor를 실제 source shape에 맞추고, API 승인 지연 시에도 fixture 기반 검증 경로를 확정한다.
 
 - 백엔드가 제공할 `RedditSourceItem` shape 확정
-- 허용된 실제 Reddit API 응답 1 batch 확인
+- Reddit API 승인 대기 시 fixture 기반 검증 경로 확정
+- 승인 이후 실제 Reddit source batch 검증 준비
 - fixture에 원문 전체를 남기지 않는 sample 구조 확정
 - 후보 term 추출 로직 구현
 - 정규화 로직 구현
@@ -415,6 +417,7 @@ Pally는 slang을 남발하지 않는다. 목표는 사용자의 casual 표현�
 완료 기준:
 
 - 실제 또는 축약된 allowed source batch에서 `MemeTermCandidate[]`가 생성된다.
+- API 승인 지연 시 fixture batch로 동일한 검증 경로를 수행할 수 있다.
 - 같은 source를 다시 처리해도 normalized term 기준 중복을 제어할 수 있다.
 - `blocked` 후보가 prompt context로 들어가지 않는다.
 
@@ -580,3 +583,315 @@ python -m compileall ai tests
 
 
 
+
+## 11. Week 2 실행 기록
+
+**실행일:** 2026-07-31
+
+### 11.1 7/19 팀 조율 문서 확인 결과
+
+7/19 문서 기준으로 이번 주 작업도 AI 내부에서 독립적으로 진행했다.
+
+- 프론트엔드 contract는 `axes`, `character`, `feedback`, `tts_audio` 형태를 유지한다.
+- 백엔드는 AI analyzer 내부 구현을 몰라도 되며, `/api/chat` 경계만 유지하면 된다.
+- Reddit 실제 수집, credential, collector, 저장은 백엔드 담당이다.
+- AI는 Supabase에 직접 접근하지 않고 fixture와 local test로 검증한다.
+
+### 11.2 완료한 작업
+
+- `ai/ml_baseline.py` 추가
+  - dependency-free TF-IDF + weighted k-NN axis regressor 구현
+  - 회화 중심 `data/axis_dataset_week2.jsonl`을 우선 학습 데이터로 로드하고, 파일이 없을 때만 기존 legacy dataset으로 fallback
+- `ai/analyzers.py` 업데이트
+  - `MLAxisAnalyzer` placeholder를 실제 Week 2 baseline으로 연결
+  - `get_axis_analyzer("ml")`로 ML analyzer 선택 가능
+- `ai/evaluate_axis_analyzers.py` 추가
+  - rule-based baseline과 ML baseline을 같은 dataset에서 평가
+  - 축별 MAE, Spearman correlation, worst case, 평균 MAE delta 출력
+- `docs/ai-labeling-guide.md` 추가
+  - 5축 라벨링 기준, 점수 구간, JSONL format, 주의사항 정리
+  - Reddit 원문을 ML 학습 데이터로 쓰지 않는 원칙 명시
+- `data/axis_dataset_week2.jsonl` 추가
+  - Week 2용 JSONL dataset seed를 회화 중심 30개로 재작성
+  - `train`, `dev`, `test` split 포함
+- `tests/test_ai_week2_ml_baseline.py` 추가
+  - ML analyzer가 기존 0~100 axes contract를 지키는지 검증
+  - ML baseline이 training neighbor를 사용해 예측하는지 검증
+  - analyzer factory에서 `ml` 선택이 되는지 검증
+
+### 11.3 검증 결과
+
+```bash
+$env:PYTHONDONTWRITEBYTECODE='1'; python tests/test_ai_week1_contracts.py
+# Week 1 AI contract checks passed.
+
+$env:PYTHONDONTWRITEBYTECODE='1'; python tests/test_ai_week2_ml_baseline.py
+# Week 2 ML baseline checks passed.
+
+$env:PYTHONDONTWRITEBYTECODE='1'; python tests/test_matrix.py
+# 기존 CHARACTER MATRIX 데모 정상 실행
+
+$env:PYTHONDONTWRITEBYTECODE='1'; python ai/evaluate_axis_analyzers.py
+# rule_avg_mae: 16.18
+# ml_avg_mae  : 13.81
+# delta       : -2.37
+```
+
+`data/axis_dataset_week2.jsonl`은 JSONL로 파싱 가능하며 현재 30개 row와 `train/dev/test` split을 가진다. 모든 row는 Pally 음성 회화에서 사용자가 실제로 말할 법한 발화로 제한한다.
+
+### 11.4 평가 판단
+
+회화 중심 dataset 기준으로 현재 ML baseline은 rule-based baseline보다 평균 MAE가 낮다.
+
+- rule-based average MAE: `16.18`
+- ML baseline average MAE: `13.81`
+- delta: `-2.37`
+
+다만 seed가 아직 30개라 Week 2 결과만으로는 ML analyzer를 default로 전환하지 않는다. 현재 권장 상태는 다음과 같다.
+
+```text
+PALLY_AXIS_ANALYZER=rule  # default 유지
+PALLY_AXIS_ANALYZER=ml    # 실험/평가용
+```
+
+ML baseline은 아직 측정 가능한 후보일 뿐이며, rule-based analyzer는 계속 baseline/fallback으로 유지한다.
+
+### 11.5 보류한 작업
+
+- STT/TTS 배포 endpoint 실검증
+  - 사유: Railway trial expired로 배포 백엔드가 paused 상태다.
+- Reddit 실제 API 호출
+  - 사유: 7/19 문서상 Reddit 접근 승인, credential, collector는 백엔드 담당 영역이다.
+- 150~300개 전체 라벨링 완료
+  - 사유: Week 2에서는 format과 baseline을 먼저 고정했다. 이후에도 learner-style spoken utterance를 중심으로 추가 라벨링해야 한다.
+
+### 11.6 Week 3 진입 조건
+
+- `RedditSourceItem` 실제 source shape를 백엔드와 재확인
+- Reddit fixture를 더 실제 응답 shape에 가깝게 확장
+- `MemeTermCandidate` 정규화와 safety rule 보강
+- ML dataset row를 learner-style 중심으로 계속 확장
+
+## 12. PM 정책 문서에서 AI 파트가 계속 참고할 사항
+
+**기준 문서:** Pally PM 정책 확정 문서 v1.0, 2026-07-25
+
+PM 정책 문서는 주로 Achievements, Daily Task, Streak, 결제 정책을 다룬다. AI가 직접 구현할 영역은 아니지만, AI 출력값과 사용자 발화 데이터가 일부 정책 계산에 사용되므로 아래 사항은 앞으로 계속 유지해야 한다.
+
+### 12.1 AI 출력 contract 유지
+
+Daily Task와 Streak 일부 항목은 AI 분석 결과 또는 사용자 발화 텍스트를 기준으로 계산될 수 있다. 따라서 AI analyzer가 rule-based에서 ML로 바뀌더라도 아래 contract는 유지한다.
+
+- `axes.Formality`
+- `axes.Energy`
+- `axes.Intimacy`
+- `axes.Humor`
+- `axes.Curiosity`
+- 사용자 발화 원문 또는 transcript
+- Feedback 화면에서 사용할 `feedback: FeedbackItem[]`
+
+특히 `Intimacy`는 PM 정책의 Daily Task E4에서 어제 대비 상승 여부를 판단하는 데 쓰일 수 있으므로, ML 전환 후에도 축 의미를 바꾸지 않는다.
+
+### 12.2 Achievements 계산에 영향을 주는 데이터
+
+아래 Daily Task는 AI 결과 또는 발화 데이터와 연결된다.
+
+| Task | AI와 관련된 데이터 |
+|---|---|
+| B1-B3: 대화 중 질문하기 | 사용자 발화의 `?`, 질문 표현, transcript |
+| B4-B6: 긴 문장 말하기 | 사용자 발화 단어 수 |
+| E4: Intimacy 축이 어제보다 상승하기 | 세션/일자별 `Intimacy` snapshot |
+| E5: 지난 세션보다 더 긴 문장으로 말하기 | 세션별 평균 발화 단어 수 |
+
+AI는 위 task 계산을 직접 구현하지 않는다. 다만 백엔드가 계산할 수 있도록 일관된 `axes`와 transcript를 반환해야 한다.
+
+### 12.3 axis_snapshots 저장 기준은 백엔드와 합의 필요
+
+PM 정책에는 `axis_snapshots`라는 측정 데이터가 등장한다. 현재 AI 작업에서는 DB를 직접 다루지 않으므로, 실제 저장 방식은 백엔드가 결정해야 한다.
+
+AI 관점에서 필요한 합의는 다음이다.
+
+- turn마다 raw axes를 저장할지
+- EMA 적용 후 axes만 저장할지
+- session-end 기준 최종 axes snapshot을 저장할지
+- Daily Task E4는 어떤 기준의 `Intimacy`를 비교할지
+
+AI 기본 입장은 다음과 같다.
+
+```text
+raw_axes: 현재 발화 자체의 5축
+smoothed_axes: EMA 적용 후 세션 누적 5축
+character: smoothed_axes 기반 Pally 파라미터
+```
+
+Daily Task와 Streak 계산에는 `smoothed_axes` 또는 session-end snapshot을 쓰는 것이 더 안정적이다.
+
+### 12.4 Quota와 결제 정책은 백엔드에서 AI 호출 전에 처리
+
+PM 정책상 무료 사용자는 1일 20턴, Pro 사용자는 무제한이다. 이 정책은 AI가 구현하지 않는다.
+
+백엔드는 quota 초과 사용자의 요청을 AI/STT/TTS 호출 전에 차단해야 한다. 그래야 불필요한 provider 비용이 발생하지 않는다.
+
+AI 파트는 다음만 보장한다.
+
+- quota 여부를 추측하지 않는다.
+- 백엔드가 호출한 요청에 대해서만 STT/chat/TTS 결과를 생성한다.
+- quota 초과 UX나 결제 상태는 AI contract에 임의로 추가하지 않는다.
+
+### 12.5 AI가 직접 맡지 않는 영역
+
+아래는 PM 정책상 중요하지만 AI 담당 구현 범위가 아니다.
+
+- Daily Task 3개 선택 로직
+- KST 기준 날짜 계산
+- Streak 증가/초기화
+- Streak Freeze
+- 무료/Pro 사용자 구분
+- RevenueCat, StoreKit2, Kakao Pay Billing
+- 결제 성공/실패 처리
+- 화면 진입 로그 기반 task 완료 판정
+
+필요한 경우 AI는 contract와 데이터 의미를 설명하고, 구현은 백엔드/프론트엔드 담당자와 나눠 진행한다.
+## 13. Conversation-First 라벨링 보정 기록
+
+**실행일:** 2026-07-31
+
+사용자 피드백에 따라 Week 2 ML dataset 방향을 다시 잡았다. Pally는 회화 앱이므로, ML 라벨링 기준은 글쓰기/비즈니스/학술 문장이 아니라 사용자가 실제 음성 대화 중 말할 법한 발화여야 한다.
+
+### 13.1 앞으로 유지할 원칙
+
+- Pally의 5축 분석은 spoken conversation utterance를 기준으로 한다.
+- 높은 `Formality`는 논문체나 공문체가 아니라, 예의 있고 조심스러운 구어체를 뜻한다.
+- `I would like to formally inquire...`, `Furthermore...`, `Please be advised...` 같은 문장은 core training seed로 사용하지 않는다.
+- 학습 데이터에는 인사, 설명 요청, 다시 말해달라는 요청, 역할극, 교정 요청, 피드백 반응, 실수/머뭇거림, 자연스러운 slang 질문을 우선 넣는다.
+- Reddit vocabulary도 실제 회화에서 말하거나 이해할 가능성이 있는 표현만 후보로 본다.
+- learner error는 버릴 데이터가 아니라 Pally가 다뤄야 하는 핵심 입력이다.
+
+### 13.2 수정한 작업
+
+- `docs/ai-labeling-guide.md`에 Conversation First 원칙을 추가했다.
+- Formality high score 설명에서 academic/businesslike 기준을 제거하고 polite spoken English로 재정의했다.
+- `data/axis_dataset_week2.jsonl`을 회화 중심 30개 seed로 재작성했다.
+- legacy demo용 `data/dataset.py`도 같은 회화 중심 seed로 맞췄다.
+- `ai/analyzer.py`의 formal keyword를 학술/공문체가 아니라 polite spoken English 중심으로 조정했다.
+- `ai/ml_baseline.py`가 Week 2 JSONL dataset을 우선 로드하도록 수정했다.
+- 기존 legacy dataset은 JSONL이 없을 때만 fallback으로 사용한다.
+
+### 13.3 이유
+
+기존 seed에는 회화 앱 사용자가 실제로 말하지 않을 법한 문장이 섞여 있었다. 이런 데이터로 모델을 평가하면 Pally가 실제 사용자 발화보다 격식 있는 글쓰기 패턴에 끌릴 수 있다. 그래서 ML 전환의 첫 기준을 “잘 쓴 영어 문장”이 아니라 “실제 대화에서 들어올 입력”으로 바꿨다.
+
+### 13.4 팀 전달 포인트
+
+- 프론트엔드: 응답 contract는 그대로 유지된다. `axes`, `character`, `feedback` 표시 방식은 바뀌지 않는다.
+- 백엔드: `/api/chat` 경계는 그대로 유지된다. AI 내부 dataset과 analyzer 실험만 회화 중심으로 바뀐다.
+- 공통: 앞으로 테스트 문장과 fixture를 만들 때 글쓰기 문장보다 음성 대화 문장을 우선 사용한다.
+## 14. Week 3 실행 기록: Reddit Vocabulary 정책 반영과 Fixture 기반 Extractor
+
+**실행일:** 2026-08-08
+
+### 14.1 7/19 팀 조율 문서 확인 결과
+
+7/19 문서 기준으로 Reddit 실제 접근, credential, collector, 저장은 백엔드 담당이다. AI는 backend가 넘겨주는 `RedditSourceItem[]` 또는 같은 형식의 fixture를 받아 meme/slang 후보를 추출하고, 정규화, 의미, 사용 맥락, safety, confidence를 반환한다.
+
+따라서 Week 3는 실제 Reddit API 승인을 기다리지 않고 fixture 기반으로 진행한다. 다만 실제 서비스 collector와 이어질 수 있도록 source item contract는 BE/PM 전달 사항에 맞춘다.
+
+### 14.2 BE/PM 전달 사항 반영
+
+- Reddit 공식 API OAuth 접근은 backend/PM이 신청한다.
+- 승인 대기 중에는 AI가 직접 작성한 fixture로 extractor를 개발한다.
+- 비공식 scraping, 비인증 `.json` endpoint 접근, HTML scraping은 사용하지 않는다.
+- 초기 subreddit allowlist는 `EnglishLearning`, `languagelearning`, `OutOfTheLoop`로 제한한다.
+- `teenagers`, `GenZ`는 미성년자/개인정보 위험 때문에 Week 3 source에서 제외한다.
+- Reddit 원문은 ML 학습 데이터로 쓰지 않고 vocabulary 후보 추출과 안전성 점검에만 사용한다.
+- prompt에는 `safe`이면서 승인된 vocabulary만 들어간다.
+
+### 14.3 공식 문서 확인 결과
+
+2026-08-08 기준 아래 Reddit 공식 문서를 확인했다.
+
+- Reddit Data API Wiki: https://support.reddithelp.com/hc/en-us/articles/16160319875092-Reddit-Data-API-Wiki
+- Developer Platform & Accessing Reddit Data: https://support.reddithelp.com/hc/en-us/articles/14945211791892-Developer-Platform-Accessing-Reddit-Data
+- Reddit Data API Terms: https://redditinc.com/policies/data-api-terms
+- Reddit Developer Terms: https://redditinc.com/policies/developer-terms
+
+확인한 제약:
+
+- Reddit Data API는 Responsible Builder Policy, Developer Terms, Data API Terms를 따른다.
+- 등록된 OAuth token을 사용해야 한다.
+- OAuth 또는 login credential 없는 traffic은 차단될 수 있다.
+- 무료 접근 기준은 OAuth client id당 100 QPM 안내가 있다.
+- Reddit content를 ML/AI model training 입력으로 쓰려면 명시적 허가가 필요하다.
+- 삭제된 Reddit user content는 보관 사본에서도 삭제해야 한다.
+
+### 14.4 완료한 작업
+
+- `ai/contracts.py` 업데이트
+  - BE가 제안한 snake_case `RedditSourceItem`을 받을 수 있게 alias 추가
+  - 기존 Week 1 camelCase fixture도 계속 동작하도록 `populate_by_name=True` 유지
+  - `kind`, `score`, `title` 필드 추가
+- `ai/reddit_vocabulary.py` 업데이트
+  - allowlist: `EnglishLearning`, `languagelearning`, `OutOfTheLoop`
+  - exclude: `teenagers`, `GenZ`
+  - 미성년자/개인정보 신호가 있는 source 제외
+  - `safe/review/blocked` 안전 분류 보강
+  - prompt vocabulary는 `safe` candidate만 반환
+- `data/fixtures/reddit_sources_week3.json` 추가
+  - 실제 Reddit 원문이 아닌 직접 작성한 fixture
+  - BE source item shape와 동일한 snake_case 구조 사용
+- `docs/reddit-vocabulary-policy.md` 추가
+  - Reddit 접근 정책, 공식 문서 확인 결과, 팀 결정, AI/BE handoff 정리
+- `tests/test_ai_week3_reddit_vocabulary.py` 추가
+  - snake_case contract 수용 검증
+  - allowlist/source-level filter 검증
+  - candidate 추출 검증
+  - prompt에 review term이 들어가지 않는지 검증
+
+### 14.5 현재 판단
+
+3주차 AI 작업은 backend 승인을 기다리지 않고 진행 가능하다. 단, 실제 Reddit 수집 완료로 처리하지 않는다.
+
+현재 완료 상태는 다음과 같다.
+
+```text
+Reddit API approval: backend/PM pending
+Real Reddit collection: not done
+Backend integration verification: pending Reddit API approval
+AI extractor with fixture: in progress/done for v1
+Prompt safety rule: safe-only enforced
+ML training with Reddit text: prohibited
+```
+
+### 14.6 팀 전달 포인트
+
+Backend:
+
+- Reddit API 신청과 OAuth credential 관리는 backend/PM 담당이다.
+- AI는 아래 source item shape를 받으면 된다.
+- 실제 collector가 붙기 전까지는 `data/fixtures/reddit_sources_week3.json`과 같은 구조로 테스트한다.
+
+```ts
+type RedditSourceItem = {
+  source_id: string;
+  subreddit: string;
+  title?: string;
+  body: string;
+  permalink: string;
+  observed_at: string;
+  score?: number;
+  kind: "post" | "comment";
+};
+```
+
+Frontend:
+
+- 이번 작업은 사용자 화면 contract 변경이 아니다.
+- Reddit vocabulary는 내부 prompt context 후보이며, 별도 화면 표시 대상이 아니다.
+- Feedback 화면의 `feedback: FeedbackItem[]` 구조와는 별개다.
+
+AI:
+
+- Reddit 원문을 학습 데이터로 쓰지 않는다.
+- source text는 후보 추출용으로만 다룬다.
+- safe/approved term만 Pally prompt context로 변환한다.
+- review/blocked term은 자동 prompt 반영 금지다.

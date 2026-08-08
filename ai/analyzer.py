@@ -46,30 +46,19 @@ SLANG_WORDS = {
 # 격식체 단어/구 목록
 # → Formality(격식도)를 높이고, Intimacy·Humor를 낮추는 신호
 FORMAL_WORDS = {
-    "therefore", "furthermore", "moreover", "nevertheless", "consequently",
-    "accordingly", "henceforth", "herein", "herewith", "thereof",
-    "notwithstanding", "pursuant", "whereas", "hereby", "aforementioned",
-    "subsequently", "respectively", "predominantly", "approximately",
-    "commence", "endeavor", "facilitate", "utilize", "ascertain",
-    "inquire", "request", "inform", "notify", "acknowledge", "confirm",
-    "proceed", "kindly", "sincerely", "regards", "dear", "please",
-    "would like", "i would", "could you", "may i", "shall", "ought",
-    "formally", "officially", "professionally", "respectfully",
-    "implications", "pertaining", "regarding", "concerning",
-    "in accordance", "as per", "with respect to", "in regards to",
-    "at your earliest convenience", "i would be happy",
-    "please be advised", "please note",
-    # additional formal / academic vocab
-    "methodology", "proposed", "arrangement", "discussion", "elaborate",
-    "report", "writing to", "end of business", "am writing", "i am writing",
-    "previous discussion", "socioeconomic", "policy", "analysis",
-    "appreciate your", "look forward", "continued collaboration",
-    "be happy to", "provide a", "thorough", "explanation",
-    "thank you for", "your inquiry",
+    # Polite spoken English for conversation practice. Avoid academic, legal,
+    # report, and corporate email terms as core formality signals.
+    "please", "kindly", "respectfully",
+    "thank you", "thanks", "appreciate", "i appreciate",
+    "would like", "i would like", "could you", "could we", "may i",
+    "would you", "can we", "can you", "please correct", "please explain",
+    "excuse me", "sorry", "pardon", "one moment", "a little slower",
+    "more natural", "politely", "rude", "awkward", "appropriate",
+    "nice to meet you", "good morning", "good afternoon", "good evening",
+    "i was wondering", "may i ask", "could i ask", "would it be okay",
 }
-
-# 고에너지 단어 목록
-# → Energy(에너지)를 높이는 신호 (감탄, 과장, 강조 표현들)
+# 怨좎뿉?덉? ?⑥뼱 紐⑸줉
+# ??Energy(에너지)를 높이는 신호 (감탄, 과장, 강조 표현들)
 HIGH_ENERGY_WORDS = {
     "amazing", "awesome", "incredible", "fantastic", "brilliant", "epic",
     "insane", "wild", "crazy", "literally", "absolutely", "totally",

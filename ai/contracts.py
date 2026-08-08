@@ -9,7 +9,7 @@ implementation is rule-based, ML-based, or hybrid.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 AXIS_KEYS = ("Formality", "Energy", "Intimacy", "Humor", "Curiosity")
@@ -28,30 +28,52 @@ class AxisResult(BaseModel):
 
 
 class RedditSourceItem(BaseModel):
-    sourceId: str
-    sourceUrl: str
+    """AI-side input shape for backend-provided Reddit collector results.
+
+    Week 3 accepts the backend/DB-friendly snake_case fields while preserving
+    the Week 1 camelCase names used by existing AI tests and fixtures.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    sourceId: str = Field(alias="source_id")
     subreddit: str
-    text: str
-    observedAt: str
+    text: str = Field(alias="body")
+    observedAt: str = Field(alias="observed_at")
+    sourceUrl: str = Field(alias="permalink")
     title: str | None = None
+    score: int | None = None
+    kind: Literal["post", "comment"] = "post"
+
+    @field_validator("subreddit")
+    @classmethod
+    def normalize_subreddit(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized.lower().startswith("r/"):
+            normalized = normalized[2:]
+        if not normalized:
+            raise ValueError("subreddit is required")
+        return normalized
 
     @field_validator("text")
     @classmethod
     def text_must_not_be_empty(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError("text is required")
+            raise ValueError("body/text is required")
         return value
 
 
 class MemeTermCandidate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     term: str
-    normalizedTerm: str
-    meaningKo: str
-    usageContext: str
+    normalizedTerm: str = Field(alias="normalized_term")
+    meaningKo: str = Field(alias="meaning_ko")
+    usageContext: str = Field(alias="usage_context")
     subreddit: str
-    sourceId: str
-    sourceUrl: str
-    observedAt: str
+    sourceId: str = Field(alias="source_id")
+    sourceUrl: str = Field(alias="source_url")
+    observedAt: str = Field(alias="observed_at")
     confidence: float = Field(ge=0.0, le=1.0)
     safety: Literal["safe", "review", "blocked"]
 
@@ -59,5 +81,4 @@ class MemeTermCandidate(BaseModel):
 class MemeTerm(MemeTermCandidate):
     id: str
     status: Literal["approved", "rejected", "expired"]
-    approvedAt: str | None = None
-
+    approvedAt: str | None = Field(default=None, alias="approved_at")
