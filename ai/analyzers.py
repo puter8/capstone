@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Analyzer interface for the 5-axis Pally style scoring pipeline.
 
-Week 1 goal: keep the existing rule-based analyzer as a stable fallback while
-creating the seam where an ML analyzer can later be swapped in without changing
-`/api/chat` response fields.
+The existing rule-based analyzer stays as the stable baseline/fallback. ML
+implementations plug into the same interface so `/api/chat` can keep returning
+the same axes/character contract.
 """
 
 import os
@@ -13,6 +13,7 @@ from typing import Any
 
 from ai.analyzer import analyze_utterance
 from ai.contracts import AXIS_KEYS, AxisResult
+from ai.ml_baseline import TfidfKnnAxisRegressor, load_default_axis_dataset
 
 
 class AxisAnalyzer(ABC):
@@ -28,15 +29,14 @@ class RuleBasedAxisAnalyzer(AxisAnalyzer):
 
 
 class MLAxisAnalyzer(AxisAnalyzer):
-    """Placeholder for the Week 2 ML baseline.
+    """Week 2 dependency-free TF-IDF + weighted k-NN baseline."""
 
-    Keeping this explicit makes unsupported ML usage fail loudly instead of
-    silently falling back and hiding an unfinished integration.
-    """
+    def __init__(self, model: TfidfKnnAxisRegressor | None = None) -> None:
+        self.model = model or TfidfKnnAxisRegressor().fit(load_default_axis_dataset())
 
     def analyze(self, utterance: str, context: dict[str, Any] | None = None) -> AxisResult:
-        del utterance, context
-        raise NotImplementedError("MLAxisAnalyzer is planned for Week 2.")
+        del context
+        return AxisResult.model_validate(self.model.predict(utterance))
 
 
 def get_axis_analyzer(kind: str | None = None) -> AxisAnalyzer:
@@ -54,4 +54,3 @@ def assert_axes_contract(axes: AxisResult | dict[str, int]) -> AxisResult:
     if missing:
         raise ValueError(f"Missing axis keys: {missing}")
     return result
-

@@ -421,7 +421,7 @@ interface CharacterParams {
 | 코드 | 상황 | 대응 |
 |------|------|------|
 | `400` | utterance/text 빈 값 | 입력 validation 추가 |
-| `500` | GOOGLE_API_KEY 미설정 | .env 확인 |
+| `500` | GOOGLE_AI_API_KEY 또는 GOOGLE_CLOUD_API_KEY 미설정 | .env 확인 |
 | `502` | Google API 호출 실패 | 잠시 후 재시도 |
 | `422` | 요청 body 형식 오류 | Content-Type, 필드명 확인 |
 
@@ -436,7 +436,7 @@ interface CharacterParams {
 ```bash
 # 1. .env 파일 생성
 cp .env.example .env
-# .env에 GOOGLE_API_KEY=실제키 입력
+# .env에 GOOGLE_AI_API_KEY, GOOGLE_CLOUD_API_KEY를 설정합니다.
 
 # 2. 의존성 설치
 cd backend

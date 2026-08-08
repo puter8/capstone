@@ -9,9 +9,8 @@ import sys
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict, Optional
 
@@ -38,12 +37,6 @@ except Exception:
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")    # Gemini (AI Studio)
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # STT / TTS (Cloud Console)
 
-# 하나의 키만 있을 때 공용으로 사용
-if not GOOGLE_AI_API_KEY:
-    GOOGLE_AI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-if not GOOGLE_CLOUD_API_KEY:
-    GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-
 app = FastAPI(title="Pally Backend API", version="1.0.0")
 
 app.add_middleware(
@@ -52,24 +45,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# ── Errors — { "error": { "code", "message" } } 형식 ─────────────────────────
-
-
-class AppError(Exception):
-    def __init__(self, status_code: int, code: str, message: str):
-        self.status_code = status_code
-        self.code = code
-        self.message = message
-
-
-@app.exception_handler(AppError)
-async def app_error_handler(request: Request, exc: AppError):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": {"code": exc.code, "message": exc.message}},
-    )
 
 
 # ── Request / Response Models ────────────────────────────────────────────────
@@ -755,144 +730,3 @@ async def chat(req: ChatRequest):
         },
         "hint_ko": None,
     }
-
-
-# ── Auth — Supabase JWT 검증 ──────────────────────────────────────────────────
-
-
-def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
-    """
-    Authorization: Bearer <JWT> 헤더를 Supabase Auth로 검증하고 user_id(uuid) 반환.
-    실패 시 401 { "error": { "code": "unauthorized", "message": ... } }.
-    """
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise AppError(401, "unauthorized", "Missing or invalid Authorization header")
-
-    token = authorization.split(" ", 1)[1].strip()
-    if not token:
-        raise AppError(401, "unauthorized", "Missing or invalid Authorization header")
-
-    if not _SUPABASE_ENABLED:
-        raise AppError(500, "server_error", "Supabase is not configured")
-
-    try:
-        sb = get_supabase()
-        user_res = sb.auth.get_user(token)
-    except Exception as e:
-        logging.warning(f"Auth verification failed: {e}")
-        raise AppError(401, "unauthorized", "Invalid or expired token")
-
-    user = getattr(user_res, "user", None)
-    if user is None or not getattr(user, "id", None):
-        raise AppError(401, "unauthorized", "Invalid or expired token")
-
-    return user.id
-
-
-# ── Onboarding & Profile — profiles 테이블 (service_role 쓰기 전용) ───────────
-
-_VALID_ENGLISH_LEVELS = {"A2", "B1", "B2", "C1"}
-
-
-class OnboardingRequest(BaseModel):
-    displayName: str
-    englishLevel: str
-
-
-class ProfilePatchRequest(BaseModel):
-    displayName: Optional[str] = None
-    englishLevel: Optional[str] = None
-
-
-def _profile_to_response(row: dict) -> dict:
-    return {
-        "id": row["id"],
-        "displayName": row["display_name"],
-        "englishLevel": row["english_level"],
-        "onboardingCompleted": row["onboarding_completed"],
-        "createdAt": row["created_at"],
-    }
-
-
-@app.post("/api/onboarding")
-async def onboarding(req: OnboardingRequest, user_id: str = Depends(get_current_user_id)):
-    """온보딩 완료 — profiles row upsert (service_role)."""
-    if not req.displayName.strip():
-        raise AppError(422, "validation_error", "displayName is required")
-    if req.englishLevel not in _VALID_ENGLISH_LEVELS:
-        raise AppError(
-            422,
-            "validation_error",
-            f"englishLevel must be one of {sorted(_VALID_ENGLISH_LEVELS)}",
-        )
-
-    sb = get_supabase()
-    try:
-        res = sb.table("profiles").upsert({
-            "id": user_id,
-            "display_name": req.displayName,
-            "english_level": req.englishLevel,
-            "onboarding_completed": True,
-        }).execute()
-    except Exception as e:
-        logging.error(f"Onboarding upsert failed: {e}")
-        raise AppError(500, "server_error", "Failed to save profile")
-
-    if not res.data:
-        raise AppError(500, "server_error", "Failed to save profile")
-
-    return {"profile": _profile_to_response(res.data[0])}
-
-
-@app.get("/api/profile")
-async def get_profile(user_id: str = Depends(get_current_user_id)):
-    """
-    본인 profile 조회. 온보딩 전(row 없음)이면 404 profile_not_found —
-    FE는 이 404를 온보딩 플로우로의 분기 신호로 사용.
-    """
-    sb = get_supabase()
-    try:
-        res = sb.table("profiles").select("*").eq("id", user_id).execute()
-    except Exception as e:
-        logging.error(f"Profile fetch failed: {e}")
-        raise AppError(500, "server_error", "Failed to fetch profile")
-
-    if not res.data:
-        raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
-
-    return {"profile": _profile_to_response(res.data[0])}
-
-
-@app.patch("/api/profile")
-async def update_profile(req: ProfilePatchRequest, user_id: str = Depends(get_current_user_id)):
-    """본인 profile 부분 수정 (service_role, WHERE id = user_id 명시)."""
-    update_fields: Dict[str, object] = {}
-
-    if req.displayName is not None:
-        if not req.displayName.strip():
-            raise AppError(422, "validation_error", "displayName cannot be empty")
-        update_fields["display_name"] = req.displayName
-
-    if req.englishLevel is not None:
-        if req.englishLevel not in _VALID_ENGLISH_LEVELS:
-            raise AppError(
-                422,
-                "validation_error",
-                f"englishLevel must be one of {sorted(_VALID_ENGLISH_LEVELS)}",
-            )
-        update_fields["english_level"] = req.englishLevel
-
-    if not update_fields:
-        raise AppError(422, "validation_error", "At least one field (displayName or englishLevel) is required")
-
-    sb = get_supabase()
-    try:
-        res = sb.table("profiles").update(update_fields).eq("id", user_id).execute()
-    except Exception as e:
-        logging.error(f"Profile update failed: {e}")
-        raise AppError(500, "server_error", "Failed to update profile")
-
-    if not res.data:
-        raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
-
-    return {"profile": _profile_to_response(res.data[0])}

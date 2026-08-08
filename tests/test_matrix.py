@@ -35,9 +35,7 @@ def build_ai_response(char: dict, utterance: str) -> str:
             return "LMAOOO yes I saw it and I literally cannot stop laughing 💀💀 peak internet content fr fr"
         return "omg yess let's gooo!! lol I've literally been so bored today 😂 what's the plan tho??"
     elif char["tone_casual"] < 30:
-        if "inquire" in text or "formally" in text or "implications" in text:
-            return "Thank you for your inquiry. I would be happy to provide a thorough explanation. Could you kindly specify which aspect you would like me to address first?"
-        return "I appreciate you reaching out. I would be glad to assist you with that matter."
+        return "Sure. That sounds polite and natural. Let's keep practicing it in a real conversation."
     else:
         return "That's interesting! I'd love to hear more about what you're thinking. What made you bring that up?"
 

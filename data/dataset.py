@@ -1,162 +1,168 @@
 # -*- coding: utf-8 -*-
-"""
-CHARACTER MATRIX 학습 데이터셋
-==========================
-팀이 직접 채점한 Ground Truth 라벨 데이터.
+"""Conversation-first seed dataset for Pally 5-axis analysis.
 
-구조:
-  utterance : 영어 발화 원문
-  label     : 5축 정답 수치 (Formality, Energy, Intimacy, Humor, Curiosity) 0~100
-  style     : 발화 스타일 카테고리 (학습 시 클래스 레이블로 활용)
-
-용도:
-  - 현재: 규칙 기반 분석기 검증 (rule vs ground truth 오차 확인)
-  - 추후: LLM/ML 모델 파인튜닝용 학습 데이터
+The examples here are spoken utterances a learner might say to Pally.
+Do not add academic, legal, report, or corporate email-style sentences
+as core labels for the conversation analyzer.
 """
 
 DATASET = [
-
-    # ── CASUAL / SLANG ────────────────────────────────────────────────────────
     {
-        "utterance": "yo what's up lol, u wanna hang or nah?",
-        "label": {"Formality": 5,  "Energy": 70, "Intimacy": 75, "Humor": 60, "Curiosity": 25},
-        "style": "casual",
+        "utterance": "hey, how\u0027s your day going?",
+        "label": {"Formality": 25, "Energy": 45, "Intimacy": 65, "Humor": 5, "Curiosity": 65},
+        "style": "small_talk",
     },
     {
-        "utterance": "omg I literally can't even rn 😭😭",
-        "label": {"Formality": 5,  "Energy": 85, "Intimacy": 60, "Humor": 70, "Curiosity": 15},
-        "style": "casual",
+        "utterance": "could you say that again a little slower?",
+        "label": {"Formality": 55, "Energy": 30, "Intimacy": 35, "Humor": 5, "Curiosity": 75},
+        "style": "learner_request",
     },
     {
-        "utterance": "bruh that's so sus ngl fr fr",
-        "label": {"Formality": 5,  "Energy": 65, "Intimacy": 55, "Humor": 75, "Curiosity": 20},
-        "style": "casual",
+        "utterance": "sorry, I didn\u0027t catch the last word",
+        "label": {"Formality": 50, "Energy": 25, "Intimacy": 35, "Humor": 5, "Curiosity": 45},
+        "style": "learner_request",
     },
     {
-        "utterance": "lmao bestie u okay?? that's wild",
-        "label": {"Formality": 5,  "Energy": 75, "Intimacy": 80, "Humor": 65, "Curiosity": 30},
-        "style": "casual",
+        "utterance": "can we practice ordering coffee like I\u0027m at a cafe?",
+        "label": {"Formality": 45, "Energy": 40, "Intimacy": 40, "Humor": 10, "Curiosity": 75},
+        "style": "roleplay_request",
     },
     {
-        "utterance": "no cap that movie was bussin, we gotta watch it again",
-        "label": {"Formality": 5,  "Energy": 70, "Intimacy": 65, "Humor": 55, "Curiosity": 20},
-        "style": "casual",
-    },
-
-    # ── FORMAL ───────────────────────────────────────────────────────────────
-    {
-        "utterance": "I would like to formally inquire about the implications of this matter.",
-        "label": {"Formality": 95, "Energy": 20, "Intimacy": 5,  "Humor": 5,  "Curiosity": 65},
+        "utterance": "I would like a small iced latte, please",
+        "label": {"Formality": 70, "Energy": 25, "Intimacy": 20, "Humor": 5, "Curiosity": 5},
         "style": "formal",
     },
     {
-        "utterance": "Please be advised that the meeting has been rescheduled to Friday.",
-        "label": {"Formality": 95, "Energy": 20, "Intimacy": 5,  "Humor": 5,  "Curiosity": 10},
+        "utterance": "uh, can I say \u0027I have hungry\u0027 or is that wrong?",
+        "label": {"Formality": 35, "Energy": 35, "Intimacy": 40, "Humor": 5, "Curiosity": 85},
+        "style": "learner_question",
+    },
+    {
+        "utterance": "wait, that\u0027s actually hilarious",
+        "label": {"Formality": 15, "Energy": 65, "Intimacy": 45, "Humor": 80, "Curiosity": 10},
+        "style": "humor",
+    },
+    {
+        "utterance": "no cap, that pronunciation is so hard for me",
+        "label": {"Formality": 10, "Energy": 55, "Intimacy": 55, "Humor": 25, "Curiosity": 20},
+        "style": "casual",
+    },
+    {
+        "utterance": "could you give me a more natural way to say that?",
+        "label": {"Formality": 55, "Energy": 30, "Intimacy": 35, "Humor": 5, "Curiosity": 85},
+        "style": "learner_request",
+    },
+    {
+        "utterance": "I think I sound too stiff when I speak English",
+        "label": {"Formality": 35, "Energy": 30, "Intimacy": 60, "Humor": 5, "Curiosity": 35},
+        "style": "self_reflection",
+    },
+    {
+        "utterance": "what does lowkey mean in this sentence?",
+        "label": {"Formality": 25, "Energy": 35, "Intimacy": 30, "Humor": 10, "Curiosity": 90},
+        "style": "slang_question",
+    },
+    {
+        "utterance": "that\u0027s kind of embarrassing, but I want to try again",
+        "label": {"Formality": 35, "Energy": 40, "Intimacy": 70, "Humor": 15, "Curiosity": 30},
+        "style": "self_reflection",
+    },
+    {
+        "utterance": "oh really? why do people say it like that?",
+        "label": {"Formality": 30, "Energy": 45, "Intimacy": 45, "Humor": 5, "Curiosity": 90},
+        "style": "curious",
+    },
+    {
+        "utterance": "please correct me if my sentence sounds awkward",
+        "label": {"Formality": 65, "Energy": 25, "Intimacy": 35, "Humor": 5, "Curiosity": 60},
         "style": "formal",
     },
     {
-        "utterance": "I would appreciate your prompt response at your earliest convenience.",
-        "label": {"Formality": 90, "Energy": 25, "Intimacy": 10, "Humor": 5,  "Curiosity": 10},
+        "utterance": "I\u0027m nervous, but let\u0027s do a job interview practice",
+        "label": {"Formality": 50, "Energy": 45, "Intimacy": 55, "Humor": 5, "Curiosity": 35},
+        "style": "roleplay_request",
+    },
+    {
+        "utterance": "hi, nice to meet you, I\u0027m Minju",
+        "label": {"Formality": 45, "Energy": 35, "Intimacy": 55, "Humor": 5, "Curiosity": 5},
+        "style": "greeting",
+    },
+    {
+        "utterance": "what should I say when I meet my friend\u0027s parents?",
+        "label": {"Formality": 45, "Energy": 35, "Intimacy": 50, "Humor": 5, "Curiosity": 85},
+        "style": "social_question",
+    },
+    {
+        "utterance": "that\u0027s wild, I didn\u0027t know people actually say that",
+        "label": {"Formality": 15, "Energy": 65, "Intimacy": 45, "Humor": 35, "Curiosity": 55},
+        "style": "casual_reaction",
+    },
+    {
+        "utterance": "could we make this sentence sound warmer?",
+        "label": {"Formality": 55, "Energy": 25, "Intimacy": 55, "Humor": 5, "Curiosity": 75},
+        "style": "learner_request",
+    },
+    {
+        "utterance": "I totally forgot the word, give me a second",
+        "label": {"Formality": 25, "Energy": 40, "Intimacy": 55, "Humor": 10, "Curiosity": 10},
+        "style": "repair",
+    },
+    {
+        "utterance": "haha, I said it backwards again",
+        "label": {"Formality": 15, "Energy": 55, "Intimacy": 60, "Humor": 65, "Curiosity": 10},
+        "style": "humor",
+    },
+    {
+        "utterance": "may I ask one more question about the expression?",
+        "label": {"Formality": 70, "Energy": 25, "Intimacy": 30, "Humor": 5, "Curiosity": 85},
         "style": "formal",
     },
     {
-        "utterance": "Furthermore, the data suggests a significant correlation between the two variables.",
-        "label": {"Formality": 95, "Energy": 15, "Intimacy": 5,  "Humor": 5,  "Curiosity": 55},
-        "style": "formal",
+        "utterance": "that sounds too serious for texting a friend, right?",
+        "label": {"Formality": 35, "Energy": 35, "Intimacy": 55, "Humor": 10, "Curiosity": 80},
+        "style": "register_question",
     },
     {
-        "utterance": "Pursuant to our previous discussion, I wish to confirm the arrangement.",
-        "label": {"Formality": 95, "Energy": 15, "Intimacy": 10, "Humor": 5,  "Curiosity": 10},
-        "style": "formal",
-    },
-
-    # ── HUMOR / MEME ─────────────────────────────────────────────────────────
-    {
-        "utterance": "omg have you seen that new meme?? it literally made me cry laughing 😂😂",
-        "label": {"Formality": 5,  "Energy": 85, "Intimacy": 60, "Humor": 90, "Curiosity": 35},
-        "style": "humor",
+        "utterance": "okay, let me try the sentence one more time",
+        "label": {"Formality": 35, "Energy": 40, "Intimacy": 40, "Humor": 5, "Curiosity": 20},
+        "style": "practice",
     },
     {
-        "utterance": "LMAOOO the audacity of this person I literally cannot 💀",
-        "label": {"Formality": 5,  "Energy": 90, "Intimacy": 50, "Humor": 95, "Curiosity": 20},
-        "style": "humor",
+        "utterance": "I want to sound friendly, not too formal",
+        "label": {"Formality": 40, "Energy": 30, "Intimacy": 60, "Humor": 5, "Curiosity": 35},
+        "style": "style_goal",
     },
     {
-        "utterance": "not me sending this meme to everyone I know at 3am lol",
-        "label": {"Formality": 10, "Energy": 70, "Intimacy": 65, "Humor": 85, "Curiosity": 20},
-        "style": "humor",
+        "utterance": "is it rude if I say it this way?",
+        "label": {"Formality": 45, "Energy": 35, "Intimacy": 35, "Humor": 5, "Curiosity": 90},
+        "style": "social_question",
     },
     {
-        "utterance": "plot twist: the real treasure was the memes we made along the way",
-        "label": {"Formality": 15, "Energy": 60, "Intimacy": 55, "Humor": 90, "Curiosity": 30},
-        "style": "humor",
+        "utterance": "bro, I keep mixing up past tense",
+        "label": {"Formality": 10, "Energy": 50, "Intimacy": 60, "Humor": 20, "Curiosity": 20},
+        "style": "casual",
     },
     {
-        "utterance": "okay but the way this situation said 'main character energy' 💀💀",
-        "label": {"Formality": 5,  "Energy": 80, "Intimacy": 55, "Humor": 95, "Curiosity": 20},
-        "style": "humor",
-    },
-
-    # ── CURIOUS / INTELLECTUAL ───────────────────────────────────────────────
-    {
-        "utterance": "Why do you think people struggle with English conversation?",
-        "label": {"Formality": 55, "Energy": 40, "Intimacy": 35, "Humor": 10, "Curiosity": 80},
-        "style": "curious",
+        "utterance": "could you answer like a close friend this time?",
+        "label": {"Formality": 45, "Energy": 30, "Intimacy": 75, "Humor": 5, "Curiosity": 60},
+        "style": "conversation_control",
     },
     {
-        "utterance": "Have you ever wondered what makes someone truly fluent in a language?",
-        "label": {"Formality": 60, "Energy": 40, "Intimacy": 40, "Humor": 10, "Curiosity": 90},
-        "style": "curious",
+        "utterance": "oh, that makes sense now, thanks",
+        "label": {"Formality": 35, "Energy": 35, "Intimacy": 55, "Humor": 5, "Curiosity": 10},
+        "style": "feedback_reaction",
     },
     {
-        "utterance": "What do you think is the best way to learn slang naturally?",
-        "label": {"Formality": 45, "Energy": 45, "Intimacy": 45, "Humor": 20, "Curiosity": 85},
-        "style": "curious",
-    },
-    {
-        "utterance": "I'm really curious — how do different cultures use humor differently?",
-        "label": {"Formality": 50, "Energy": 45, "Intimacy": 50, "Humor": 25, "Curiosity": 90},
-        "style": "curious",
-    },
-    {
-        "utterance": "Can you explain what makes a conversation feel natural vs scripted?",
-        "label": {"Formality": 55, "Energy": 35, "Intimacy": 35, "Humor": 10, "Curiosity": 85},
-        "style": "curious",
-    },
-
-    # ── MIXED / NEUTRAL ──────────────────────────────────────────────────────
-    {
-        "utterance": "That's a really interesting point, I hadn't thought of it that way.",
-        "label": {"Formality": 55, "Energy": 40, "Intimacy": 45, "Humor": 15, "Curiosity": 60},
-        "style": "neutral",
-    },
-    {
-        "utterance": "honestly, I think I'm getting better at English but it's still hard sometimes",
-        "label": {"Formality": 35, "Energy": 40, "Intimacy": 60, "Humor": 15, "Curiosity": 35},
-        "style": "neutral",
-    },
-    {
-        "utterance": "I don't know, maybe we should try something different?",
-        "label": {"Formality": 40, "Energy": 35, "Intimacy": 45, "Humor": 15, "Curiosity": 55},
-        "style": "neutral",
-    },
-    {
-        "utterance": "Yeah that makes sense, I think I understand what you mean now.",
-        "label": {"Formality": 40, "Energy": 35, "Intimacy": 50, "Humor": 10, "Curiosity": 30},
-        "style": "neutral",
-    },
-    {
-        "utterance": "Hmm, I'm not sure about that. Could you give me an example?",
-        "label": {"Formality": 50, "Energy": 35, "Intimacy": 40, "Humor": 10, "Curiosity": 75},
-        "style": "neutral",
+        "utterance": "what\u0027s a casual way to invite someone to lunch?",
+        "label": {"Formality": 35, "Energy": 35, "Intimacy": 45, "Humor": 5, "Curiosity": 90},
+        "style": "social_question",
     },
 ]
 
-# 스타일별 분류
-STYLES = list({d["style"] for d in DATASET})
+STYLES = sorted({item["style"] for item in DATASET})
 
 def get_by_style(style: str) -> list:
-    return [d for d in DATASET if d["style"] == style]
+    return [item for item in DATASET if item["style"] == style]
 
 def get_all() -> list:
     return DATASET
