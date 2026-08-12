@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -1346,3 +1346,205 @@ async def create_turn(
         "character": character,
         "warnings": warnings,
     }
+
+
+# ── History & Detail & Complete & Reopen — 4주차 ─────────────────────────────
+
+
+def _truncate(text: str, n: int) -> Optional[str]:
+    t = " ".join((text or "").split())
+    return t[:n] if t else None
+
+
+def _owned_session(sb, conversation_id: str, user_id: str) -> dict:
+    """conversation 소유권 확인. 없거나 타인 소유면 404 (존재 숨김)."""
+    try:
+        res = sb.table("sessions").select("*").eq("id", conversation_id).execute()
+    except Exception as e:
+        logging.error(f"session read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read conversation")
+    if not res.data or res.data[0].get("user_id") != user_id:
+        raise AppError(404, "not_found", "Conversation not found")
+    return res.data[0]
+
+
+@app.get("/api/conversations")
+async def list_conversations(
+    user_id: str = Depends(get_current_user_id),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=50),
+    status: Optional[str] = Query(None),
+):
+    """History 목록. 최근 생성순, cursor(created_at) 기반 pagination, 본인 것만."""
+    sb = get_supabase()
+    q = sb.table("sessions").select("*").eq("user_id", user_id)
+    if status == "active":
+        q = q.is_("ended_at", "null")
+    elif status == "completed":
+        q = q.not_.is_("ended_at", "null")
+    if cursor:
+        q = q.lt("created_at", cursor)
+    q = q.order("created_at", desc=True).limit(limit)
+    try:
+        sess = q.execute()
+    except Exception as e:
+        logging.error(f"list_conversations failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to list conversations")
+
+    rows = sess.data or []
+    ids = [s["id"] for s in rows]
+    msgs_by_session: Dict[str, list] = {sid: [] for sid in ids}
+    if ids:
+        try:
+            msgs = sb.table("messages").select("session_id, role, transcript, feedback, created_at").in_("session_id", ids).order("created_at").execute()
+        except Exception as e:
+            logging.error(f"list_conversations messages failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to load conversation summaries")
+        for m in (msgs.data or []):
+            msgs_by_session.setdefault(m["session_id"], []).append(m)
+
+    items = []
+    for s in rows:
+        ms = msgs_by_session.get(s["id"], [])
+        user_msgs = [m for m in ms if m["role"] == "user"]
+        items.append({
+            "id": s["id"],
+            "status": "completed" if s.get("ended_at") else "active",
+            "title": _truncate(user_msgs[0]["transcript"], 60) if user_msgs else None,
+            "started_at": s["created_at"],
+            "last_turn_at": ms[-1]["created_at"] if ms else None,
+            "completed_at": s.get("ended_at"),
+            "turn_count": len(user_msgs),
+            "feedback_count": sum(len(m.get("feedback") or []) for m in user_msgs),
+            "preview": _truncate(user_msgs[-1]["transcript"], 120) if user_msgs else None,
+        })
+
+    next_cursor = rows[-1]["created_at"] if len(rows) == limit else None
+    return {"items": items, "next_cursor": next_cursor}
+
+
+@app.get("/api/conversations/{conversation_id}")
+async def get_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """대화 상세: conversation + turns(각 turn 의 feedback 포함). 본인 것만."""
+    sb = get_supabase()
+    session = _owned_session(sb, conversation_id, user_id)
+
+    q = sb.table("messages").select("id, role, transcript, feedback, axes, created_at").eq("session_id", conversation_id)
+    if cursor:
+        q = q.gt("created_at", cursor)
+    try:
+        msgs = q.order("created_at").execute()
+    except Exception as e:
+        logging.error(f"get_conversation messages failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load turns")
+    ms = msgs.data or []
+
+    # user→pally 쌍으로 turn 구성. turn_id = user 메시지 id.
+    turns = []
+    seq = 0
+    pending_user = None
+    for m in ms:
+        if m["role"] == "user":
+            if pending_user is not None:
+                seq += 1
+                turns.append(_turn_detail(pending_user, None, seq))
+            pending_user = m
+        else:
+            seq += 1
+            turns.append(_turn_detail(pending_user, m, seq))
+            pending_user = None
+    if pending_user is not None:
+        seq += 1
+        turns.append(_turn_detail(pending_user, None, seq))
+
+    page = turns[:limit]
+    next_cursor = page[-1]["created_at"] if len(turns) > limit else None
+
+    user_msgs = [m for m in ms if m["role"] == "user"]
+    conv = {
+        "id": session["id"],
+        "status": "completed" if session.get("ended_at") else "active",
+        "title": _truncate(user_msgs[0]["transcript"], 60) if user_msgs else None,
+        "started_at": session["created_at"],
+        "last_turn_at": ms[-1]["created_at"] if ms else None,
+        "completed_at": session.get("ended_at"),
+        "reopened_at": session.get("reopened_at"),
+        "reopen_count": session.get("reopen_count", 0),
+        "turn_count": len(user_msgs),
+    }
+    return {"conversation": conv, "turns": page, "next_cursor": next_cursor}
+
+
+def _turn_detail(user_msg: Optional[dict], pally_msg: Optional[dict], seq: int) -> dict:
+    return {
+        "id": user_msg["id"] if user_msg else (pally_msg["id"] if pally_msg else None),
+        "sequence": seq,
+        "status": "completed",
+        "user_transcript": user_msg["transcript"] if user_msg else None,
+        "pally_text": pally_msg["transcript"] if pally_msg else None,
+        "feedback": (user_msg.get("feedback") if user_msg else None) or [],
+        "created_at": (user_msg or pally_msg)["created_at"],
+    }
+
+
+@app.post("/api/conversations/{conversation_id}/complete")
+async def complete_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """대화 종료. 재호출해도 같은 결과(멱등)."""
+    sb = get_supabase()
+    session = _owned_session(sb, conversation_id, user_id)
+
+    if not session.get("ended_at"):
+        try:
+            res = sb.table("sessions").update({"ended_at": _now_iso()}).eq("id", conversation_id).eq("user_id", user_id).execute()
+        except Exception as e:
+            logging.error(f"complete_conversation failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to complete conversation")
+        session = res.data[0] if res.data else session
+
+    return {"conversation": {
+        "id": session["id"],
+        "status": "completed",
+        "completed_at": session.get("ended_at"),
+    }}
+
+
+@app.post("/api/conversations/{conversation_id}/reopen")
+async def reopen_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """완료된 대화를 같은 id 로 재개. 기존 turn/feedback 보존, 이후 turn append."""
+    sb = get_supabase()
+    session = _owned_session(sb, conversation_id, user_id)
+
+    if not session.get("ended_at"):
+        raise AppError(409, "conversation_already_active", "Conversation is already active")
+
+    try:
+        res = sb.table("sessions").update({
+            "ended_at": None,
+            "reopened_at": _now_iso(),
+            "reopen_count": (session.get("reopen_count") or 0) + 1,
+        }).eq("id", conversation_id).eq("user_id", user_id).execute()
+    except Exception as e:
+        logging.error(f"reopen_conversation failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to reopen conversation")
+
+    row = res.data[0] if res.data else session
+    return {"conversation": {
+        "id": row["id"],
+        "status": "active",
+        "completed_at": None,
+        "reopened_at": row.get("reopened_at"),
+        "reopen_count": row.get("reopen_count", 0),
+    }}
