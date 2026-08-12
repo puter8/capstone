@@ -976,3 +976,245 @@ async def update_profile(
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
     return {"profile": _profile_to_response(res.data[0])}
+
+
+# ── Conversations & Turns — 3주차 음성 대화 (sessions/messages 재사용) ────────
+#
+# 경계: STT/Gemini/TTS 파이프라인 자체는 AI 영역. 여기서는 그 어댑터를 "호출"만 하고
+# (기존 _call_gemini_chat / _call_google_tts, 신규 _stt_from_bytes),
+# 백엔드는 conversation/turn 저장 + 소유권 + 실패/완료 구분 + 중복방지(dedup)만 담당한다.
+
+
+async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, float]:
+    """
+    오디오 bytes → (transcript, confidence). turn 처리 전용 STT 어댑터 호출부.
+    무음/인식실패 → ("", 0.0). Google API 비-200 → RuntimeError.
+    (기존 /api/stt 는 건드리지 않고, turn 용으로 동일 파이프라인을 별도 호출한다.)
+    """
+    wav_parsed = _parse_wav(audio_bytes)
+    if wav_parsed:
+        pcm_bytes, sample_rate, num_channels = wav_parsed
+        encoding = "LINEAR16"
+        audio_bytes = pcm_bytes
+    else:
+        encoding = _detect_encoding(content_type or "")
+        sample_rate = None
+        num_channels = None
+
+    model = "latest_long" if encoding == "LINEAR16" else "latest_short"
+    config: dict = {
+        "encoding": encoding,
+        "languageCode": "en-US",
+        "model": model,
+        "enableAutomaticPunctuation": False,
+    }
+    if encoding == "LINEAR16" and sample_rate:
+        config["sampleRateHertz"] = sample_rate
+    if encoding == "WEBM_OPUS":
+        config["sampleRateHertz"] = 48000
+    if num_channels and num_channels > 1:
+        config["audioChannelCount"] = num_channels
+
+    payload = {"config": config, "audio": {"content": base64.b64encode(audio_bytes).decode()}}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_CLOUD_API_KEY}",
+            json=payload,
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Google STT error {resp.status_code}: {resp.text[:300]}")
+
+    results = resp.json().get("results", [])
+    if not results:
+        return "", 0.0
+    alt = results[0].get("alternatives", [{}])[0]
+    return alt.get("transcript", "").strip(), alt.get("confidence", 1.0)
+
+
+def _conversation_to_response(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "status": "completed" if row.get("ended_at") else "active",
+        "character_name": row["character_name"],
+        "level": row["level"],
+        "created_at": row["created_at"],
+        "ended_at": row.get("ended_at"),
+    }
+
+
+@app.post("/api/conversations", status_code=201)
+async def create_conversation(
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """새 대화 생성. 사용자 레벨은 profile 에서 읽는다 (없으면 기본 B1)."""
+    sb = get_supabase()
+
+    level = "B1"
+    try:
+        prof = sb.table("profiles").select("english_level").eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"create_conversation profile read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read profile")
+    if prof.data:
+        level = prof.data[0]["english_level"]
+
+    try:
+        res = sb.table("sessions").insert({
+            "character_name": "Pally",
+            "level": level,
+            "user_id": user_id,
+        }).execute()
+    except Exception as e:
+        logging.error(f"create_conversation insert failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to create conversation")
+
+    if not res.data:
+        raise AppError(503, "persistence_failed", "Failed to create conversation")
+
+    return {"conversation": _conversation_to_response(res.data[0])}
+
+
+def _paired_reply(sb, session_id: str, user_created_at: str) -> str:
+    """dedup 재반환용: 해당 user turn 뒤에 저장된 pally 응답 텍스트를 찾는다."""
+    r = (
+        sb.table("messages")
+        .select("transcript")
+        .eq("session_id", session_id)
+        .eq("role", "pally")
+        .gte("created_at", user_created_at)
+        .order("created_at")
+        .limit(1)
+        .execute()
+    )
+    return r.data[0]["transcript"] if r.data else ""
+
+
+@app.post("/api/conversations/{conversation_id}/turns", status_code=201)
+async def create_turn(
+    conversation_id: str,
+    audio: UploadFile = File(...),
+    user_id: str = Depends(get_current_user_id),
+    idem_key: str = Depends(require_idempotency_key),
+):
+    """
+    음성 turn 1개 처리: 오디오 → STT → 5축/EMA → Gemini 답변 → TTS → 저장.
+    - 소유권: 본인 conversation 이 아니면 404.
+    - 실패/완료 구분: STT 무음/실패는 저장하지 않고 명시적 에러(빈 데이터로 숨기지 않음).
+    - 중복방지: 같은 conversation·같은 Idempotency-Key 재시도는 외부 재호출 없이 저장된 turn 재반환.
+    """
+    if not GOOGLE_CLOUD_API_KEY or not GOOGLE_AI_API_KEY:
+        raise AppError(503, "service_unavailable", "Speech/AI provider not configured")
+
+    sb = get_supabase()
+
+    # 1. conversation 소유권 (타인 소유는 존재 숨김 → 404)
+    try:
+        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at").eq("id", conversation_id).execute()
+    except Exception as e:
+        logging.error(f"turn session read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read conversation")
+    if not sess.data or sess.data[0].get("user_id") != user_id:
+        raise AppError(404, "not_found", "Conversation not found")
+    session = sess.data[0]
+    if session.get("ended_at"):
+        raise AppError(409, "conversation_closed", "Conversation is already completed")
+
+    # 2. dedup — 같은 (conversation, idem_key) user turn 이 이미 있으면 재반환
+    try:
+        dup = sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute()
+    except Exception as e:
+        logging.error(f"turn dedup read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to check idempotency")
+    if dup.data:
+        u = dup.data[0]
+        return {
+            "conversation_id": conversation_id,
+            "status": "completed",
+            "replayed": True,
+            "user": {"transcript": u["transcript"]},
+            "pally": {"text": _paired_reply(sb, conversation_id, u["created_at"]), "audio": None},
+            "axes": u.get("axes"),
+            "character": u.get("character"),
+        }
+
+    # 3. 오디오
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise AppError(400, "invalid_audio", "Empty audio file")
+
+    # 4. STT (실패는 저장하지 않고 명시적 에러)
+    try:
+        transcript, _conf = await _stt_from_bytes(audio_bytes, audio.content_type or "")
+    except Exception as e:
+        logging.warning(f"turn STT failed: {e}")
+        raise AppError(502, "stt_failed", "Speech recognition failed")
+    if not transcript:
+        raise AppError(422, "speech_not_recognized", "No recognizable speech in audio")
+
+    # 5. 이전 이력 + 누적 axes 로드
+    try:
+        prior = sb.table("messages").select("role, transcript, axes, created_at").eq("session_id", conversation_id).order("created_at").execute()
+    except Exception as e:
+        logging.error(f"turn history read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load history")
+    prior_rows = prior.data or []
+    history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
+    current_axes = None
+    for m in reversed(prior_rows):
+        if m["role"] == "user" and m.get("axes"):
+            current_axes = m["axes"]
+            break
+
+    # 6. 5축 → EMA → character (AI 룰 엔진 호출)
+    raw_axes = analyze_utterance(transcript)
+    smoothed = apply_ema(current_axes, raw_axes) if current_axes else raw_axes
+    character = compute_character(smoothed)
+
+    # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패)
+    try:
+        reply = await _call_gemini_chat(transcript, history, session["character_name"], session["level"])
+    except Exception as e:
+        logging.warning(f"turn Gemini failed: {e}")
+        raise AppError(502, "ai_engine_failed", "Reply generation failed")
+
+    # 8. TTS (비핵심 — 실패해도 turn 은 완료, audio 만 null)
+    tts_audio: Optional[str] = None
+    try:
+        tts_audio = await _call_google_tts(_strip_emoji(reply))
+    except Exception as e:
+        logging.warning(f"turn TTS failed (non-fatal): {e}")
+        tts_audio = None
+
+    # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단)
+    try:
+        sb.table("messages").insert([
+            {
+                "session_id": conversation_id,
+                "role": "user",
+                "transcript": transcript,
+                "axes": smoothed,
+                "character": character,
+                "idempotency_key": idem_key,
+            },
+            {
+                "session_id": conversation_id,
+                "role": "pally",
+                "transcript": reply,
+                "axes": None,
+                "character": character,
+            },
+        ]).execute()
+    except Exception as e:
+        logging.error(f"turn save failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to save turn")
+
+    return {
+        "conversation_id": conversation_id,
+        "status": "completed",
+        "replayed": False,
+        "user": {"transcript": transcript},
+        "pally": {"text": reply, "audio": tts_audio},
+        "axes": smoothed,
+        "character": character,
+    }
