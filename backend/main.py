@@ -7,11 +7,17 @@ import os
 import re
 import sys
 
+import uuid
+from datetime import datetime, timezone
+
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Dict, Optional
 
 load_dotenv()
@@ -45,6 +51,64 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# production에서만 debug route를 숨기려면 PALLY_DEBUG_ENDPOINTS=1 을 설정한 환경에서만 등록.
+# Railway 운영 환경에는 이 변수를 두지 않아 /api/debug-keys 가 노출되지 않는다.
+_DEBUG_ENDPOINTS_ENABLED = os.getenv("PALLY_DEBUG_ENDPOINTS") == "1"
+
+
+# ── Errors — 계약 포맷 { "error": { code, message, request_id, details? } } ────
+
+
+class AppError(Exception):
+    def __init__(self, status_code: int, code: str, message: str, details: Optional[dict] = None):
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.details = details
+
+
+def _request_id(request: Request) -> str:
+    """미들웨어가 심어둔 request_id를 반환 (없으면 새로 생성)."""
+    return getattr(request.state, "request_id", None) or f"req_{uuid.uuid4().hex}"
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = f"req_{uuid.uuid4().hex}"
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+def _error_body(code: str, message: str, request_id: str, details: Optional[dict] = None) -> dict:
+    error: dict = {"code": code, "message": message, "request_id": request_id}
+    if details:
+        error["details"] = details
+    return {"error": error}
+
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_error_body(exc.code, exc.message, _request_id(request), exc.details),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    # FastAPI 기본 {"detail": ...} 대신 계약 포맷으로 통일.
+    return JSONResponse(
+        status_code=422,
+        content=_error_body(
+            "validation_error",
+            "Request validation failed.",
+            _request_id(request),
+            {"errors": exc.errors()},
+        ),
+    )
 
 
 # ── Request / Response Models ────────────────────────────────────────────────
@@ -106,18 +170,21 @@ class ChatResponse(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    # 계약: liveness만, 환경변수/키 정보 노출 금지.
+    return {"status": "ok", "version": app.version}
 
 
-@app.get("/api/debug-keys")
-def debug_keys():
-    """서버가 로드한 API 키 확인용 (끝 4자리만 표시)"""
-    def mask(key: str) -> str:
-        return f"...{key[-4:]}" if len(key) > 4 else "(비어있음)"
-    return {
-        "GOOGLE_AI_API_KEY": mask(GOOGLE_AI_API_KEY),
-        "GOOGLE_CLOUD_API_KEY": mask(GOOGLE_CLOUD_API_KEY),
-    }
+if _DEBUG_ENDPOINTS_ENABLED:
+    # production(Railway)에는 PALLY_DEBUG_ENDPOINTS 미설정 → 이 route 자체가 등록되지 않음.
+    @app.get("/api/debug-keys")
+    def debug_keys():
+        """서버가 로드한 API 키 확인용 (끝 4자리만 표시). 로컬 전용."""
+        def mask(key: str) -> str:
+            return f"...{key[-4:]}" if len(key) > 4 else "(비어있음)"
+        return {
+            "GOOGLE_AI_API_KEY": mask(GOOGLE_AI_API_KEY),
+            "GOOGLE_CLOUD_API_KEY": mask(GOOGLE_CLOUD_API_KEY),
+        }
 
 
 # ── STT — Google Cloud Speech-to-Text ────────────────────────────────────────
@@ -730,3 +797,182 @@ async def chat(req: ChatRequest):
         },
         "hint_ko": None,
     }
+
+
+# ── Auth — Supabase JWT 검증 ──────────────────────────────────────────────────
+
+
+def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
+    """
+    Authorization: Bearer <JWT> 를 Supabase Auth로 검증하고 user_id(uuid) 반환.
+    실패 시 401 unauthorized. user_id는 토큰에서만 추출하고 body 값을 신뢰하지 않는다.
+    """
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise AppError(401, "unauthorized", "Missing or invalid Authorization header")
+
+    token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise AppError(401, "unauthorized", "Missing or invalid Authorization header")
+
+    if not _SUPABASE_ENABLED:
+        raise AppError(503, "service_unavailable", "Supabase is not configured")
+
+    try:
+        sb = get_supabase()
+        user_res = sb.auth.get_user(token)
+    except Exception as e:
+        logging.warning(f"Auth verification failed: {e}")
+        raise AppError(401, "unauthorized", "Invalid or expired token")
+
+    user = getattr(user_res, "user", None)
+    if user is None or not getattr(user, "id", None):
+        raise AppError(401, "unauthorized", "Invalid or expired token")
+
+    return user.id
+
+
+def require_idempotency_key(idempotency_key: str = Header(..., alias="Idempotency-Key")) -> str:
+    """
+    비용·데이터 생성 POST용 멱등 키. 계약상 필수 헤더.
+    이번 slice에서는 헤더 존재만 강제하고(누락 시 422), 24h replay store는 미구현.
+    실제 중복 방지는 각 엔드포인트의 상태 충돌(409)로 처리한다.
+    """
+    key = (idempotency_key or "").strip()
+    if not key:
+        raise AppError(422, "validation_error", "Idempotency-Key header is required")
+    return key
+
+
+# ── Onboarding & Profile — profiles 테이블 (service_role 쓰기 전용) ───────────
+
+_VALID_ENGLISH_LEVELS = {"A2", "B1", "B2", "C1"}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_display_name(value: str) -> str:
+    name = (value or "").strip()
+    if not (1 <= len(name) <= 30):
+        raise AppError(422, "validation_error", "display_name must be 1-30 characters after trimming")
+    return name
+
+
+def _validate_english_level(value: str) -> str:
+    if value not in _VALID_ENGLISH_LEVELS:
+        raise AppError(422, "validation_error", f"english_level must be one of {sorted(_VALID_ENGLISH_LEVELS)}")
+    return value
+
+
+class OnboardingRequest(BaseModel):
+    # extra=forbid → 알 수 없는 필드(traits 등)는 422 validation_error.
+    model_config = ConfigDict(extra="forbid")
+    display_name: str
+    english_level: str
+
+
+class ProfilePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: Optional[str] = None
+    english_level: Optional[str] = None
+
+
+def _profile_to_response(row: dict) -> dict:
+    # 계약: snake_case UserProfile. traits는 DB seed 5개(생성 로직은 후속).
+    return {
+        "id": row["id"],
+        "display_name": row["display_name"],
+        "english_level": row["english_level"],
+        "onboarding_completed": row["onboarding_completed"],
+        "traits": row.get("traits"),
+        "created_at": row["created_at"],
+        "updated_at": row.get("updated_at"),
+    }
+
+
+@app.post("/api/onboarding")
+async def onboarding(
+    req: OnboardingRequest,
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """최초 프로필 생성. 이미 온보딩 완료한 사용자는 409 conflict (덮어쓰지 않음)."""
+    display_name = _validate_display_name(req.display_name)
+    english_level = _validate_english_level(req.english_level)
+
+    sb = get_supabase()
+
+    # 이미 온보딩 완료 여부 확인 (덮어쓰기 방지).
+    try:
+        existing = sb.table("profiles").select("onboarding_completed").eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"Onboarding existence check failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read profile")
+
+    if existing.data and existing.data[0].get("onboarding_completed"):
+        raise AppError(409, "conflict", "Onboarding already completed. Use PATCH /api/profile to edit.")
+
+    try:
+        res = sb.table("profiles").upsert({
+            "id": user_id,
+            "display_name": display_name,
+            "english_level": english_level,
+            "onboarding_completed": True,
+            "updated_at": _now_iso(),
+        }).execute()
+    except Exception as e:
+        logging.error(f"Onboarding upsert failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to save profile")
+
+    if not res.data:
+        raise AppError(503, "persistence_failed", "Failed to save profile")
+
+    return {"profile": _profile_to_response(res.data[0])}
+
+
+@app.get("/api/profile")
+async def get_profile(user_id: str = Depends(get_current_user_id)):
+    """본인 profile 조회. 온보딩 전(row 없음)이면 404 profile_not_found."""
+    sb = get_supabase()
+    try:
+        res = sb.table("profiles").select("*").eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"Profile fetch failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to fetch profile")
+
+    if not res.data:
+        raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
+
+    return {"profile": _profile_to_response(res.data[0])}
+
+
+@app.patch("/api/profile")
+async def update_profile(
+    req: ProfilePatchRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """본인 profile 부분 수정. traits 등 unknown 필드는 422 (extra=forbid)."""
+    update_fields: Dict[str, object] = {}
+
+    if req.display_name is not None:
+        update_fields["display_name"] = _validate_display_name(req.display_name)
+    if req.english_level is not None:
+        update_fields["english_level"] = _validate_english_level(req.english_level)
+
+    if not update_fields:
+        raise AppError(422, "validation_error", "At least one field (display_name or english_level) is required")
+
+    update_fields["updated_at"] = _now_iso()
+
+    sb = get_supabase()
+    try:
+        res = sb.table("profiles").update(update_fields).eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"Profile update failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to update profile")
+
+    if not res.data:
+        raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
+
+    return {"profile": _profile_to_response(res.data[0])}
