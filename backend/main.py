@@ -1031,14 +1031,20 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
     return alt.get("transcript", "").strip(), alt.get("confidence", 1.0)
 
 
+_INITIAL_AXES = {"Formality": 50, "Energy": 50, "Intimacy": 50, "Humor": 50, "Curiosity": 50}
+
+
 def _conversation_to_response(row: dict) -> dict:
+    # 계약 §4.5 Conversation 모양. 생성 시점 기준 기본값(turn 없음).
     return {
         "id": row["id"],
         "status": "completed" if row.get("ended_at") else "active",
-        "character_name": row["character_name"],
-        "level": row["level"],
-        "created_at": row["created_at"],
-        "ended_at": row.get("ended_at"),
+        "title": None,
+        "started_at": row["created_at"],
+        "last_turn_at": None,
+        "completed_at": row.get("ended_at"),
+        "turn_count": 0,
+        "current_axes": dict(_INITIAL_AXES),
     }
 
 
@@ -1130,12 +1136,15 @@ async def create_turn(
         u = dup.data[0]
         return {
             "conversation_id": conversation_id,
+            "turn_id": u["id"],
             "status": "completed",
             "replayed": True,
+            "created_at": u["created_at"],
             "user": {"transcript": u["transcript"]},
             "pally": {"text": _paired_reply(sb, conversation_id, u["created_at"]), "audio": None},
             "axes": u.get("axes"),
             "character": u.get("character"),
+            "warnings": [],
         }
 
     # 3. 오디오
@@ -1188,7 +1197,7 @@ async def create_turn(
 
     # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단)
     try:
-        sb.table("messages").insert([
+        save = sb.table("messages").insert([
             {
                 "session_id": conversation_id,
                 "role": "user",
@@ -1209,12 +1218,30 @@ async def create_turn(
         logging.error(f"turn save failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to save turn")
 
+    # turn 식별: user 행이 곧 turn. turn_id/created_at 을 저장 결과에서 가져온다.
+    user_row = next((r for r in (save.data or []) if r.get("role") == "user"), None)
+    turn_id = user_row["id"] if user_row else None
+    turn_created = user_row["created_at"] if user_row else None
+
+    # TTS 만 실패한 경우 partial + warnings (계약 §4.6). 대화 텍스트는 정상.
+    status = "completed"
+    warnings: list = []
+    if tts_audio is None:
+        status = "partial"
+        warnings.append({
+            "code": "tts_failed",
+            "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
+        })
+
     return {
         "conversation_id": conversation_id,
-        "status": "completed",
+        "turn_id": turn_id,
+        "status": status,
         "replayed": False,
+        "created_at": turn_created,
         "user": {"transcript": transcript},
-        "pally": {"text": reply, "audio": tts_audio},
+        "pally": {"text": reply, "audio": tts_audio},  # audio = base64 inline (signed URL 미구현)
         "axes": smoothed,
         "character": character,
+        "warnings": warnings,
     }
