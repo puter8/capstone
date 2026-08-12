@@ -7,7 +7,9 @@ import os
 import re
 import sys
 
+import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 
 import httpx
@@ -73,12 +75,55 @@ def _request_id(request: Request) -> str:
     return getattr(request.state, "request_id", None) or f"req_{uuid.uuid4().hex}"
 
 
+# ── Observability — 구조화 로그 + turn 단계별 latency ────────────────────────
+# 기존 STT/Gemini/TTS 함수는 안 건드리고, 호출부(미들웨어·create_turn)에서 시간만 잰다.
+
+_TURN_METRICS: deque = deque(maxlen=200)  # 최근 turn latency (단일 프로세스 메모리)
+
+
+def _log_event(event: str, **fields) -> None:
+    """구조화 로그 한 줄(JSON). 기존 로그 포맷은 유지하고 새 이벤트만 JSON 문자열로 emit."""
+    try:
+        logging.info(json.dumps({"event": event, **fields}, ensure_ascii=False, default=str))
+    except Exception:
+        logging.info(f"event={event} {fields}")
+
+
+def _pct(values: list, p: int):
+    if not values:
+        return None
+    s = sorted(values)
+    k = min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1))))
+    return round(s[k])
+
+
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
     request_id = f"req_{uuid.uuid4().hex}"
     request.state.request_id = request_id
-    response = await call_next(request)
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        # 미들웨어에서 잡힌 예외도 access 로그로 남기고 다시 올린다.
+        _log_event(
+            "http_request",
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+            status=500,
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
+        raise
     response.headers["X-Request-ID"] = request_id
+    _log_event(
+        "http_request",
+        request_id=request_id,
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        duration_ms=round((time.perf_counter() - started) * 1000),
+    )
     return response
 
 
@@ -172,6 +217,34 @@ class ChatResponse(BaseModel):
 def health():
     # 계약: liveness만, 환경변수/키 정보 노출 금지.
     return {"status": "ok", "version": app.version}
+
+
+@app.get("/api/metrics")
+def metrics():
+    """
+    최근 turn 파이프라인 latency 요약 (STT/Gemini/TTS/save/total 의 p50·p95·평균).
+    운영 데이터 노출이라 health 와 달리 debug 게이트 뒤에 둔다 (PALLY_DEBUG_ENDPOINTS=1).
+    단일 프로세스 메모리 기준(최근 200 turn). 다중 인스턴스면 인스턴스별로만 집계됨.
+    """
+    if not _DEBUG_ENDPOINTS_ENABLED:
+        raise AppError(404, "not_found", "Not found")
+
+    turns = list(_TURN_METRICS)
+    stages = ("stt_ms", "gemini_ms", "tts_ms", "save_ms", "total_ms")
+    summary = {}
+    for stage in stages:
+        vals = [t[stage] for t in turns if t.get(stage) is not None]
+        summary[stage] = {
+            "p50": _pct(vals, 50),
+            "p95": _pct(vals, 95),
+            "avg": round(sum(vals) / len(vals)) if vals else None,
+            "max": max(vals) if vals else None,
+        }
+    return {
+        "count": len(turns),
+        "stages": summary,
+        "recent": turns[-20:],
+    }
 
 
 if _DEBUG_ENDPOINTS_ENABLED:
@@ -1099,6 +1172,7 @@ def _paired_reply(sb, session_id: str, user_created_at: str) -> str:
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201)
 async def create_turn(
     conversation_id: str,
+    request: Request,
     audio: UploadFile = File(...),
     user_id: str = Depends(get_current_user_id),
     idem_key: str = Depends(require_idempotency_key),
@@ -1108,9 +1182,12 @@ async def create_turn(
     - 소유권: 본인 conversation 이 아니면 404.
     - 실패/완료 구분: STT 무음/실패는 저장하지 않고 명시적 에러(빈 데이터로 숨기지 않음).
     - 중복방지: 같은 conversation·같은 Idempotency-Key 재시도는 외부 재호출 없이 저장된 turn 재반환.
+    - 관측성: STT/Gemini/TTS/save 단계별 latency 를 측정해 로그 + /api/metrics 에 노출.
     """
     if not GOOGLE_CLOUD_API_KEY or not GOOGLE_AI_API_KEY:
         raise AppError(503, "service_unavailable", "Speech/AI provider not configured")
+
+    turn_t0 = time.perf_counter()
 
     sb = get_supabase()
 
@@ -1152,12 +1229,14 @@ async def create_turn(
     if not audio_bytes:
         raise AppError(400, "invalid_audio", "Empty audio file")
 
-    # 4. STT (실패는 저장하지 않고 명시적 에러)
+    # 4. STT (실패는 저장하지 않고 명시적 에러) — latency 측정
+    stt_t0 = time.perf_counter()
     try:
         transcript, _conf = await _stt_from_bytes(audio_bytes, audio.content_type or "")
     except Exception as e:
         logging.warning(f"turn STT failed: {e}")
         raise AppError(502, "stt_failed", "Speech recognition failed")
+    stt_ms = round((time.perf_counter() - stt_t0) * 1000)
     if not transcript:
         raise AppError(422, "speech_not_recognized", "No recognizable speech in audio")
 
@@ -1180,22 +1259,27 @@ async def create_turn(
     smoothed = apply_ema(current_axes, raw_axes) if current_axes else raw_axes
     character = compute_character(smoothed)
 
-    # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패)
+    # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패) — latency 측정
+    gemini_t0 = time.perf_counter()
     try:
         reply = await _call_gemini_chat(transcript, history, session["character_name"], session["level"])
     except Exception as e:
         logging.warning(f"turn Gemini failed: {e}")
         raise AppError(502, "ai_engine_failed", "Reply generation failed")
+    gemini_ms = round((time.perf_counter() - gemini_t0) * 1000)
 
-    # 8. TTS (비핵심 — 실패해도 turn 은 완료, audio 만 null)
+    # 8. TTS (비핵심 — 실패해도 turn 은 완료, audio 만 null) — latency 측정
+    tts_t0 = time.perf_counter()
     tts_audio: Optional[str] = None
     try:
         tts_audio = await _call_google_tts(_strip_emoji(reply))
     except Exception as e:
         logging.warning(f"turn TTS failed (non-fatal): {e}")
         tts_audio = None
+    tts_ms = round((time.perf_counter() - tts_t0) * 1000)
 
-    # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단)
+    # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단) — latency 측정
+    save_t0 = time.perf_counter()
     try:
         save = sb.table("messages").insert([
             {
@@ -1217,6 +1301,7 @@ async def create_turn(
     except Exception as e:
         logging.error(f"turn save failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to save turn")
+    save_ms = round((time.perf_counter() - save_t0) * 1000)
 
     # turn 식별: user 행이 곧 turn. turn_id/created_at 을 저장 결과에서 가져온다.
     user_row = next((r for r in (save.data or []) if r.get("role") == "user"), None)
@@ -1232,6 +1317,22 @@ async def create_turn(
             "code": "tts_failed",
             "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
         })
+
+    # 관측성: 단계별 latency 를 링버퍼에 저장 + 구조화 로그로 emit.
+    metric = {
+        "request_id": getattr(request.state, "request_id", None),
+        "ts": _now_iso(),
+        "conversation_id": conversation_id,
+        "transcript_chars": len(transcript),
+        "stt_ms": stt_ms,
+        "gemini_ms": gemini_ms,
+        "tts_ms": tts_ms,
+        "save_ms": save_ms,
+        "total_ms": round((time.perf_counter() - turn_t0) * 1000),
+        "status": status,
+    }
+    _TURN_METRICS.append(metric)
+    _log_event("turn_metrics", **metric)
 
     return {
         "conversation_id": conversation_id,
