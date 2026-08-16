@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 const TABS = [
   { id: "home", label: "홈", href: "/home", size: 47 },
-  { id: "history", label: "피드백", href: "/history", size: 40 },
+  { id: "history", label: "피드백", href: "/history/note", activePrefix: "/history", size: 40 },
   { id: "ranking", label: "업적", href: "/ranking", size: 45 },
   { id: "my", label: "마이 페이지", href: "/my", size: 40 },
 ] as const;
@@ -47,7 +47,8 @@ export function BottomNav() {
       <div aria-hidden="true" className="absolute inset-x-0 bottom-0 h-20 rounded-[20px] bg-nav" />
       <ul className="absolute inset-x-0 bottom-0 flex h-20 items-center justify-between px-7">
         {TABS.map((tab) => {
-          const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+          const activePrefix = "activePrefix" in tab ? tab.activePrefix : tab.href;
+          const active = pathname === tab.href || pathname.startsWith(`${activePrefix}/`);
           return (
             <li key={tab.id}>
               <Link

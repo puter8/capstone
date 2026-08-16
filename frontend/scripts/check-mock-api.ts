@@ -1,0 +1,63 @@
+import { mockPallyApi, resetMockPallyApi } from "../lib/api/mock-client";
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+async function main(): Promise<void> {
+  resetMockPallyApi();
+
+  const initialProfile = await mockPallyApi.getProfile();
+  assert(!initialProfile.profile.onboarding_completed, "Profile must start before onboarding");
+
+  const onboarded = await mockPallyApi.onboard({
+    display_name: "Claire",
+    english_level: "B2",
+  });
+  assert(onboarded.profile.display_name === "Claire", "Onboarding must save display_name");
+  assert(onboarded.profile.english_level === "B2", "Onboarding must save english_level");
+
+  const updated = await mockPallyApi.updateProfile({ english_level: "C1" });
+  assert(updated.profile.english_level === "C1", "Profile update must save english_level");
+
+  const conversationKey = crypto.randomUUID();
+  const created = await mockPallyApi.createConversation(conversationKey);
+  const repeatedCreate = await mockPallyApi.createConversation(conversationKey);
+  assert(created.conversation.id === repeatedCreate.conversation.id, "Conversation creation must be idempotent");
+
+  const turnKey = crypto.randomUUID();
+  const audio = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/wav" });
+  const turn = await mockPallyApi.createTurn(created.conversation.id, {
+    audio,
+    idempotency_key: turnKey,
+  });
+  const repeatedTurn = await mockPallyApi.createTurn(created.conversation.id, {
+    audio,
+    idempotency_key: turnKey,
+  });
+  assert(turn.turn_id === repeatedTurn.turn_id, "Turn creation must be idempotent");
+  assert(turn.quota.remaining_turns === 4, "A successful turn must consume one quota unit");
+  assert(repeatedTurn.quota.remaining_turns === 4, "An idempotent replay must not consume quota again");
+
+  const detail = await mockPallyApi.getConversation(created.conversation.id);
+  assert(detail.turns.length === 1, "Conversation detail must include the created turn");
+  assert(detail.turns[0].feedback.length > 0, "Mock turn must expose inline feedback");
+
+  const completed = await mockPallyApi.completeConversation(created.conversation.id);
+  assert(completed.conversation.status === "completed", "Conversation must become completed");
+
+  const list = await mockPallyApi.listConversations({ status: "completed" });
+  assert(list.items.some((item) => item.id === created.conversation.id), "Completed conversation must appear in history");
+
+  await mockPallyApi.deleteConversations(crypto.randomUUID());
+  const emptyList = await mockPallyApi.listConversations();
+  assert(emptyList.items.length === 0, "Conversation deletion must clear history");
+
+  resetMockPallyApi();
+  console.log("Mock API contract check passed.");
+}
+
+main().catch((error: unknown) => {
+  console.error("Mock API contract check failed:", error);
+  process.exit(1);
+});
