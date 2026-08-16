@@ -550,14 +550,16 @@ MemeTerm
 세 역할은 API 완료를 기다리지 않고 같은 contract를 이용해 동시에 작업한다.
 
 ```text
-1단계: Frontend → Mock fixture
+1단계: Frontend → Backend가 배포한 API fixture
 2단계: Frontend → Backend → Fake AI adapter
 3단계: Frontend → Backend → Real AI engine
 ```
 
-### 프론트엔드 fixture
+### Backend API fixture
 
-최소한 다음 시나리오를 준비한다.
+프론트엔드가 필요한 화면 시나리오와 필드를 요청하고, 백엔드가 공개 API contract와 예제 JSON을 작성한다. FE는 응답 양식을 임의로 만들지 않고 이 fixture를 mock adapter에 연결한다.
+
+최소한 다음 시나리오를 백엔드 fixture로 제공한다.
 
 - 신규 사용자
 - 온보딩 미완료 사용자
@@ -567,7 +569,8 @@ MemeTerm
 - 피드백이 없는 사용자
 - 무료 사용량을 소진한 사용자
 - AI 처리 실패 사용자
-- 마이크 권한을 거부한 사용자
+
+마이크 권한 거부처럼 서버 응답이 아닌 브라우저 상태는 프론트엔드가 별도 client fixture로 관리한다.
 
 ### 백엔드 fake AI adapter
 
@@ -763,7 +766,8 @@ Reddit meme vocabulary는 화면 플로우와 병렬로 진행한다. 프론트�
 
 - 퍼블리싱된 화면과 Figma 상태의 누락 여부를 점검한다.
 - API client/repository interface를 만든다.
-- 로그인, 온보딩, 대화, History용 mock fixture를 만든다.
+- 로그인, 온보딩, 대화, History 화면에 필요한 필드와 시나리오를 백엔드에 전달한다.
+- 백엔드가 제공한 API fixture를 mock repository에 연결한다.
 - 대화 상태 모델을 코드에 반영한다.
 
 #### 백엔드
@@ -775,6 +779,7 @@ Reddit meme vocabulary는 화면 플로우와 병렬로 진행한다. 프론트�
   - feedback
   - usage와 subscription
 - 모든 테이블의 RLS 원칙을 정한다.
+- 공개 API schema, status code, 오류 schema, 예제 JSON fixture를 작성한다.
 - fake AI adapter interface를 만든다.
 
 #### AI
@@ -787,7 +792,7 @@ Reddit meme vocabulary는 화면 플로우와 병렬로 진행한다. 프론트�
 
 #### 1주차 완료 기준
 
-- 세 명이 동일한 요청·응답 fixture를 사용한다.
+- 세 명이 백엔드가 배포한 동일한 공개 API fixture를 사용한다.
 - Supabase 초기 migration과 RLS 초안이 로컬에서 적용된다.
 - 외부 AI API의 실제 호출 결과가 확인된다.
 - 프론트엔드에서 mock으로 핵심 Figma 상태를 전환할 수 있다.
@@ -1187,13 +1192,16 @@ credential이 없으면 가짜 성공 처리하거나 나중으로 미루지 않
 ##### 프론트엔드
 
 - 각 Figma 화면에 필요한 필드를 목록으로 만든다.
-- 성공, loading, empty, quota, error fixture를 만든다.
+- 성공, loading, empty, quota, error 시나리오와 화면 기대값을 작성한다.
+- 백엔드 fixture를 소비할 mock repository interface를 만든다.
 - `ConversationState` 전환표를 검증한다.
 
 ##### 백엔드
 
 - Profile, Conversation, Turn, Feedback, Usage의 API shape를 만든다.
 - RedditSourceItem과 수집 batch shape를 만든다.
+- status code와 공통 오류 schema를 정한다.
+- 프론트엔드 시나리오를 만족하는 공개 API 예제 JSON fixture를 만든다.
 - 최소 Supabase 관계를 초안으로 만든다.
 
 ##### AI
@@ -1207,16 +1215,17 @@ credential이 없으면 가짜 성공 처리하거나 나중으로 미루지 않
 1. 프론트엔드가 화면별 필수 필드를 설명한다.
 2. 백엔드가 공개 API 요청·응답을 맞춘다.
 3. AI가 backend 내부 engine contract를 맞춘다.
-4. 세 명이 성공·오류 JSON fixture를 직접 읽는다.
+4. 백엔드가 작성한 성공·오류 JSON fixture를 세 명이 직접 읽는다.
 5. 백엔드가 API Contract v0, AI가 Engine Contract v0를 동결한다.
 
 #### 월요일 산출물
 
-- Profile fixture
-- Conversation turn 성공·quota·error fixture
-- History와 Feedback fixture
-- Reddit source fixture
-- MemeTermCandidate fixture
+- Backend 소유: Profile 공개 API fixture
+- Backend 소유: Conversation turn 성공·quota·error 공개 API fixture
+- Backend 소유: History와 Feedback 공개 API fixture
+- Backend 소유: Reddit source fixture
+- AI 소유: MemeTermCandidate engine fixture
+- FE 소유: 화면 시나리오·상태 전환표·mock adapter
 - 최소 DB 관계 초안
 - 미정 정책 목록과 결정 기한
 
@@ -1228,7 +1237,7 @@ credential이 없으면 가짜 성공 처리하거나 나중으로 미루지 않
 
 #### 프론트엔드
 
-1. 월요일 fixture를 mock repository에 연결한다.
+1. 백엔드가 배포한 월요일 공개 API fixture를 mock repository에 연결한다.
 2. `idle`, `listening`, `processing`, `speaking`, `quota_exceeded`, `error` 화면을 전환한다.
 3. 로그인·온보딩·History가 fixture로 렌더링되는지 확인한다.
 4. 모바일 약 360px에서 상태별 화면을 확인한다.

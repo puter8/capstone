@@ -1,11 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { MobileShell } from "@/components/layout/MobileShell";
 import { LevelOption } from "@/components/onboarding/LevelOption";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { pallyApi } from "@/lib/api";
+import type { Level } from "@/lib/types/session";
 
 const LEVELS = [
   { code: "A2", name: "Elementary", description: "간단한 용어를 사용해 다양한 것들을 묘사하고 간단한 표현을 이해할 수 있어요" },
@@ -15,7 +18,41 @@ const LEVELS = [
 ] as const;
 
 export default function LevelSettingsPage() {
-  const [level, setLevel] = useState("B1");
+  const router = useRouter();
+  const [level, setLevel] = useState<Level>("B1");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    pallyApi.getProfile()
+      .then(({ profile }) => {
+        if (active) setLevel(profile.english_level);
+      })
+      .catch((caught: unknown) => {
+        if (active) setError(caught instanceof Error ? caught.message : "영어 레벨을 불러오지 못했어요.");
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const saveLevel = async () => {
+    setIsSaving(true);
+    setError(null);
+    try {
+      await pallyApi.updateProfile({ english_level: level });
+      router.push("/my");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "영어 레벨을 변경하지 못했어요.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <MobileShell>
@@ -25,7 +62,10 @@ export default function LevelSettingsPage() {
           <LevelOption code={item.code} description={item.description} key={item.code} name={item.name} onSelect={() => setLevel(item.code)} selected={level === item.code} />
         ))}
       </div>
-      <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]">확인</PrimaryButton>
+      {error ? <p className="absolute bottom-[102px] left-5 right-5 text-center text-body-2 text-red-600" role="alert">{error}</p> : null}
+      <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={isLoading || isSaving} onClick={() => { void saveLevel(); }}>
+        {isSaving ? "저장 중..." : "확인"}
+      </PrimaryButton>
     </MobileShell>
   );
 }

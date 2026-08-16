@@ -1,7 +1,10 @@
+"use client";
+
 import Link from "next/link";
 
 import { MobileShell } from "@/components/layout/MobileShell";
 import { PallyCharacter } from "@/components/pally/PallyCharacter";
+import { resetMockPallyApi } from "@/lib/api/mock-client";
 
 function GoogleMark() {
   return (
@@ -39,6 +42,7 @@ export default function LoginPage() {
         <Link
           className="flex h-14 items-center justify-center gap-3 rounded-xl border border-[#d9d9d9] bg-white text-sm font-bold text-[#33363f] transition-transform active:scale-[0.99]"
           href="/onboarding"
+          onClick={resetMockPallyApi}
         >
           <GoogleMark />
           Sign up with Google
@@ -46,6 +50,7 @@ export default function LoginPage() {
         <Link
           className="flex h-14 items-center justify-center gap-3 rounded-xl bg-[#fee500] text-sm font-bold text-[#17120f] transition-transform active:scale-[0.99]"
           href="/onboarding"
+          onClick={resetMockPallyApi}
         >
           <KakaoMark />
           카카오로 시작하기

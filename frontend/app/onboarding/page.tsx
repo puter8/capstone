@@ -10,6 +10,8 @@ import { PallyCharacter } from "@/components/pally/PallyCharacter";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { TextInput } from "@/components/ui/TextInput";
+import { pallyApi } from "@/lib/api";
+import type { Level } from "@/lib/types/session";
 
 const LEVELS = [
   { code: "A2", name: "Elementary", description: "간단한 용어를 사용해 다양한 것들을 묘사하고 간단한 표현을 이해할 수 있어요" },
@@ -21,16 +23,32 @@ const LEVELS = [
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [level, setLevel] = useState("B1");
+  const [level, setLevel] = useState<Level>("B1");
   const [name, setName] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const goBack = () => setStep((value) => (value === 3 ? 2 : 1));
-  const goNext = () => {
+  const goNext = async () => {
     if (step === 3) {
       router.push("/home");
       return;
     }
-    setStep((value) => (value === 1 ? 2 : 3));
+    if (step === 1) {
+      setStep(2);
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+    try {
+      await pallyApi.onboard({ display_name: name, english_level: level });
+      setStep(3);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "설정을 저장하지 못했어요.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -103,8 +121,9 @@ export default function OnboardingPage() {
       <div className="absolute bottom-[167px] left-1/2 -translate-x-1/2">
         <OnboardingProgress step={step} />
       </div>
-      <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={step === 2 && !name.trim()} onClick={goNext}>
-        확인
+      {error ? <p className="absolute bottom-[102px] left-5 right-5 text-center text-body-2 text-red-600" role="alert">{error}</p> : null}
+      <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={isSaving || (step === 2 && !name.trim())} onClick={goNext}>
+        {isSaving ? "저장 중..." : "확인"}
       </PrimaryButton>
     </MobileShell>
   );

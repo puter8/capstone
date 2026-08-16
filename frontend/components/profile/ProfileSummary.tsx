@@ -1,17 +1,12 @@
-const TAGS = [
-  ["bestie", "bg-[#39c951]"],
-  ["ridiculous", "bg-[#f6c319]"],
-  ["lively", "bg-[#ff5b5b]"],
-  ["curious", "bg-[#a560ff]"],
-  ["blunt", "bg-[#9bacff]"],
-] as const;
+const TAG_COLORS = ["bg-[#39c951]", "bg-[#f6c319]", "bg-[#ff5b5b]", "bg-[#a560ff]", "bg-[#9bacff]"] as const;
 
 type ProfileSummaryProps = {
   name?: string;
   onEditName?: () => void;
+  traits?: string[];
 };
 
-export function ProfileSummary({ name = "Ewhain", onEditName }: ProfileSummaryProps) {
+export function ProfileSummary({ name = "Pally user", onEditName, traits = [] }: ProfileSummaryProps) {
   return (
     <section className="relative h-[228px] w-full" aria-label="프로필">
       <div className="absolute left-1/2 top-0 h-[118px] w-[123px] -translate-x-1/2 rounded-xl border-[3px] border-primary-soft bg-[#dedede]" />
@@ -25,9 +20,9 @@ export function ProfileSummary({ name = "Ewhain", onEditName }: ProfileSummaryPr
       </div>
       <div className="absolute left-1/2 top-[179px] h-px w-[169px] -translate-x-1/2 bg-[#d9d9d9]" />
       <ul className="absolute inset-x-3 top-[200px] flex justify-center gap-1">
-        {TAGS.map(([label, className]) => (
-          <li className={`grid h-7 place-items-center rounded-[20px] px-3 text-caption-1 text-white ${className}`} key={label}>
-            {label}
+        {traits.map((trait, index) => (
+          <li className={`grid h-7 place-items-center rounded-[20px] px-3 text-caption-1 text-white ${TAG_COLORS[index % TAG_COLORS.length]}`} key={trait}>
+            {trait}
           </li>
         ))}
       </ul>
