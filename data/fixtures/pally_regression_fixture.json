@@ -1,0 +1,63 @@
+{
+  "description": "Golden baseline for the rule-based 5-axis analyzer + CHARACTER MATRIX, captured 2026-08-15. If a change to ai/analyzer.py or ai/matrix_engine.py breaks this test, update the baseline deliberately (not by silently accepting the diff) and note why in the PR.",
+  "cases": [
+    {
+      "name": "casual_greeting",
+      "utterance": "yo what's up lol, u wanna hang or nah?",
+      "axes": { "Formality": 10, "Energy": 46, "Intimacy": 40, "Humor": 26, "Curiosity": 27 },
+      "character": { "tone_casual": 60, "energy_level": 50, "humor_level": 31 }
+    },
+    {
+      "name": "formal_inquiry",
+      "utterance": "I would like to formally inquire about the implications of this matter.",
+      "axes": { "Formality": 59, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 21 },
+      "character": { "tone_casual": 28, "energy_level": 38, "humor_level": 13 }
+    },
+    {
+      "name": "curious_question",
+      "utterance": "Why do you think people struggle with English conversation?",
+      "axes": { "Formality": 38, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 51 },
+      "character": { "tone_casual": 40, "energy_level": 43, "humor_level": 21 }
+    },
+    {
+      "name": "polite_request",
+      "utterance": "Could you please help me understand this a bit better?",
+      "axes": { "Formality": 56, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 41 },
+      "character": { "tone_casual": 29, "energy_level": 40, "humor_level": 14 }
+    },
+    {
+      "name": "excited_casual",
+      "utterance": "omg that's so cool, I literally can't wait!!",
+      "axes": { "Formality": 12, "Energy": 70, "Intimacy": 32, "Humor": 14, "Curiosity": 11 },
+      "character": { "tone_casual": 58, "energy_level": 56, "humor_level": 24 }
+    }
+  ],
+  "persona_drift_cases": [
+    {
+      "name": "casual_to_formal",
+      "description": "Second demo case from Phase 2 SC #3 (persona drift): casual turn followed by a formal turn, EMA alpha=0.7 default.",
+      "prev_case": "casual_greeting",
+      "new_case": "formal_inquiry",
+      "drifted_axes": { "Formality": 44, "Energy": 35, "Intimacy": 18, "Humor": 8, "Curiosity": 23 },
+      "drifted_character": { "tone_casual": 38, "energy_level": 42, "humor_level": 19 }
+    }
+  ],
+  "feedback_fallback_cases": [
+    {
+      "name": "had_no_pattern",
+      "utterance": "I had no lunch. I'm on a diet.",
+      "expected_items": [
+        {
+          "original": "I had no lunch. I'm on a diet.",
+          "corrected": "I didn't have lunch.",
+          "explanation_ko": "'I had no lunch. I'm on a diet.'보다 'I didn't have lunch.'가 더 자연스럽습니다."
+        }
+      ]
+    },
+    {
+      "name": "no_pattern_match",
+      "utterance": "Thank you so much for your help!",
+      "expected_items": []
+    }
+  ]
+}
