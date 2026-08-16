@@ -29,14 +29,44 @@ class RuleBasedAxisAnalyzer(AxisAnalyzer):
 
 
 class MLAxisAnalyzer(AxisAnalyzer):
-    """Week 2 dependency-free TF-IDF + weighted k-NN baseline."""
+    """Week 2 dependency-free TF-IDF + weighted k-NN baseline.
+
+    Falls back to the rule-based analyzer if the model fails to predict
+    (unfitted model, unexpected input, etc.) so a transient ML error never
+    breaks the `/api/chat` turn.
+    """
 
     def __init__(self, model: TfidfKnnAxisRegressor | None = None) -> None:
         self.model = model or TfidfKnnAxisRegressor().fit(load_default_axis_dataset())
+        self._fallback = RuleBasedAxisAnalyzer()
 
     def analyze(self, utterance: str, context: dict[str, Any] | None = None) -> AxisResult:
-        del context
-        return AxisResult.model_validate(self.model.predict(utterance))
+        try:
+            return AxisResult.model_validate(self.model.predict(utterance))
+        except Exception:
+            return self._fallback.analyze(utterance, context)
+
+
+class HybridAxisAnalyzer(AxisAnalyzer):
+    """Averages rule-based and ML axes per key.
+
+    Uses `MLAxisAnalyzer`, which already falls back to rule-based on its own
+    failure — so if ML is unavailable, hybrid degrades to the rule-based
+    result instead of raising.
+    """
+
+    def __init__(self, ml_analyzer: MLAxisAnalyzer | None = None) -> None:
+        self._rule = RuleBasedAxisAnalyzer()
+        self._ml = ml_analyzer or MLAxisAnalyzer()
+
+    def analyze(self, utterance: str, context: dict[str, Any] | None = None) -> AxisResult:
+        rule_axes = self._rule.analyze(utterance, context)
+        ml_axes = self._ml.analyze(utterance, context)
+        blended = {
+            key: round((getattr(rule_axes, key) + getattr(ml_axes, key)) / 2)
+            for key in AXIS_KEYS
+        }
+        return AxisResult.model_validate(blended)
 
 
 def get_axis_analyzer(kind: str | None = None) -> AxisAnalyzer:
@@ -45,6 +75,8 @@ def get_axis_analyzer(kind: str | None = None) -> AxisAnalyzer:
         return RuleBasedAxisAnalyzer()
     if analyzer_kind == "ml":
         return MLAxisAnalyzer()
+    if analyzer_kind == "hybrid":
+        return HybridAxisAnalyzer()
     raise ValueError(f"Unsupported PALLY_AXIS_ANALYZER={analyzer_kind!r}")
 
 

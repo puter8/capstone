@@ -44,12 +44,12 @@ export const DEFAULT_AXES: Axes = {
 // 캐릭터 시각 파라미터 (CharacterParams)
 // matrix_engine.py compute_character() 반환값 + 시각 디자인 스펙 확장
 //
-// 시각 매핑 스펙 (이미지 기준):
-//   Humor   → spikiness (뾰족함): 0~33=사각, 34~66=중간별, 67~100=날카로운별
-//   Formality → borderRadius: 0=사각(radius 0), 50=둥글(radius 40), 100=원(radius 100)
-//   Energy  → eyeType: 'small'(0~33) | 'large'(34~66) | 'glowing'(67~100)
-//   Intimacy → bodyColor: 파랑(0) → 노랑(50) → 빨강(100)
-//   Curiosity → animationSpeed: 'slow'(0~33) | 'medium'(34~66) | 'fast'(67~100)
+// 시각 매핑 스펙 (PM Frame 254 이미지 기준, 2026-08-15 PallyCanvas.tsx와 동기화):
+//   Energy    → spikiness (몸통 모양): 0~33=사각(calm), 34~66=별(lively), 67~100=선버스트(energetic)
+//   Formality → borderRadius: 0~33=둥긂(blunt, radius 100), 34~66=중간(casual, radius 40), 67~100=각짐(formal, radius 0)
+//   Curiosity → eyeType: 'small'(indifferent, 0~33) | 'large'(curious, 34~66) | 'glowing'(Inquisitive, 67~100)
+//   Intimacy  → bodyColor: 파랑(0) → 노랑(50) → 빨강(100)
+//   Humor     → animationSpeed: 'slow'(serious, 0~33) | 'medium'(funny, 34~66) | 'fast'(ridiculous, 67~100)
 // ---------------------------------------------------------------------------
 
 export interface CharacterParams {
@@ -68,24 +68,24 @@ export interface CharacterParams {
   // (Axes에서 직접 매핑, 별도 변환 없이 렌더러가 그대로 사용)
 
   /**
-   * 몸통 뾰족함 (Humor 축 기반)
-   * 0=완전한 사각형, 50=중간 별, 100=날카로운 별
+   * 몸통 뾰족함 (Energy 축 기반)
+   * 0=완전한 사각형(calm), 50=중간 별(lively), 100=선버스트(energetic)
    * Superformula m 파라미터와 연결됨
    */
   spikiness: number;     // 0~100
 
   /**
    * 모서리 둥글기 (Formality 축 기반)
-   * 0=사각형(border-radius 0), 100=원(border-radius 100%)
-   * CSS border-radius % 또는 Canvas arc radius로 변환
+   * 0=원/둥긂(border-radius 100%, blunt), 100=사각형(border-radius 0, formal)
+   * CSS border-radius % 또는 Canvas arc radius로 변환 시 (100 - borderRadius) 방향으로 적용
    */
   borderRadius: number;  // 0~100
 
   /**
-   * 눈 타입 (Energy 축 기반)
-   * 'small'  : 0~33  — 작고 검정, 낮은 에너지
-   * 'large'  : 34~66 — 크고 검정, 중간 에너지
-   * 'glowing': 67~100 — 크고 노란 빛, 고에너지
+   * 눈 타입 (Curiosity 축 기반)
+   * 'small'  : 0~33  — 단순한 점, indifferent
+   * 'large'  : 34~66 — 흰자+동공, curious
+   * 'glowing': 67~100 — 흰자+동공+포인트 컬러, Inquisitive
    */
   eyeType: 'small' | 'large' | 'glowing';
 
@@ -99,10 +99,10 @@ export interface CharacterParams {
   bodyColor: string;     // CSS 색상 문자열
 
   /**
-   * 애니메이션 속도 (Curiosity 축 기반)
-   * 'slow'   : 0~33  — 움직임 1 (느린 bob)
-   * 'medium' : 34~66 — 움직임 2 (중간 bounce)
-   * 'fast'   : 67~100 — 움직임 3 (빠른 wiggle)
+   * 애니메이션 속도 (Humor 축 기반)
+   * 'slow'   : 0~33  — 움직임 1 (거의 정지, serious)
+   * 'medium' : 34~66 — 움직임 2 (중간 bounce, funny)
+   * 'fast'   : 67~100 — 움직임 3 (빠른 wiggle, ridiculous)
    */
   animationSpeed: 'slow' | 'medium' | 'fast';
 }
@@ -150,17 +150,17 @@ export function intimacyToColor(intimacy: number): string {
   }
 }
 
-/** Energy 점수 → eyeType 변환 */
-export function energyToEyeType(energy: number): CharacterParams['eyeType'] {
-  if (energy <= 33) return 'small';
-  if (energy <= 66) return 'large';
+/** Curiosity 점수 → eyeType 변환 */
+export function curiosityToEyeType(curiosity: number): CharacterParams['eyeType'] {
+  if (curiosity <= 33) return 'small';
+  if (curiosity <= 66) return 'large';
   return 'glowing';
 }
 
-/** Curiosity 점수 → animationSpeed 변환 */
-export function curiosityToAnimSpeed(curiosity: number): CharacterParams['animationSpeed'] {
-  if (curiosity <= 33) return 'slow';
-  if (curiosity <= 66) return 'medium';
+/** Humor 점수 → animationSpeed 변환 */
+export function humorToAnimSpeed(humor: number): CharacterParams['animationSpeed'] {
+  if (humor <= 33) return 'slow';
+  if (humor <= 66) return 'medium';
   return 'fast';
 }
 
@@ -178,11 +178,11 @@ export function axesToCharacterParams(
 ): CharacterParams {
   return {
     ...computed,
-    spikiness: axes.Humor,
-    borderRadius: axes.Formality,
-    eyeType: energyToEyeType(axes.Energy),
+    spikiness: axes.Energy,
+    borderRadius: 100 - axes.Formality,
+    eyeType: curiosityToEyeType(axes.Curiosity),
     bodyColor: intimacyToColor(axes.Intimacy),
-    animationSpeed: curiosityToAnimSpeed(axes.Curiosity),
+    animationSpeed: humorToAnimSpeed(axes.Humor),
   };
 }
 

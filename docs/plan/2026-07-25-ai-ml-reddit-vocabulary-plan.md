@@ -895,3 +895,67 @@ AI:
 - source text는 후보 추출용으로만 다룬다.
 - safe/approved term만 Pally prompt context로 변환한다.
 - review/blocked term은 자동 prompt 반영 금지다.
+
+## 15. Week 4 실행 기록: Analyzer 통합, Approved Vocabulary, Regression Fixture
+
+**실행일:** 2026-08-15 (계획서 상 Week 4 구간은 2026-08-17~08-23이지만 조기 착수)
+
+### 15.1 착수 전 발견한 문제: Week 2 산출물이 master에 없었음
+
+작업 시작 시 `ai/analyzers.py`가 `ai.ml_baseline` 모듈을 import하지 못해 전체가 깨져 있었다. 원인 확인 결과, Week 2 산출물(`ai/ml_baseline.py`, `data/axis_dataset_week2.jsonl`, `docs/ai-labeling-guide.md`, `ai/evaluate_axis_analyzers.py`, `tests/test_ai_week2_ml_baseline.py`)이 커밋 `569b29a`(`Refine AI labels for spoken conversation`)에만 있고, 이 커밋은 `origin/gsd/phase-ai-ml-reddit-week1` 브랜치에서만 존재했다. Week 3 PR(#33)이 "clean branch from origin/main" 기준으로 새로 만들어지면서 Week 2 산출물이 함께 복원되지 못한 것으로 보인다.
+
+해당 4개 파일은 master의 다른 파일(`ai/contracts.py`, `data/dataset.py` 등)을 수정하지 않고 독립적으로 추가 가능함을 확인한 뒤 커밋 `569b29a`에서 그대로 복원했다. 복원 후 `python ai/evaluate_axis_analyzers.py` 결과가 Week 2 기록(`rule_avg_mae: 16.18`, `ml_avg_mae: 13.81`, `delta: -2.37`)과 정확히 일치해 복원이 올바름을 확인했다.
+
+### 15.2 완료한 작업
+
+- `ai/analyzers.py` 업데이트
+  - `MLAxisAnalyzer`가 모델 예측 실패 시 `RuleBasedAxisAnalyzer`로 자동 폴백하도록 수정 (완료 기준: "ML 실패 시 rule-based fallback")
+  - `HybridAxisAnalyzer` 추가 — rule/ML 축 점수를 축별 평균으로 블렌딩, ML이 실패하면 자연스럽게 rule-based로 수렴
+  - `get_axis_analyzer()`가 `PALLY_AXIS_ANALYZER=rule|ml|hybrid` 세 값을 모두 지원
+- `ai/generate_feedback.py`(4주차 별도 작업에서 이미 추가된 모듈) 개선
+  - `generate_feedback()`이 `(items, failed)` 튜플을 반환하도록 변경 — Gemini 성공(빈 배열 포함)과 완전 실패를 구분할 수 있게 함
+  - `_fallback_rule_based()`의 정규식 버그 수정: 원문을 소문자로 캡처해 `I'm`이 `i'm`으로 깨지고, 다음 문장까지 통째로 삼키던 문제
+- `ai/contracts.py`에 `FeedbackItem` pydantic 모델 추가 (`original`, `corrected`, `explanation_ko`)
+- `ai/reddit_vocabulary.py`에 `build_prompt_vocabulary_from_terms()` 추가 — 백엔드가 저장한 `MemeTerm`(승인 완료, `status == "approved"`) 목록을 받아 prompt vocabulary로 변환. 기존 `build_prompt_vocabulary()`는 승인 이전 candidate 단계용으로 계속 남겨둠. `safety == "safe"`는 승인 여부와 별개로 항상 재검사
+- `data/fixtures/pally_regression_fixture.json` + `tests/test_ai_week4_regression_fixture.py` 추가
+  - rule-based analyzer + CHARACTER MATRIX golden case 5개
+  - EMA persona drift(casual → formal) golden case 1개
+  - `generate_feedback` rule-based fallback golden case 2개
+- `tests/test_ai_week4_analyzer_integration.py`, `tests/test_ai_week4_meme_term_prompt.py` 추가
+- STT/TTS latency 실측 (`GOOGLE_CLOUD_API_KEY` 실호출, 스크립트는 세션 scratchpad에만 존재하고 저장소에는 커밋하지 않음)
+  - TTS median 2157ms / mean 2264ms
+  - STT median 2091ms / mean 2170ms
+  - TTS+STT 왕복 median 4446ms
+
+### 15.3 검증 결과
+
+```bash
+python -m pytest tests/ -q --ignore=tests/test_ai_week1_contracts.py
+# 20 passed
+
+python -m compileall -q ai tests data
+python tests/test_matrix.py
+# 기존 CHARACTER MATRIX 데모 정상 실행
+
+python ai/evaluate_axis_analyzers.py
+# rule_avg_mae: 16.18 / ml_avg_mae: 13.81 / delta: -2.37 (Week2 기록과 일치)
+```
+
+`tests/test_ai_week1_contracts.py`도 `ai.ml_baseline` 복원 후 2/2 정상 통과 확인.
+
+### 15.4 팀 전달 포인트
+
+Backend:
+
+- `backend/main.py`가 아직 `ai.analyzer.analyze_utterance()`를 3곳(`/api/feedback`, `/api/chat`, `create_turn`)에서 직접 호출 중이다. `ai.analyzers.get_axis_analyzer().analyze(text).model_dump()`로 교체를 요청했다(별도 BE 전달 메시지 참고). `PALLY_AXIS_ANALYZER` 미설정 시 기존과 동일하게 rule-based로 동작하므로 교체 자체는 위험 없음.
+- `MemeTerm` 저장/승인 워크플로가 준비되면 `ai.reddit_vocabulary.build_prompt_vocabulary_from_terms(approved_terms)`를 호출해 Pally prompt에 넣을 vocabulary를 받을 수 있다.
+- STT+TTS 왕복 latency가 약 4.4초로 측정됐다. `create_turn`이 STT → Gemini reply → TTS를 순차 처리하면 여기에 Gemini reply 생성 시간과 feedback 생성 시간(약 1.6초, 별도 측정)까지 더해지므로, TTS/feedback을 병렬화하는 편이 turn 전체 latency에 유리하다.
+
+Frontend:
+
+- 이번 작업은 사용자 화면 contract 변경이 아니다. `axes`, `character`, `feedback` 필드 이름/타입 변경 없음.
+
+AI(다음 작업자에게):
+
+- `ai/analyzer.py`, `data/dataset.py`는 이번에 건드리지 않았다 — 두 파일은 이미 master에서 진화된 상태이므로, Week 2 커밋(`569b29a`)의 해당 파일 diff를 그대로 가져오면 안 된다.
+- `tests/test_ai_week1_contracts.py`가 이번 세션 시작 시점에 실패 상태였던 이유(누락된 `ai.ml_baseline`)는 해결됐고, 재실행으로 2/2 통과를 재확인했다.
