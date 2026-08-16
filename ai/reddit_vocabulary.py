@@ -10,7 +10,7 @@ or fixture `RedditSourceItem` batches and returns normalized candidates.
 import re
 from dataclasses import dataclass
 
-from ai.contracts import MemeTermCandidate, RedditSourceItem
+from ai.contracts import MemeTerm, MemeTermCandidate, RedditSourceItem
 
 
 ALLOWED_SUBREDDITS = frozenset({"EnglishLearning", "languagelearning", "OutOfTheLoop"})
@@ -213,4 +213,26 @@ def build_prompt_vocabulary(candidates: list[MemeTermCandidate], limit: int = 5)
             "usageContext": item.usageContext,
         }
         for item in safe_terms[:limit]
+    ]
+
+
+def build_prompt_vocabulary_from_terms(terms: list[MemeTerm], limit: int = 5) -> list[dict[str, str]]:
+    """Convert backend-persisted, human/policy-approved `MemeTerm` rows into
+    Pally prompt vocabulary entries.
+
+    Unlike `build_prompt_vocabulary` (which runs on freshly extracted
+    `MemeTermCandidate`s, before any approval step), this requires
+    `status == "approved"`. `safety` is re-checked here too — approval
+    should never override a `review`/`blocked` safety verdict, in case a
+    term's safety classification changed after it was approved.
+    """
+    approved_safe = [term for term in terms if term.status == "approved" and term.safety == "safe"]
+    approved_safe.sort(key=lambda item: item.confidence, reverse=True)
+    return [
+        {
+            "term": item.normalizedTerm,
+            "meaningKo": item.meaningKo,
+            "usageContext": item.usageContext,
+        }
+        for item in approved_safe[:limit]
     ]
