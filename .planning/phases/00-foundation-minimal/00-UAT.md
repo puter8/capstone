@@ -28,7 +28,7 @@ evidence: |
   → HTTP 200, body: {"ok":true}
 
 ### 4. Supabase Connection Check
-expected: From `frontend/`, run `npm run check:supabase`. Script loads `.env.local`, makes a real HTTP roundtrip to the Supabase project (`orhodalbxhbzlvjsqalu`), and prints "Supabase reachable" then exits 0 (SC#3). Failure modes: missing env crashes loudly; bad URL/key prints an error instead of silently passing.
+expected: From `frontend/`, run `npm run check:supabase`. Script loads `.env.local`, makes a real HTTP roundtrip to the Supabase project (`jxmdtrydtjlzglqwcofs`), and prints "Supabase reachable" then exits 0 (SC#3). Failure modes: missing env crashes loudly; bad URL/key prints an error instead of silently passing.
 result: pass
 evidence: |
   cd frontend && npm run check:supabase
