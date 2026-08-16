@@ -82,3 +82,15 @@ class MemeTerm(MemeTermCandidate):
     id: str
     status: Literal["approved", "rejected", "expired"]
     approvedAt: str | None = Field(default=None, alias="approved_at")
+
+
+class FeedbackItem(BaseModel):
+    """Wire shape returned by `ai.generate_feedback.generate_feedback`.
+
+    Backend assigns `id` when persisting to `messages.feedback`; this model
+    only covers the AI-generated fields.
+    """
+
+    original: str
+    corrected: str
+    explanation_ko: str
