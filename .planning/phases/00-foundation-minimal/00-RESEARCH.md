@@ -412,7 +412,7 @@ Notes:
 | # | Claim | Section | Risk if Wrong |
 |---|-------|---------|---------------|
 | A1 | Root `.env.local` `DATABASE_URL` and `REDDIT_*` keys are not used by any MVP code path. | Pitfall 4 / Runtime State Inventory | Low. They aren't referenced by `backend/main.py` filenames in scope, and no MVP requirement (REQUIREMENTS.md v1) uses them. Still, PM should confirm before deletion — plan includes that confirmation step. |
-| A2 | Supabase anon key in root `.env.local` matches the SETUP.md `puter8/capstone` project (`orhodalbxhbzlvjsqalu`). | D-12 migration | If mismatched, `check-supabase.ts` will fail loudly. Plan's verification step catches this. |
+| A2 | Supabase anon key in root `.env.local` matches the current project (`jxmdtrydtjlzglqwcofs`). | D-12 migration | If mismatched, `check-supabase.ts` will fail loudly. Plan's verification step catches this. |
 | A3 | `tsx@^4` is acceptable as a small dev-only dep for running the connection-check script. | Pattern 4 | Trivial. Fallback: `node --experimental-strip-types`. |
 | A4 | The dev (`이찬희`) is on macOS/Linux (not Windows-only) — `pbcopy`, POSIX-quoted flags work. | Implicit | Low — `npm` and `npx` cross-platform, but plan should not assume `pbcopy`. |
 | A5 | OpenAI key in root `.env.local` is the same key already known to PM (i.e., PM can revoke it without further sleuthing). | D-12 | If unknown provenance, the revoke conversation gets harder. Plan step: 이찬희 shares the key prefix (first 7 chars) with PM, PM identifies + revokes. |

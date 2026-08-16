@@ -3,7 +3,7 @@
 > 작성일: 2026-05-19  
 > 담당: 백은혜 (파트 C)  
 > Base URL (로컬): `http://localhost:8000`  
-> Base URL (배포): `https://capstone-production-e8c2.up.railway.app`
+> Base URL (배포): `https://web-production-8dee5.up.railway.app`
 
 ---
 
@@ -353,7 +353,7 @@ audio.play();
 
 ## 7. 파트 A 연동 가이드
 
-### /feedback 페이지 구현 시 권장 흐름
+### 피드백 UI 구현 시 권장 흐름
 
 ```
 [텍스트 입력 or 마이크 버튼]

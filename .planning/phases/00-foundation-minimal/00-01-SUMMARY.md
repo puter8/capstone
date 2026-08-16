@@ -95,7 +95,7 @@ Two plan defects discovered during execution and patched forward:
 - **Phase 1A (이찬희):** import `@/lib/types/message`, `@/lib/types/session`, `@/lib/utils` for mock data + `cn()`. No need to add Pally renderer or character types — that's 1B.
 - **Phase 1B (김민주):** will add `frontend/lib/types/character.ts` + `frontend/components/pally/*` + `frontend/app/dev/pally/*`. `Message.transcript` field is locked to match 1C's Supabase column name; do not rename.
 - **Phase 1C (백은혜):** will add `frontend/lib/supabase/server.ts` (service-role client) + read `backend/.env.local` from FastAPI. Service-role key is currently a placeholder in `backend/.env.local` — fill in real value before first DB write.
-- **All phases:** dev requires `frontend/.env.local` to exist with real NEXT_PUBLIC_SUPABASE_* values. If a teammate clones the repo, they must populate `frontend/.env.local` from `frontend/.env.example` and add the project's Supabase URL + anon key (orhodalbxhbzlvjsqalu).
+- **All phases:** dev requires `frontend/.env.local` to exist with real NEXT_PUBLIC_SUPABASE_* values. If a teammate clones the repo, they must populate `frontend/.env.local` from `frontend/.env.example` and add the project's Supabase URL + anon key (`jxmdtrydtjlzglqwcofs`).
 
 ## SC tracking
 

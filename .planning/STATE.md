@@ -58,13 +58,13 @@ Phase 1C — COMPLETE (2026-05-22, 백은혜)
 
 ### 배포
 
-- **Railway**: `https://capstone-production-e8c2.up.railway.app` — Online
+- **Railway**: `https://web-production-8dee5.up.railway.app` — Online
   - `/api/health` → `{"status":"ok"}` 확인
   - 환경변수 4개 등록: GOOGLE_AI_API_KEY, GOOGLE_CLOUD_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
   - Root Directory 없음 (repo 전체 빌드, 루트 Procfile + requirements.txt 사용)
 - **Vercel**: `capstone-eight-virid.vercel.app`
-  - `NEXT_PUBLIC_BACKEND_URL=https://capstone-production-e8c2.up.railway.app` 등록 완료
-  - 현재 404 — Phase 1A(이찬희) 미구현 상태로 정상
+  - `NEXT_PUBLIC_BACKEND_URL=https://web-production-8dee5.up.railway.app` 등록 필요
+  - 현재 배포 번들은 이전 Railway URL을 사용해 대화 요청이 실패함
 
 ### Phase 1C wire format (`/api/chat` 응답)
 
@@ -104,21 +104,21 @@ Phase 1C — COMPLETE (2026-05-22, 백은혜)
 - [x] Phase 0 — frontend scaffold
 - [x] Phase 0 — minimal UI types (Message/Session)
 - [x] Phase 0 — Supabase client/env
-- [x] Phase 1C — /api/stt, /api/tts, /api/feedback, /api/chat 구현
+- [x] Phase 1C — `/api/stt`, `/api/tts`, `/api/feedback`, `/api/chat` 구현
 - [x] Phase 1C — Supabase sessions/messages 마이그레이션 + RLS
 - [x] Phase 1C — 인라인 한국어 힌트 (hint_ko)
 - [x] Phase 1C — Railway 배포 (Online)
-- [x] Phase 1C — Vercel NEXT_PUBLIC_BACKEND_URL 등록
+- [ ] Vercel `NEXT_PUBLIC_BACKEND_URL`을 현재 Railway URL로 동기화
 - [ ] Phase 1A — 메인 대화 화면 + rec 버튼 + 오디오 UX shell (이찬희)
 - [ ] Phase 1B — Python engine ADR (D+1 확정 필요, 김민주)
 - [ ] Phase 1B — Canvas2D Pally renderer + 5축 파라미터 연동
-- [ ] Phase 2 — mock transport → 실제 Railway /api/chat 교체
+- [ ] Phase 2 — mock transport → 실제 Railway `/api/chat` 교체
 - [ ] Phase 2 — 모바일 실기기 E2E 검증 (demo device + backup)
 
 ### Blockers
 
 - Phase 2 시작 전 1A + 1B 완료 필요
-- Phase 1A 미완료로 Vercel 배포 URL 접근 시 404 (정상 상태)
+- Vercel 프로젝트 소유 계정/팀 권한이 없어 Production 환경변수 변경 대기
 
 ## Session Continuity
 
@@ -129,7 +129,7 @@ Phase 1C — COMPLETE (2026-05-22, 백은혜)
 | 2026-05-21 | Init | PROJECT.md, REQUIREMENTS.md, ROADMAP.md, STATE.md 초기화 |
 | 2026-05-21 | Roadmap review | GCP-only, Vercel/Railway split, /feedback UI 제거, 1A/1B/1C 병렬 구조 확정 |
 | 2026-05-21 | Phase 0 build | 00-01 plan 실행, UAT 5/5 통과 |
-| 2026-05-22 | Phase 1C build | /api/chat 구현, Supabase 연동, 인라인 한국어 힌트, Railway/Vercel 배포 완료 |
+| 2026-05-22 | Phase 1C build | `/api/chat` 구현, Supabase 연동, 인라인 한국어 힌트, Railway/Vercel 배포 완료 |
 
 ### Next Action
 
@@ -141,11 +141,11 @@ Phase 1A (이찬희) / Phase 1B (김민주) 완료 후 Phase 2 통합 시작.
 
 ### Hand-off Notes (Phase 1C → Phase 1A/2)
 
-- **Railway URL:** `https://capstone-production-e8c2.up.railway.app`
+- **Railway URL:** `https://web-production-8dee5.up.railway.app`
 - **이찬희에게 전달할 env:**
   ```
-  NEXT_PUBLIC_BACKEND_URL=https://capstone-production-e8c2.up.railway.app
-  NEXT_PUBLIC_SUPABASE_URL=https://orhodalbxhbzlvjsqalu.supabase.co
+  NEXT_PUBLIC_BACKEND_URL=https://web-production-8dee5.up.railway.app
+  NEXT_PUBLIC_SUPABASE_URL=https://jxmdtrydtjlzglqwcofs.supabase.co
   NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
   ```
 
@@ -155,4 +155,4 @@ Phase 1A (이찬희) / Phase 1B (김민주) 완료 후 Phase 2 통합 시작.
 ---
 
 *State initialized: 2026-05-21*
-*Last synchronized: 2026-05-22 — Phase 1C marked complete (백은혜). Railway Online, Vercel env 등록 완료.*
+*Last synchronized: 2026-08-16 — Railway URL/Supabase project refs corrected; Vercel env sync pending project access.*
