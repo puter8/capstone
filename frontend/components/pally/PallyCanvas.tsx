@@ -99,35 +99,38 @@ export default function PallyCanvas({
     const cy  = size / 2;
     ctx.clearRect(0, 0, size, size);
 
-    const cT = tier(ax.Curiosity);
+    // Humor → 움직임(bob/bounce/wiggle): serious=거의 정지, ridiculous=활발한 wiggle
+    const mT = tier(ax.Humor);
     let oY = 0, oX = 0;
-    if      (cT === 0) { oY = Math.sin(t * 0.9) * 4; }
-    else if (cT === 1) { oY = Math.sin(t * 1.8) * 8; }
+    if      (mT === 0) { oY = Math.sin(t * 0.9) * 4; }
+    else if (mT === 1) { oY = Math.sin(t * 1.8) * 8; }
     else               { oY = Math.sin(t * 3.2) * 7; oX = Math.cos(t * 3.2) * 5; }
 
     ctx.save();
     ctx.translate(cx + oX, cy + oY);
 
     const [r, g, b] = intimacyRgb(ax.Intimacy);
-    const hT = tier(ax.Humor);
+    // Energy → 몸통 모양(calm=사각 → lively=별 → energetic=선버스트)
+    const sT = tier(ax.Energy);
+    // Formality → 모서리 둥글기: blunt(낮음)=둥긂 → formal(높음)=각짐
     const fT = tier(ax.Formality);
 
     ctx.shadowColor = `rgba(${r},${g},${b},0.45)`;
     ctx.shadowBlur  = 20;
 
-    if (hT === 0) {
-      const rectR = [0, bs * 0.18, bs * 0.75][fT];
+    if (sT === 0) {
+      const rectR = [bs * 0.75, bs * 0.18, 0][fT];
       ctx.beginPath();
       ctx.roundRect(-bs, -bs, bs * 2, bs * 2, rectR);
-    } else if (hT === 1) {
+    } else if (sT === 1) {
       const outerR = bs * 1.15;
       const innerR = bs * 0.63;
-      const tipR   = [0, 10, 24][fT];
+      const tipR   = [24, 10, 0][fT];
       drawStar(ctx, 8, outerR, innerR, tipR);
     } else {
       const outerR = bs * 1.28;
       const innerR = bs * 0.52;
-      const tipR   = [0, 6, 16][fT];
+      const tipR   = [16, 6, 0][fT];
       drawStar(ctx, 12, outerR, innerR, tipR);
     }
 
@@ -138,10 +141,10 @@ export default function PallyCanvas({
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // ── 눈 ───────────────────────────────────────────────────────────────
-    const eT       = tier(ax.Energy);
-    const eyeSpcX  = hT > 0 ? bs * 0.25 : bs * 0.34;
-    const eyeBaseY = hT > 0 ? bs * 0.08 : -bs * 0.04;
+    // ── 눈 (Curiosity → indifferent=단순한 점 → curious → Inquisitive=화려한 눈) ──
+    const eT       = tier(ax.Curiosity);
+    const eyeSpcX  = sT > 0 ? bs * 0.25 : bs * 0.34;
+    const eyeBaseY = sT > 0 ? bs * 0.08 : -bs * 0.04;
     const blink    = Math.sin(t * 0.4) > 0.98;
     const scaleY   = blink ? 0.08 : 1;
 
