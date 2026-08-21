@@ -42,12 +42,32 @@ except Exception:
     _SUPABASE_ENABLED = False
     get_supabase = None  # type: ignore
 
-# AI 담당 제공 예정: generate_feedback(utterance, pally_reply, level) -> [{original, corrected, explanation_ko}]
-# 아직 없으면 None → turn 의 feedback 은 [] (실패 아님, 미구현).
+# AI 담당 제공: generate_feedback(utterance, pally_reply, level) -> (items, failed).
+# 없으면 None → turn 의 feedback 은 [] (실패 아님, 미구현).
 try:
-    from ai.feedback import generate_feedback
+    from ai.generate_feedback import generate_feedback
 except Exception:
     generate_feedback = None  # type: ignore
+
+# 5축 분석 어댑터 (rule|ml|hybrid, env PALLY_AXIS_ANALYZER, 기본 rule).
+# 한 번만 생성해 재사용(ml/hybrid 모델 재로딩 방지). 실패하면 기존 rule 함수로 폴백.
+try:
+    from ai.analyzers import get_axis_analyzer
+    _axis_analyzer = get_axis_analyzer()
+except Exception as _axis_e:
+    logging.warning(f"axis analyzer init failed → analyze_utterance(rule) fallback: {_axis_e}")
+    _axis_analyzer = None
+
+
+def _analyze_axes(text: str) -> Dict[str, int]:
+    """5축 dict. 어댑터(rule/ml/hybrid) 사용, 실패 시 기존 rule 함수로 폴백."""
+    if _axis_analyzer is not None:
+        try:
+            return _axis_analyzer.analyze(text).model_dump()
+        except Exception as e:
+            logging.warning(f"axis analyzer.analyze failed → rule fallback: {e}")
+    return analyze_utterance(text)
+
 
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")    # Gemini (AI Studio)
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # STT / TTS (Cloud Console)
@@ -1190,10 +1210,14 @@ async def _gen_feedback(utterance: str, reply: str, level: str) -> list:
     """
     if generate_feedback is None:
         return []
-    items = await asyncio.wait_for(
+    # 계약: (items, failed). failed=True 는 생성 실패/폴백 → 빈 items 를 "교정 없음"으로
+    # 보지 말라는 뜻이므로 raise 해서 호출부(gather)가 partial + feedback_failed 로 처리.
+    items, failed = await asyncio.wait_for(
         asyncio.to_thread(generate_feedback, utterance, reply, level),
         timeout=10,
     )
+    if failed:
+        raise RuntimeError("feedback generation degraded (failed flag)")
     out = []
     for it in (items or []):
         out.append({
@@ -1445,8 +1469,8 @@ async def create_turn(
             current_axes = m["axes"]
             break
 
-    # 6. 5축 → EMA → character (AI 룰 엔진 호출)
-    raw_axes = analyze_utterance(transcript)
+    # 6. 5축 → EMA → character (분석 어댑터: rule|ml|hybrid, 기본 rule)
+    raw_axes = _analyze_axes(transcript)
     smoothed = apply_ema(current_axes, raw_axes) if current_axes else raw_axes
     character = compute_character(smoothed)
 
