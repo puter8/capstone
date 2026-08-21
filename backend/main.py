@@ -42,6 +42,13 @@ except Exception:
     _SUPABASE_ENABLED = False
     get_supabase = None  # type: ignore
 
+# AI 담당 제공 예정: generate_feedback(utterance, pally_reply, level) -> [{original, corrected, explanation_ko}]
+# 아직 없으면 None → turn 의 feedback 은 [] (실패 아님, 미구현).
+try:
+    from ai.feedback import generate_feedback
+except Exception:
+    generate_feedback = None  # type: ignore
+
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")    # Gemini (AI Studio)
 GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # STT / TTS (Cloud Console)
 
@@ -230,7 +237,7 @@ def metrics():
         raise AppError(404, "not_found", "Not found")
 
     turns = list(_TURN_METRICS)
-    stages = ("stt_ms", "gemini_ms", "tts_ms", "save_ms", "total_ms")
+    stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms", "total_ms")
     summary = {}
     for stage in stages:
         vals = [t[stage] for t in turns if t.get(stage) is not None]
@@ -1169,6 +1176,31 @@ def _paired_reply(sb, session_id: str, user_created_at: str) -> str:
     return r.data[0]["transcript"] if r.data else ""
 
 
+async def _gen_feedback(utterance: str, reply: str, level: str) -> list:
+    """
+    AI feedback 생성 호출 래퍼 (경계: 생성 로직은 AI, 여기선 호출·형태만).
+    - 미제공(generate_feedback is None) → [] 반환 (실패 아님, 미구현).
+    - 동기 함수라 asyncio.to_thread 로 offload (이벤트 루프 안 막음) + 10s 타임아웃.
+    - 예외/타임아웃은 그대로 raise → 호출부(gather)가 partial + feedback_failed 로 처리.
+    - id 는 계약(§5)상 BE 가 부여. AI 는 {original, corrected, explanation_ko} 만 준다.
+    """
+    if generate_feedback is None:
+        return []
+    items = await asyncio.wait_for(
+        asyncio.to_thread(generate_feedback, utterance, reply, level),
+        timeout=10,
+    )
+    out = []
+    for it in (items or []):
+        out.append({
+            "id": str(uuid.uuid4()),
+            "original": it.get("original", ""),
+            "corrected": it.get("corrected", ""),
+            "explanation_ko": it.get("explanation_ko", ""),
+        })
+    return out
+
+
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201)
 async def create_turn(
     conversation_id: str,
@@ -1221,6 +1253,7 @@ async def create_turn(
             "pally": {"text": _paired_reply(sb, conversation_id, u["created_at"]), "audio": None},
             "axes": u.get("axes"),
             "character": u.get("character"),
+            "feedback": u.get("feedback") or [],
             "warnings": [],
         }
 
@@ -1268,15 +1301,46 @@ async def create_turn(
         raise AppError(502, "ai_engine_failed", "Reply generation failed")
     gemini_ms = round((time.perf_counter() - gemini_t0) * 1000)
 
-    # 8. TTS (비핵심 — 실패해도 turn 은 완료, audio 만 null) — latency 측정
-    tts_t0 = time.perf_counter()
+    # 8. TTS + feedback 병렬 (둘 다 reply 만 있으면 됨 → asyncio.gather).
+    #    feedback 은 AI 담당(동기 함수)이라 to_thread 로 offload 해 이벤트 루프를 막지 않는다.
+    #    TTS 가 보통 long pole 이라, feedback 을 병렬로 붙여도 turn latency 는 거의 안 늘어난다.
+    timings: Dict[str, int] = {}
+
+    async def _timed_tts():
+        t0 = time.perf_counter()
+        try:
+            return await _call_google_tts(_strip_emoji(reply))
+        finally:
+            timings["tts_ms"] = round((time.perf_counter() - t0) * 1000)
+
+    async def _timed_feedback():
+        t0 = time.perf_counter()
+        try:
+            return await _gen_feedback(transcript, reply, session["level"])
+        finally:
+            timings["feedback_ms"] = round((time.perf_counter() - t0) * 1000)
+
+    tts_result, fb_result = await asyncio.gather(
+        _timed_tts(), _timed_feedback(), return_exceptions=True,
+    )
+    tts_ms = timings.get("tts_ms", 0)
+    feedback_ms = timings.get("feedback_ms", 0)
+
+    # TTS: 실패해도 turn 은 완료, audio 만 null.
     tts_audio: Optional[str] = None
-    try:
-        tts_audio = await _call_google_tts(_strip_emoji(reply))
-    except Exception as e:
-        logging.warning(f"turn TTS failed (non-fatal): {e}")
-        tts_audio = None
-    tts_ms = round((time.perf_counter() - tts_t0) * 1000)
+    if isinstance(tts_result, Exception):
+        logging.warning(f"turn TTS failed (non-fatal): {tts_result}")
+    else:
+        tts_audio = tts_result
+
+    # feedback: 성공(list) / 실패(Exception → partial+warning) / 미구현(None 반환 → [])
+    feedback_items: list = []
+    feedback_failed = False
+    if isinstance(fb_result, Exception):
+        feedback_failed = True
+        logging.warning(f"turn feedback failed (non-fatal): {fb_result}")
+    elif fb_result:
+        feedback_items = fb_result
 
     # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단) — latency 측정
     save_t0 = time.perf_counter()
@@ -1289,6 +1353,7 @@ async def create_turn(
                 "axes": smoothed,
                 "character": character,
                 "idempotency_key": idem_key,
+                "feedback": feedback_items,
             },
             {
                 "session_id": conversation_id,
@@ -1308,7 +1373,7 @@ async def create_turn(
     turn_id = user_row["id"] if user_row else None
     turn_created = user_row["created_at"] if user_row else None
 
-    # TTS 만 실패한 경우 partial + warnings (계약 §4.6). 대화 텍스트는 정상.
+    # TTS·feedback 부가 실패는 partial + warnings (계약 §4.6). 대화 텍스트는 정상.
     status = "completed"
     warnings: list = []
     if tts_audio is None:
@@ -1316,6 +1381,12 @@ async def create_turn(
         warnings.append({
             "code": "tts_failed",
             "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
+        })
+    if feedback_failed:
+        status = "partial"
+        warnings.append({
+            "code": "feedback_failed",
+            "message": "피드백 생성에 실패했어요. 대화는 계속할 수 있어요.",
         })
 
     # 관측성: 단계별 latency 를 링버퍼에 저장 + 구조화 로그로 emit.
@@ -1327,6 +1398,7 @@ async def create_turn(
         "stt_ms": stt_ms,
         "gemini_ms": gemini_ms,
         "tts_ms": tts_ms,
+        "feedback_ms": feedback_ms,
         "save_ms": save_ms,
         "total_ms": round((time.perf_counter() - turn_t0) * 1000),
         "status": status,
@@ -1344,6 +1416,7 @@ async def create_turn(
         "pally": {"text": reply, "audio": tts_audio},  # audio = base64 inline (signed URL 미구현)
         "axes": smoothed,
         "character": character,
+        "feedback": feedback_items,
         "warnings": warnings,
     }
 
