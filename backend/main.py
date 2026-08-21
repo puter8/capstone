@@ -609,7 +609,7 @@ async def feedback(req: FeedbackRequest):
         raise HTTPException(status_code=400, detail="utterance is required")
 
     # 1. 5축 분석
-    raw_axes = analyze_utterance(req.utterance)
+    raw_axes = _analyze_axes(req.utterance)
 
     # 2. EMA — 이전 누적 점수가 있을 때만 적용
     smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
@@ -839,7 +839,7 @@ async def chat(req: ChatRequest):
             logging.warning(f"Supabase session load failed: {e}")
 
     # 2. 5축 분석
-    raw_axes = analyze_utterance(req.utterance)
+    raw_axes = _analyze_axes(req.utterance)
 
     # 3. EMA
     smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
