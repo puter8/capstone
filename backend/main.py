@@ -7,6 +7,7 @@ import os
 import re
 import sys
 
+import hashlib
 import time
 import uuid
 from collections import deque
@@ -1812,3 +1813,334 @@ async def reopen_conversation(
         "reopened_at": row.get("reopened_at"),
         "reopen_count": row.get("reopen_count", 0),
     }}
+
+
+# ── Achievements — 일일 Task 3개 + Streak (5주차, A단계) ──────────────────────
+#
+# PM v2.0: 30개 마스터 풀에서 매일 A1 고정 + hash 로 2개 결정적 선택.
+# Streak = 그날 3개 모두 완료한 날의 연속 수. 완료 판정은 서버 계산(클라이언트 못 씀).
+# 30개 Task 전부 서버에서 판정: 오늘 범위(A/B/C/D + E6)와 교차일/주간/추세(A5 reopen,
+# D1 톤변화, E1 어제자격, E2/E3 주간, E4 Intimacy 상승, E5 문장길이 추세)까지 포함.
+
+# (category, title, description)
+_TASK_CATALOG: Dict[str, tuple] = {
+    "A1": ("A", "오늘 Pally와 대화 시작하기", "오늘 Pally와 새 대화를 시작해보세요"),
+    "A2": ("A", "오늘 대화에서 3턴 이상 주고받기", "오늘 대화에서 3턴 이상 주고받아보세요"),
+    "A3": ("A", "오늘 대화에서 5턴 이상 주고받기", "오늘 대화에서 5턴 이상 주고받아보세요"),
+    "A4": ("A", "오늘 대화 세션 2개 이상 만들기", "오늘 새 대화를 2개 이상 시작해보세요"),
+    "A5": ("A", "History에서 이전 대화 이어가기", "이전에 완료한 대화를 다시 이어가보세요"),
+    "A6": ("A", "오늘 대화를 끝까지 완료하기", "오늘 대화를 완료 상태로 마무리해보세요"),
+    "B1": ("B", "대화 중 질문 담긴 발화 하기", "물음표가 담긴 발화를 한 번 이상 해보세요"),
+    "B2": ("B", "한 턴에 30단어 이상 길게 말해보기", "한 턴에 30단어 이상 길게 말해보세요"),
+    "B3": ("B", "Energy 축 60 이상 기록하기", "활기찬 말투로 Energy를 올려보세요"),
+    "B4": ("B", "Humor 축 60 이상 기록하기", "유머러스한 말투로 Humor를 올려보세요"),
+    "B5": ("B", "Curiosity 축 60 이상 기록하기", "호기심 담긴 말투로 Curiosity를 올려보세요"),
+    "B6": ("B", "나만의 톤으로 대화하기", "격식/비격식 어느 쪽이든 뚜렷한 톤으로 말해보세요"),
+    "C1": ("C", "오늘 대화에서 교정 표현 받아보기", "오늘 대화에서 피드백을 받아보세요"),
+    "C2": ("C", "지난 대화 기록 다시 열어보기", "이전 대화 상세를 다시 열어보세요"),
+    "C3": ("C", "대화 로그 펼쳐서 다시 읽어보기", "대화 로그를 펼쳐서 읽어보세요"),
+    "C4": ("C", "대화 로그 2번 이상 펼쳐보기", "대화 로그를 2번 이상 펼쳐보세요"),
+    "C5": ("C", "대화 중 피드백 2개 이상 만들기", "오늘 피드백을 2개 이상 받아보세요"),
+    "C6": ("C", "오늘 나온 교정 표현 확인하기", "오늘 받은 교정 표현을 열어 확인해보세요"),
+    "D1": ("D", "대화 속에서 Pally 톤 변화 느껴보기", "말투를 바꿔 Pally의 톤 변화를 만들어보세요"),
+    "D2": ("D", "오전에 대화하기", "오전(06~12시)에 대화해보세요"),
+    "D3": ("D", "저녁에 대화하기", "저녁(18~24시)에 대화해보세요"),
+    "D4": ("D", "주말에도 대화하기", "주말에도 대화를 이어가보세요"),
+    "D5": ("D", "My Pally에서 내 프로필 확인하기", "My Pally에서 프로필을 확인해보세요"),
+    "D6": ("D", "Achievements에서 Streak 확인하기", "Achievements에서 오늘의 Streak을 확인해보세요"),
+    "E1": ("E", "어제에 이어 오늘도 Streak 이어가기", "어제에 이어 오늘도 3개 Task를 완료해보세요"),
+    "E2": ("E", "이번 주 3일 이상 대화하기", "이번 주에 3일 이상 대화해보세요"),
+    "E3": ("E", "이번 주 첫 대화 시작하기", "이번 주 첫 대화를 시작해보세요"),
+    "E4": ("E", "Intimacy 축이 어제보다 상승하기", "어제보다 Intimacy를 더 올려보세요"),
+    "E5": ("E", "지난 세션보다 더 긴 문장으로 말해보기", "지난 대화보다 평균적으로 더 길게 말해보세요"),
+    "E6": ("E", "오늘 무료 대화량 절반 이상 채우기", "오늘 무료 대화량의 절반 이상을 사용해보세요"),
+}
+_FIXED_TASK = "A1"
+
+
+def _select_daily_task_ids(user_id: str, date_kst: str) -> list:
+    """A1 고정 + 나머지 29개 중 hash(user_id+date) 로 2개 결정적 선택 (같은 날 불변)."""
+    pool = [t for t in _TASK_CATALOG if t != _FIXED_TASK]
+    ranked = sorted(pool, key=lambda t: hashlib.sha256(f"{user_id}:{date_kst}:{t}".encode()).hexdigest())
+    return [_FIXED_TASK, ranked[0], ranked[1]]
+
+
+def _kst_day_window_utc(date_kst: str) -> tuple:
+    d = datetime.fromisoformat(date_kst).date()
+    start = datetime.combine(d, dtime.min, tzinfo=_KST).astimezone(timezone.utc)
+    return start.isoformat(), (start + timedelta(days=1)).isoformat()
+
+
+def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
+    start, end = _kst_day_window_utc(date_kst)
+    try:
+        sess = sb.table("sessions").select("id, created_at, ended_at, reopened_at").eq("user_id", user_id).execute()
+    except Exception as e:
+        logging.error(f"achievements sessions read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load achievements data")
+    sessions = sess.data or []
+    sess_ids = [s["id"] for s in sessions]
+    sessions_today = [s for s in sessions if start <= s["created_at"] < end]
+    completed_today = [s for s in sessions if s.get("ended_at") and start <= s["ended_at"] < end]
+
+    user_msgs = []
+    if sess_ids:
+        msgs = sb.table("messages").select("session_id, role, transcript, axes, character, created_at, feedback").in_("session_id", sess_ids).gte("created_at", start).lt("created_at", end).order("created_at").execute()
+        user_msgs = [m for m in (msgs.data or []) if m["role"] == "user"]
+
+    ev = sb.table("activity_events").select("event_type").eq("user_id", user_id).gte("received_at", start).lt("received_at", end).execute()
+    event_counts: Dict[str, int] = {}
+    for e in (ev.data or []):
+        event_counts[e["event_type"]] = event_counts.get(e["event_type"], 0) + 1
+
+    usage = sb.table("usage_daily").select("used_turns").eq("user_id", user_id).eq("date_kst", date_kst).execute()
+    used_turns = usage.data[0]["used_turns"] if usage.data else 0
+
+    # 이번 주(월~일 KST) conversation 생성 distinct 날짜 (E2/E3용)
+    monday = datetime.fromisoformat(date_kst).date() - timedelta(days=datetime.fromisoformat(date_kst).weekday())
+    week_dates = {
+        datetime.fromisoformat(s["created_at"].replace("Z", "+00:00")).astimezone(_KST).date()
+        for s in sessions
+    }
+    week_conv_dates = {d for d in week_dates if monday <= d <= monday + timedelta(days=6)}
+
+    return {
+        "date_kst": date_kst,
+        "window": (start, end),
+        "sessions": sessions,
+        "sess_ids": sess_ids,
+        "sessions_today": sessions_today,
+        "completed_today": completed_today,
+        "user_msgs": user_msgs,
+        "event_counts": event_counts,
+        "used_turns": used_turns,
+        "week_conv_dates": week_conv_dates,
+    }
+
+
+def _msg_in_kst_hour(msgs: list, h_start: int, h_end: int) -> bool:
+    for m in msgs:
+        dt = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone(_KST)
+        if h_start <= dt.hour < h_end:
+            return True
+    return False
+
+
+def _avg_words(msgs: list) -> float:
+    counts = [len((m.get("transcript") or "").split()) for m in msgs]
+    return (sum(counts) / len(counts)) if counts else 0.0
+
+
+def _last_user_axis(sb, sess_ids: list, win_start: str, win_end: str, key: str):
+    """윈도우 내 마지막 user 메시지의 특정 축 값 (없으면 None)."""
+    if not sess_ids:
+        return None
+    r = (
+        sb.table("messages").select("axes, created_at")
+        .in_("session_id", sess_ids).eq("role", "user")
+        .gte("created_at", win_start).lt("created_at", win_end)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    if r.data and r.data[0].get("axes"):
+        return r.data[0]["axes"].get(key)
+    return None
+
+
+def _eval_task(sb, user_id: str, date_kst: str, task_id: str, ctx: dict) -> bool:
+    um = ctx["user_msgs"]
+    ec = ctx["event_counts"]
+    start, end = ctx["window"]
+
+    def axis_any(key, pred) -> bool:
+        return any(pred((m.get("axes") or {}).get(key)) for m in um if m.get("axes"))
+
+    # A — 대화 세션
+    if task_id == "A1":
+        return len(ctx["sessions_today"]) >= 1
+    if task_id == "A2":
+        return len(um) >= 3
+    if task_id == "A3":
+        return len(um) >= 5
+    if task_id == "A4":
+        return len(ctx["sessions_today"]) >= 2
+    if task_id == "A5":
+        # reopen 이 오늘 있었고, 그 이후 오늘 user turn 이 추가됨
+        for s in ctx["sessions"]:
+            r = s.get("reopened_at")
+            if r and start <= r < end and any(m["session_id"] == s["id"] and m["created_at"] >= r for m in um):
+                return True
+        return False
+    if task_id == "A6":
+        return len(ctx["completed_today"]) >= 1
+
+    # B — 품질 / 축
+    if task_id == "B1":
+        return any("?" in (m.get("transcript") or "") for m in um)
+    if task_id == "B2":
+        return any(len((m.get("transcript") or "").split()) >= 30 for m in um)
+    if task_id == "B3":
+        return axis_any("Energy", lambda v: v is not None and v >= 60)
+    if task_id == "B4":
+        return axis_any("Humor", lambda v: v is not None and v >= 60)
+    if task_id == "B5":
+        return axis_any("Curiosity", lambda v: v is not None and v >= 60)
+    if task_id == "B6":
+        return axis_any("Formality", lambda v: v is not None and (v <= 20 or v >= 80))
+
+    # C — 피드백 / 열람
+    if task_id == "C1":
+        return sum(len(m.get("feedback") or []) for m in um) >= 1
+    if task_id == "C5":
+        return sum(len(m.get("feedback") or []) for m in um) >= 2
+    if task_id == "C2":
+        return ec.get("conversation_detail_opened", 0) >= 1
+    if task_id == "C3":
+        return ec.get("transcript_expanded", 0) >= 1
+    if task_id == "C4":
+        return ec.get("transcript_expanded", 0) >= 2
+    if task_id == "C6":
+        return ec.get("feedback_item_opened", 0) >= 1
+
+    # D — 캐릭터 변화 / 시간대
+    if task_id == "D1":
+        # 직전 user turn 대비 tone_casual 15 이상 변화
+        prev = None
+        for m in um:
+            tc = (m.get("character") or {}).get("tone_casual")
+            if tc is None:
+                continue
+            if prev is not None and abs(tc - prev) >= 15:
+                return True
+            prev = tc
+        return False
+    if task_id == "D2":
+        return _msg_in_kst_hour(um, 6, 12)
+    if task_id == "D3":
+        return _msg_in_kst_hour(um, 18, 24)
+    if task_id == "D4":
+        return datetime.fromisoformat(ctx["date_kst"]).weekday() >= 5 and len(um) >= 1
+    if task_id == "D5":
+        return ec.get("profile_opened", 0) >= 1
+    if task_id == "D6":
+        return ec.get("achievements_opened", 0) >= 1
+
+    # E — 연속 / 누적
+    if task_id == "E1":
+        # 어제 자격(qualified) 이었는지
+        y = (datetime.fromisoformat(date_kst).date() - timedelta(days=1)).isoformat()
+        r = sb.table("streak_days").select("qualified").eq("user_id", user_id).eq("date_kst", y).execute()
+        return bool(r.data and r.data[0]["qualified"])
+    if task_id == "E2":
+        return len(ctx["week_conv_dates"]) >= 3
+    if task_id == "E3":
+        return len(ctx["week_conv_dates"]) >= 1
+    if task_id == "E4":
+        # 오늘 마지막 Intimacy > 어제 마지막 Intimacy
+        today_intimacy = None
+        for m in reversed(um):
+            v = (m.get("axes") or {}).get("Intimacy")
+            if v is not None:
+                today_intimacy = v
+                break
+        if today_intimacy is None:
+            return False
+        y_start = (datetime.fromisoformat(start) - timedelta(days=1)).isoformat()
+        y_intimacy = _last_user_axis(sb, ctx["sess_ids"], y_start, start, "Intimacy")
+        return y_intimacy is not None and today_intimacy > y_intimacy
+    if task_id == "E5":
+        # 오늘 평균 단어수 > 직전(오늘 이전 가장 최근) conversation 평균
+        today_avg = _avg_words(um)
+        if today_avg <= 0:
+            return False
+        prior = [s for s in ctx["sessions"] if s["created_at"] < start]
+        if not prior:
+            return False
+        prev_session = max(prior, key=lambda s: s["created_at"])
+        r = sb.table("messages").select("transcript").eq("session_id", prev_session["id"]).eq("role", "user").execute()
+        prev_avg = _avg_words(r.data or [])
+        return prev_avg > 0 and today_avg > prev_avg
+    if task_id == "E6":
+        return ctx["used_turns"] >= max(1, FREE_DAILY_TURNS // 2)
+
+    return False
+
+
+def _compute_streak(sb, user_id: str, today_kst: str) -> int:
+    try:
+        rows = sb.table("streak_days").select("date_kst, qualified").eq("user_id", user_id).order("date_kst", desc=True).limit(400).execute()
+    except Exception as e:
+        logging.warning(f"streak read failed: {e}")
+        return 0
+    qualified = {r["date_kst"] for r in (rows.data or []) if r["qualified"]}
+    today = datetime.fromisoformat(today_kst).date()
+    cursor = today if today_kst in qualified else today - timedelta(days=1)
+    count = 0
+    while cursor.isoformat() in qualified:
+        count += 1
+        cursor -= timedelta(days=1)
+    return count
+
+
+@app.get("/api/achievements")
+async def get_achievements(user_id: str = Depends(get_current_user_id)):
+    """
+    오늘의 Daily Task 3개(완료 상태 포함) + Streak. 서버 계산만 신뢰 (클라이언트 못 씀).
+    D6(achievements_opened)은 이 화면 진입 이벤트라, 이 API 자체로는 완료되지 않는다
+    — 프론트가 POST /api/activity-events(achievements_opened)를 보낸 뒤 반영됨.
+    """
+    sb = get_supabase()
+    date_kst = _kst_date()
+
+    # 1. 오늘 선택 3개 (snapshot 고정). 선택은 결정적이라 경합해도 동일.
+    try:
+        snap = sb.table("daily_task_snapshots").select("task_ids").eq("user_id", user_id).eq("date_kst", date_kst).execute()
+    except Exception as e:
+        logging.error(f"daily_task_snapshots read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
+    if snap.data:
+        task_ids = snap.data[0]["task_ids"]
+    else:
+        task_ids = _select_daily_task_ids(user_id, date_kst)
+        try:
+            sb.table("daily_task_snapshots").upsert(
+                {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
+                on_conflict="user_id,date_kst", ignore_duplicates=True,
+            ).execute()
+        except Exception as e:
+            logging.error(f"daily_task_snapshots write failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
+
+    # 2. 완료 평가
+    ctx = _gather_achievement_context(sb, user_id, date_kst)
+    completed_at = _now_iso()
+    daily_tasks = []
+    all_done = True
+    for tid in task_ids:
+        _cat, title, desc = _TASK_CATALOG.get(tid, ("?", tid, ""))
+        done = _eval_task(sb, user_id, date_kst, tid, ctx)
+        if not done:
+            all_done = False
+        daily_tasks.append({
+            "id": tid,
+            "title": title,
+            "description": desc,
+            "status": "completed" if done else "default",
+            "completed_at": completed_at if done else None,
+        })
+
+    # 3. Streak: 오늘 자격 여부 기록 + 연속 카운트
+    try:
+        sb.table("streak_days").upsert(
+            {"user_id": user_id, "date_kst": date_kst, "qualified": all_done},
+            on_conflict="user_id,date_kst",
+        ).execute()
+    except Exception as e:
+        logging.warning(f"streak_days upsert failed: {e}")
+    streak_count = _compute_streak(sb, user_id, date_kst)
+
+    return {
+        "date": date_kst,
+        "timezone": "Asia/Seoul",
+        "streak_count": streak_count,
+        "daily_tasks": daily_tasks,
+    }
