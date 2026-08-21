@@ -1272,6 +1272,83 @@ async def get_usage(user_id: str = Depends(get_current_user_id)):
     }
 
 
+# ── Activity events — Achievements Daily Task 측정용 사실 이벤트 기록 ─────────
+
+_ALLOWED_EVENT_TYPES = {
+    "app_session_started",
+    "conversation_detail_opened",
+    "transcript_expanded",
+    "feedback_item_opened",
+    "achievements_opened",
+    "profile_opened",
+}
+
+
+class ActivityEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str
+    event_type: str
+    occurred_at: Optional[str] = None
+    conversation_id: Optional[str] = None
+    feedback_item_id: Optional[str] = None
+
+
+@app.post("/api/activity-events", status_code=202)
+async def record_activity_event(
+    req: ActivityEventRequest,
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """
+    화면 진입·열람형 이벤트 기록 (§4.20). 완료 평가는 하지 않고 "사실 이벤트"만 저장.
+    - event_type 은 허용된 6종만 (422)
+    - occurred_at 은 서버 시각 ±5분만 허용 (422). task 날짜는 서버 수신 시각 기준
+    - resource(conversation_id) 있으면 소유권 검증 (타인 것 404)
+    - (user_id, event_id) 유일 → 재전송은 중복 저장 없이 동일 응답 (멱등)
+    """
+    if req.event_type not in _ALLOWED_EVENT_TYPES:
+        raise AppError(422, "validation_error", f"event_type must be one of {sorted(_ALLOWED_EVENT_TYPES)}")
+    if not (req.event_id or "").strip():
+        raise AppError(422, "validation_error", "event_id is required")
+
+    if req.occurred_at:
+        try:
+            occ = datetime.fromisoformat(req.occurred_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise AppError(422, "validation_error", "occurred_at must be ISO 8601")
+        if occ.tzinfo is None:
+            occ = occ.replace(tzinfo=timezone.utc)
+        drift = abs((datetime.now(timezone.utc) - occ).total_seconds())
+        if drift > 300:
+            raise AppError(422, "validation_error", "occurred_at is too far from server time (>5min)")
+
+    sb = get_supabase()
+
+    # resource 소유권 (있을 때만) — 타인 conversation 은 404
+    if req.conversation_id:
+        _owned_session(sb, req.conversation_id, user_id)
+
+    # insert-or-ignore: (user_id, event_id) 중복이면 조용히 무시 → 멱등
+    try:
+        sb.table("activity_events").upsert(
+            {
+                "user_id": user_id,
+                "event_id": req.event_id,
+                "event_type": req.event_type,
+                "occurred_at": req.occurred_at,
+                "conversation_id": req.conversation_id,
+                "feedback_item_id": req.feedback_item_id,
+            },
+            on_conflict="user_id,event_id",
+            ignore_duplicates=True,
+        ).execute()
+    except Exception as e:
+        logging.error(f"activity event insert failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to record event")
+
+    return {"recorded": True}
+
+
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201)
 async def create_turn(
     conversation_id: str,
