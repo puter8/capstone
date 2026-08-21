@@ -10,7 +10,7 @@ import sys
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 
 import httpx
 from dotenv import load_dotenv
@@ -64,6 +64,10 @@ app.add_middleware(
 # production에서만 debug route를 숨기려면 PALLY_DEBUG_ENDPOINTS=1 을 설정한 환경에서만 등록.
 # Railway 운영 환경에는 이 변수를 두지 않아 /api/debug-keys 가 노출되지 않는다.
 _DEBUG_ENDPOINTS_ENABLED = os.getenv("PALLY_DEBUG_ENDPOINTS") == "1"
+
+# 무료 일일 turn 한도. 하드코딩하지 않고 config 로 빼서 정책 변경 시 재배포 없이 조정.
+FREE_DAILY_TURNS = int(os.getenv("FREE_DAILY_TURNS", "20"))
+_KST = timezone(timedelta(hours=9))  # 한국은 DST 없음 → 고정 UTC+9
 
 
 # ── Errors — 계약 포맷 { "error": { code, message, request_id, details? } } ────
@@ -1201,6 +1205,73 @@ async def _gen_feedback(utterance: str, reply: str, level: str) -> list:
     return out
 
 
+# ── Quota — 무료 일일 사용량 (KST bucket + 원자적 차감) ───────────────────────
+
+
+def _kst_date() -> str:
+    """오늘의 KST 날짜 (YYYY-MM-DD). 사용량 bucket 키."""
+    return datetime.now(_KST).date().isoformat()
+
+
+def _kst_reset_at() -> str:
+    """다음 KST 자정(=오늘 사용량 리셋 시각)을 UTC ISO 로."""
+    tomorrow = datetime.now(_KST).date() + timedelta(days=1)
+    midnight_kst = datetime.combine(tomorrow, dtime.min, tzinfo=_KST)
+    return midnight_kst.astimezone(timezone.utc).isoformat()
+
+
+def _reserve_turn(sb, user_id: str) -> int:
+    """
+    turn 1개를 원자적으로 예약(차감). 반환: 예약 후 used_turns(>=1), 소진이면 -1.
+    DB 함수(reserve_turn)가 행 잠금으로 동시성 race 를 막는다.
+    """
+    try:
+        res = sb.rpc("reserve_turn", {
+            "p_user_id": user_id,
+            "p_date": _kst_date(),
+            "p_limit": FREE_DAILY_TURNS,
+        }).execute()
+    except Exception as e:
+        logging.error(f"reserve_turn failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to reserve quota")
+    used = res.data
+    if isinstance(used, list):  # 방어적: 배열로 오면 첫 값
+        used = used[0] if used else None
+    if used is None:
+        raise AppError(503, "persistence_failed", "Quota reservation returned no result")
+    return int(used)
+
+
+def _release_turn(sb, user_id: str) -> None:
+    """예약한 turn 을 롤백(환불). turn 이 실패했을 때만 호출. 실패해도 turn 흐름은 안 막음."""
+    try:
+        sb.rpc("release_turn", {"p_user_id": user_id, "p_date": _kst_date()}).execute()
+    except Exception as e:
+        logging.warning(f"release_turn failed (non-fatal): {e}")
+
+
+@app.get("/api/usage")
+async def get_usage(user_id: str = Depends(get_current_user_id)):
+    """당일 무료 사용량 조회 (§4.11). 현재는 전원 free plan."""
+    sb = get_supabase()
+    date_kst = _kst_date()
+    try:
+        res = sb.table("usage_daily").select("used_turns").eq("user_id", user_id).eq("date_kst", date_kst).execute()
+    except Exception as e:
+        logging.error(f"get_usage failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read usage")
+    used = res.data[0]["used_turns"] if res.data else 0
+    return {
+        "plan": "free",
+        "date": date_kst,
+        "timezone": "Asia/Seoul",
+        "used_turns": used,
+        "remaining_turns": max(FREE_DAILY_TURNS - used, 0),
+        "daily_limit": FREE_DAILY_TURNS,
+        "reset_at": _kst_reset_at(),
+    }
+
+
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201)
 async def create_turn(
     conversation_id: str,
@@ -1262,15 +1333,24 @@ async def create_turn(
     if not audio_bytes:
         raise AppError(400, "invalid_audio", "Empty audio file")
 
-    # 4. STT (실패는 저장하지 않고 명시적 에러) — latency 측정
+    # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
+    #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
+    quota_used = _reserve_turn(sb, user_id)
+    if quota_used < 0:
+        raise AppError(429, "quota_exceeded", "오늘 사용할 수 있는 대화를 모두 사용했어요.",
+                       {"reset_at": _kst_reset_at(), "daily_limit": FREE_DAILY_TURNS})
+
+    # 4. STT (실패는 저장하지 않고 명시적 에러 + quota 롤백) — latency 측정
     stt_t0 = time.perf_counter()
     try:
         transcript, _conf = await _stt_from_bytes(audio_bytes, audio.content_type or "")
     except Exception as e:
         logging.warning(f"turn STT failed: {e}")
+        _release_turn(sb, user_id)
         raise AppError(502, "stt_failed", "Speech recognition failed")
     stt_ms = round((time.perf_counter() - stt_t0) * 1000)
     if not transcript:
+        _release_turn(sb, user_id)
         raise AppError(422, "speech_not_recognized", "No recognizable speech in audio")
 
     # 5. 이전 이력 + 누적 axes 로드
@@ -1278,6 +1358,7 @@ async def create_turn(
         prior = sb.table("messages").select("role, transcript, axes, created_at").eq("session_id", conversation_id).order("created_at").execute()
     except Exception as e:
         logging.error(f"turn history read failed: {e}")
+        _release_turn(sb, user_id)
         raise AppError(503, "persistence_failed", "Failed to load history")
     prior_rows = prior.data or []
     history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
@@ -1298,6 +1379,7 @@ async def create_turn(
         reply = await _call_gemini_chat(transcript, history, session["character_name"], session["level"])
     except Exception as e:
         logging.warning(f"turn Gemini failed: {e}")
+        _release_turn(sb, user_id)
         raise AppError(502, "ai_engine_failed", "Reply generation failed")
     gemini_ms = round((time.perf_counter() - gemini_t0) * 1000)
 
@@ -1365,6 +1447,7 @@ async def create_turn(
         ]).execute()
     except Exception as e:
         logging.error(f"turn save failed: {e}")
+        _release_turn(sb, user_id)
         raise AppError(503, "persistence_failed", "Failed to save turn")
     save_ms = round((time.perf_counter() - save_t0) * 1000)
 
@@ -1418,6 +1501,13 @@ async def create_turn(
         "character": character,
         "feedback": feedback_items,
         "warnings": warnings,
+        "quota": {
+            "used_turns": quota_used,
+            "remaining_turns": max(FREE_DAILY_TURNS - quota_used, 0),
+            "daily_limit": FREE_DAILY_TURNS,
+            "exhausted": quota_used >= FREE_DAILY_TURNS,
+            "resets_at": _kst_reset_at(),
+        },
     }
 
 
