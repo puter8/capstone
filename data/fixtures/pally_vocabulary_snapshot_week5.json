@@ -1,0 +1,107 @@
+{
+  "note": "Fixture-based snapshot. Not real Reddit data -- backend Reddit OAuth/collection and human approval are not built yet (see docs/plan Week 3/4 handoff).",
+  "source_count": 6,
+  "candidates": [
+    {
+      "term": "lowkey",
+      "normalizedTerm": "lowkey",
+      "subreddit": "EnglishLearning",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "term": "it's giving",
+      "normalizedTerm": "it's giving",
+      "subreddit": "EnglishLearning",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "term": "main character energy",
+      "normalizedTerm": "main character energy",
+      "subreddit": "EnglishLearning",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "term": "no cap",
+      "normalizedTerm": "no cap",
+      "subreddit": "languagelearning",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "term": "bet",
+      "normalizedTerm": "bet",
+      "subreddit": "languagelearning",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "term": "delulu",
+      "normalizedTerm": "delulu",
+      "subreddit": "OutOfTheLoop",
+      "safety": "review",
+      "confidence": 0.72
+    }
+  ],
+  "approved_terms": [
+    {
+      "id": "term-lowkey",
+      "term": "lowkey",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "id": "term-it's-giving",
+      "term": "it's giving",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "id": "term-main-character-energy",
+      "term": "main character energy",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "id": "term-no-cap",
+      "term": "no cap",
+      "safety": "safe",
+      "confidence": 0.86
+    },
+    {
+      "id": "term-bet",
+      "term": "bet",
+      "safety": "safe",
+      "confidence": 0.86
+    }
+  ],
+  "prompt_vocabulary": [
+    {
+      "term": "lowkey",
+      "meaningKo": "은근히, 살짝",
+      "usageContext": "Casual spoken emphasis for a mild opinion or hidden feeling."
+    },
+    {
+      "term": "it's giving",
+      "meaningKo": "어떤 느낌이 난다",
+      "usageContext": "Playful way to describe a vibe or impression."
+    },
+    {
+      "term": "main character energy",
+      "meaningKo": "주인공 같은 분위기",
+      "usageContext": "Playful praise for confident or dramatic behavior."
+    },
+    {
+      "term": "no cap",
+      "meaningKo": "진짜로, 거짓말 없이",
+      "usageContext": "Casual way to stress that the speaker is being honest."
+    },
+    {
+      "term": "bet",
+      "meaningKo": "좋아, 알겠어, 그렇게 하자",
+      "usageContext": "Very casual agreement, similar to 'okay' or 'sounds good'."
+    }
+  ]
+}
