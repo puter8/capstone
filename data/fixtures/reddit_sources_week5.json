@@ -1,0 +1,62 @@
+[
+  {
+    "source_id": "reddit-fixture-w5-001",
+    "subreddit": "EnglishLearning",
+    "title": "Words my friends use in casual chat",
+    "body": "My friend said the movie was lowkey amazing and honestly it's giving main character energy.",
+    "permalink": "https://www.reddit.com/r/EnglishLearning/comments/w5example001",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "score": 42,
+    "kind": "post"
+  },
+  {
+    "source_id": "reddit-fixture-w5-002",
+    "subreddit": "languagelearning",
+    "title": "What does no cap mean?",
+    "body": "People keep saying no cap when they mean they are being honest, and bet as a way to agree.",
+    "permalink": "https://www.reddit.com/r/languagelearning/comments/w5example002",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "score": 18,
+    "kind": "comment"
+  },
+  {
+    "source_id": "reddit-fixture-w5-003",
+    "subreddit": "OutOfTheLoop",
+    "title": "Why is everyone saying delulu?",
+    "body": "It's delulu to think that plan will work, but people say it as a joke, not seriously.",
+    "permalink": "https://www.reddit.com/r/OutOfTheLoop/comments/w5example003",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "score": 7,
+    "kind": "post"
+  },
+  {
+    "source_id": "reddit-fixture-w5-004",
+    "subreddit": "teenagers",
+    "title": "excluded subreddit check",
+    "body": "This mentions lowkey and bet too, but the subreddit itself is excluded regardless of content.",
+    "permalink": "https://www.reddit.com/r/teenagers/comments/w5example004",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "score": 3,
+    "kind": "post"
+  },
+  {
+    "source_id": "reddit-fixture-w5-005",
+    "subreddit": "EnglishLearning",
+    "title": "minor/PII signal check",
+    "body": "I'm 15 and my teacher says lowkey is not appropriate for my school essay.",
+    "permalink": "https://www.reddit.com/r/EnglishLearning/comments/w5example005",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "score": 5,
+    "kind": "comment"
+  },
+  {
+    "source_id": "reddit-fixture-w5-006",
+    "subreddit": "EnglishLearning",
+    "title": "blocked-term filter check (synthetic, for safety-filter verification only)",
+    "body": "Someone replied kys to a joke and it clearly was not okay, is this something Pally should ever repeat?",
+    "permalink": "https://www.reddit.com/r/EnglishLearning/comments/w5example006",
+    "observed_at": "2026-08-16T00:00:00Z",
+    "score": 1,
+    "kind": "comment"
+  }
+]
