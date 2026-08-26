@@ -959,3 +959,80 @@ AI(다음 작업자에게):
 
 - `ai/analyzer.py`, `data/dataset.py`는 이번에 건드리지 않았다 — 두 파일은 이미 master에서 진화된 상태이므로, Week 2 커밋(`569b29a`)의 해당 파일 diff를 그대로 가져오면 안 된다.
 - `tests/test_ai_week1_contracts.py`가 이번 세션 시작 시점에 실패 상태였던 이유(누락된 `ai.ml_baseline`)는 해결됐고, 재실행으로 2/2 통과를 재확인했다.
+
+## 16. Week 5 실행 기록: 최종 Analyzer 결정, Vocabulary 스냅샷, Safety 재점검
+
+**실행일:** 2026-08-16 (계획서 상 Week 5 구간은 2026-08-24~08-31이지만 조기 착수, Week 4와 동일 사유)
+
+### 16.1 착수 전 상태 확인
+
+`gsd/phase-ai-ml-reddit-week4` 브랜치가 PR #40으로 이미 merge되었고, 그 위로 BE가 axis adapter 전환(`get_axis_analyzer()`)과 `generate_feedback()` 연동(`_gen_feedback()`, `(items, failed)` 계약 그대로 소비, `failed`면 raise → partial 처리)을 완료한 것을 로컬 sync 후 확인했다. Phase 5(quota/activity-events/achievements)도 이미 merge되어 있었다. 이번 Week 5 작업은 이 최신 상태(`origin/main` c124058) 위에서 시작했다.
+
+### 16.2 완료한 작업
+
+**1) rule vs ML vs hybrid 3-way 비교 (`ai/evaluate_axis_analyzers.py` 확장)**
+
+Hybrid leave-one-out 평가를 추가해 세 방식을 같은 dataset(30개, 회화 중심)에서 비교했다.
+
+```text
+rule_avg_mae  : 16.18
+ml_avg_mae    : 13.81 (delta vs rule: -2.37)
+hybrid_avg_mae: 13.10 (delta vs rule: -3.08)
+best_by_mae   : hybrid (13.10)
+```
+
+다만 Spearman 상관관계는 반대 방향을 가리킨다 — 특히 Curiosity 축에서 rule 0.79 → hybrid 0.44 → ML 0.04로, ML/hybrid는 평균 오차는 줄이지만 입력 변화에 따라 값을 제대로 구분(순위 상관)하는 능력이 크게 떨어진다. Formality(0.87→0.72→0.26), Energy(0.61→0.48→0.35)도 같은 방향. 데이터셋이 30개뿐이라 leave-one-out 자체의 분산이 크다는 점도 함께 고려해야 한다.
+
+**결정: 기본 analyzer는 `rule`로 유지, `ml`/`hybrid`는 계속 실험용 env flag(`PALLY_AXIS_ANALYZER=ml|hybrid`)로만 제공.** 이유: Pally MVP의 핵심 가치는 "입력 스타일 변화가 캐릭터 변화로 눈에 띄게 이어지는 것"이라 평균 오차보다 순위 판별력(Spearman)이 더 중요하고, 지금 데이터로는 rule-based가 그 기준에서 명확히 앞선다. 코드 상 기본값이 이미 `rule`이라 변경 불필요 — 근거만 여기 기록.
+
+**2) Reddit vocabulary 스냅샷 (fixture 기반)**
+
+BE의 실제 Reddit OAuth 수집·승인 파이프라인은 아직 없음을 확인했다(Supabase migration에 MemeTerm 테이블 없음, backend에 관련 endpoint 없음 — Week 3/4 handoff 노트의 "backend/PM pending" 상태 그대로). 추가로, Week 3 로그가 완료로 적었던 `data/fixtures/reddit_sources_week3.json`, `docs/reddit-vocabulary-policy.md`, `tests/test_ai_week3_reddit_vocabulary.py` 3개는 **git 히스토리 어디에도 존재하지 않음**을 확인했다 — Week 2와 달리 다른 브랜치에도 없어서 복원이 아니라 재작성이 필요했다(`c5810d2` "clean branch 복원" 시점에 유실된 것으로 추정).
+
+`ai/build_vocabulary_snapshot.py`를 새로 작성: `data/fixtures/reddit_sources_week5.json`(직접 작성한 fixture, 실제 Reddit 원문 아님, 6개 source — 정상 2개 subreddit, 제외 subreddit 1개, PII 신호 1개, blocked-term 검증용 1개)을 입력으로 extract → safety filter → (승인 워크플로 부재로) 승인 시뮬레이션 → `build_prompt_vocabulary_from_terms()`까지 전체 파이프라인을 실행하고 `data/fixtures/pally_vocabulary_snapshot_week5.json`으로 저장한다.
+
+결과: 6개 source 중 정상 subreddit 3개에서 후보 6개 추출(5 safe + 1 review), 제외 subreddit/PII 소스는 후보 0개(필터 정상 동작 확인), review 후보(`delulu`)는 승인 목록에서 정상 제외, 최종 prompt vocabulary 5개. `tests/test_ai_week5_vocabulary_snapshot.py`로 재현성(같은 입력 → 같은 출력) 검증.
+
+참고: fixture의 blocked-term 검증 케이스(`kys` 포함 문장)는 의도한 대로 동작하지 않았다 — `TERM_CATALOG`에 "kys"/"kill yourself" 자체가 검색 대상 term으로 없어서, `BLOCKED_TERMS`가 실제로 어떤 경로로도 실행되지 않는 죽은 코드임을 발견했다(카탈로그에 위험 표현이 애초에 없으니 그걸 걸러낼 일도 없음). 지금 당장 위험하지는 않지만, 카탈로그가 커지면 이 안전망이 실제로 작동하는지 별도로 검증할 필요가 있다.
+
+**3) TERM_CATALOG safety 라벨 재점검**
+
+16개 항목을 하나씩 다시 봤다. 대부분 합리적이나 2개는 재검토 여지가 있다:
+
+- `mid`(평범한/별로): 대상을 깎아내리는 평가어라 사람에게 쓰이면 Pally가 무심코 무례하게 들릴 수 있음 (가능한 false negative)
+- `fr`/`fr fr`(진짜로): 내용 자체엔 위험 요소가 없는 단순 강조 표현인데, 기존 코드 주석("Better for comprehension than Pally output")을 보면 안전성이 아니라 "Pally가 직접 쓰기엔 어색함"이라는 다른 이유로 review가 걸려 있었음 — safety 필드 하나에 "위험함"과 "부적절한 출력 스타일"이라는 다른 두 개념이 섞여 있었던 것 (false positive, 스키마 설계 이슈)
+
+**결정(2026-08-16, 사용자 확인 완료):** `mid`를 `safe → review`로 낮추고, `fr`/`fr fr`을 `review → safe`로 올림. `ai/reddit_vocabulary.py`의 `TERM_CATALOG`에 반영 완료. `fr`/`fr fr`의 "Pally가 직접 쓰기엔 어색함" 우려는 안전성과 별개 축이라 이번엔 safety 필드에서 제거만 하고, 필요해지면 별도 필드(예: "comprehension_only")로 분리하는 걸 향후 검토 대상으로 남겨둔다.
+
+**4) STT/TTS 품질 정리**
+
+Week 4에서 실측한 왕복 테스트(5문장, `GOOGLE_CLOUD_API_KEY` 실호출) 결과를 재확인: TTS median 2157ms, STT median 2091ms, 왕복 median 4446ms, 5개 문장 모두 STT 트랜스크립트가 원문과 의미적으로 정확히 일치(구두점만 `enableAutomaticPunctuation=False` 설정으로 생략됨 — 의도된 설정). 별도 신규 API 호출은 하지 않음(Week 4 실측 재사용, 키 재노출 방지).
+
+### 16.3 검증 결과
+
+```bash
+python -m pytest tests/ -q
+# 24 passed
+
+python ai/evaluate_axis_analyzers.py
+# rule/ml/hybrid 3-way 비교, 위 16.2 수치와 일치
+
+python ai/build_vocabulary_snapshot.py
+# 6 sources -> 6 candidates(5 safe+1 review) -> 5 approved -> 5 prompt vocabulary
+```
+
+### 16.4 팀 전달 포인트
+
+BE/PM:
+
+- Reddit 실제 수집·승인 워크플로(OAuth, MemeTerm 저장, 승인 UI)가 여전히 없다. 이번에 fixture로 전체 파이프라인은 검증됐으니, 실제 승인 데이터가 생기면 `ai.reddit_vocabulary.build_prompt_vocabulary_from_terms(approved_terms)`를 그대로 호출하면 된다.
+- 유실된 Week 3 파일 3개(fixture/정책 문서/테스트)는 이번에 새로 만든 `reddit_sources_week5.json`/`build_vocabulary_snapshot.py`/`test_ai_week5_vocabulary_snapshot.py`로 실질적으로 대체됐다.
+
+PM:
+
+- `TERM_CATALOG`의 `mid`, `fr`/`fr fr` safety 라벨은 재검토 후 반영 완료(§16.2-3) — 별도 조치 불필요.
+
+AI(다음 작업자에게):
+
+- default analyzer는 `rule` 확정(§16.2-1 근거 참고). `ml`/`hybrid`를 바꾸려면 데이터셋을 30개보다 충분히 늘린 뒤 재평가할 것.
+- `BLOCKED_TERMS`가 현재 카탈로그 기준으로는 죽은 코드라는 점 인지하고, 카탈로그에 위험도가 있는 표현을 추가할 때 이 경로가 실제로 작동하는지 테스트로 확인할 것.
