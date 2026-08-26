@@ -94,6 +94,29 @@ def _evaluate_ml_leave_one_out() -> list[dict]:
     return rows
 
 
+def _evaluate_hybrid_leave_one_out() -> list[dict]:
+    """Same rule prediction as _evaluate_rule_based, blended per-axis with the
+    leave-one-out ML prediction — matches HybridAxisAnalyzer's averaging."""
+    rule_analyzer = RuleBasedAxisAnalyzer()
+    examples = load_default_axis_dataset()
+    rows = []
+    for index, example in enumerate(examples):
+        train_examples = examples[:index] + examples[index + 1 :]
+        ml_model = TfidfKnnAxisRegressor().fit(train_examples)
+        rule_pred = rule_analyzer.analyze(example.utterance).to_axes_dict()
+        ml_pred = ml_model.predict(example.utterance)
+        blended = {axis: round((rule_pred[axis] + ml_pred[axis]) / 2) for axis in AXIS_KEYS}
+        rows.append(
+            {
+                "style": example.style,
+                "utterance": example.utterance,
+                "expected": example.label,
+                "predicted": blended,
+            }
+        )
+    return rows
+
+
 def _total_error(row: dict) -> int:
     return sum(abs(row["predicted"][axis] - row["expected"][axis]) for axis in AXIS_KEYS)
 
@@ -118,16 +141,20 @@ def _print_report(name: str, rows: list[dict]) -> None:
 def main() -> None:
     rule_rows = _evaluate_rule_based()
     ml_rows = _evaluate_ml_leave_one_out()
+    hybrid_rows = _evaluate_hybrid_leave_one_out()
     _print_report("Rule-based baseline", rule_rows)
     _print_report("ML baseline: TF-IDF weighted k-NN, leave-one-out", ml_rows)
+    _print_report("Hybrid: rule + ML (leave-one-out) averaged per axis", hybrid_rows)
 
     rule_mae = sum(_mae(rule_rows).values()) / len(AXIS_KEYS)
     ml_mae = sum(_mae(ml_rows).values()) / len(AXIS_KEYS)
-    delta = ml_mae - rule_mae
+    hybrid_mae = sum(_mae(hybrid_rows).values()) / len(AXIS_KEYS)
     print("\nSummary")
-    print(f"  rule_avg_mae: {rule_mae:.2f}")
-    print(f"  ml_avg_mae  : {ml_mae:.2f}")
-    print(f"  delta       : {delta:+.2f} (negative means ML is better)")
+    print(f"  rule_avg_mae  : {rule_mae:.2f}")
+    print(f"  ml_avg_mae    : {ml_mae:.2f} (delta vs rule: {ml_mae - rule_mae:+.2f})")
+    print(f"  hybrid_avg_mae: {hybrid_mae:.2f} (delta vs rule: {hybrid_mae - rule_mae:+.2f})")
+    best = min(("rule", rule_mae), ("ml", ml_mae), ("hybrid", hybrid_mae), key=lambda kv: kv[1])
+    print(f"  best_by_mae   : {best[0]} ({best[1]:.2f})")
 
 
 if __name__ == "__main__":
