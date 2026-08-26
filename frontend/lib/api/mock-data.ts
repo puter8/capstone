@@ -53,7 +53,7 @@ export const MOCK_TURNS: ConversationTurn[] = [
     user_transcript: "I had no lunch. I'm on a diet.",
     pally_text: "Oh no, you skipped lunch because you're on a diet? What would you like to eat later?",
     pally_audio_url: null,
-    axes: MOCK_CONVERSATIONS[0].current_axes,
+    axes: MOCK_CONVERSATIONS[0].current_axes!,
     character: {
       tone_casual: 58,
       energy_level: 58,
@@ -77,7 +77,7 @@ export const MOCK_TURNS: ConversationTurn[] = [
     user_transcript: "Maybe I will eat salad tonight.",
     pally_text: "A salad sounds refreshing. What do you like to put in it?",
     pally_audio_url: null,
-    axes: MOCK_CONVERSATIONS[0].current_axes,
+    axes: MOCK_CONVERSATIONS[0].current_axes!,
     character: {
       tone_casual: 58,
       energy_level: 58,

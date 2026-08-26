@@ -8,6 +8,7 @@ import { LevelOption } from "@/components/onboarding/LevelOption";
 import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
 import { PallyCharacter } from "@/components/pally/PallyCharacter";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { TextInput } from "@/components/ui/TextInput";
 import { pallyApi } from "@/lib/api";
@@ -53,11 +54,12 @@ export default function OnboardingPage() {
 
   return (
     <MobileShell>
+      {isSaving ? <PageLoader message="설정을 저장하고 있어요" /> : null}
       {step === 1 ? (
         <>
           <PageHeader
             className="absolute left-0 top-[60px]"
-            description="Pally와 대화할 때 사용할 어휘와 문장 길이를 결정할 수 있도록 정보를 알려주세요."
+            description={"Pally와 대화 하는 용어와 문장 길이를 결정할 수 있도록\n정보를 알려주세요"}
             title="영어 레벨은?"
             variant="intro"
           />
@@ -82,16 +84,16 @@ export default function OnboardingPage() {
       {step === 2 ? (
         <>
           <button aria-label="이전 단계" className="absolute left-5 top-[77px] z-10 grid size-9 place-items-center" onClick={goBack} type="button">
-            <span aria-hidden="true" className="text-xl">←</span>
+            <img alt="" className="absolute left-px top-[10px] size-4" src="/icons/back.svg" />
           </button>
           <PageHeader
             className="absolute left-0 top-[60px]"
-            description="Pally와 대화할 때 사용할 어휘와 문장 길이를 결정할 수 있도록 정보를 알려주세요."
+            description={"Pally와 대화 하는 용어와 문장 길이를 결정할 수 있도록\n정보를 알려주세요"}
             showBackLink={false}
             title="이름 정하기"
             variant="back"
           />
-          <div className="absolute left-1/2 top-[220px] h-[149px] w-[155px] -translate-x-1/2 rounded-xl bg-[#dedede]" />
+          <div className="absolute left-[117px] top-[220px] h-[149px] w-[155px] rounded-xl bg-[#dedede]" />
           <TextInput
             aria-label="이름"
             className="absolute left-5 top-[460px] w-[calc(100%-40px)]"
@@ -105,7 +107,7 @@ export default function OnboardingPage() {
       {step === 3 ? (
         <>
           <button aria-label="이전 단계" className="absolute left-5 top-[77px] z-10 grid size-9 place-items-center" onClick={goBack} type="button">
-            <span aria-hidden="true" className="text-xl">←</span>
+            <img alt="" className="absolute left-px top-[10px] size-4" src="/icons/back.svg" />
           </button>
           <PageHeader
             className="absolute left-0 top-[60px]"
@@ -118,8 +120,8 @@ export default function OnboardingPage() {
         </>
       ) : null}
 
-      <div className="absolute bottom-[167px] left-1/2 -translate-x-1/2">
-        <OnboardingProgress step={step} />
+      <div className={`absolute left-[59px] ${step === 1 ? "top-[693px]" : "top-[720px]"}`}>
+        <OnboardingProgress className="w-[272px] px-[112px]" step={step} />
       </div>
       {error ? <p className="absolute bottom-[102px] left-5 right-5 text-center text-body-2 text-red-600" role="alert">{error}</p> : null}
       <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={isSaving || (step === 2 && !name.trim())} onClick={goNext}>

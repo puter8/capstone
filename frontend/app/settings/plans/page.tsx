@@ -12,6 +12,7 @@ type Plan = "monthly" | "yearly";
 
 export default function PlansPage() {
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   return (
     <MobileShell>
@@ -38,7 +39,10 @@ export default function PlansPage() {
           caption="1달마다 결제"
           className="flex-1"
           name="Monthly Plan"
-          onSelect={() => setSelectedPlan("monthly")}
+          onSelect={() => {
+            setSelectedPlan("monthly");
+            setNotice(null);
+          }}
           plan="monthly"
           price="$ 9.99"
           selected={selectedPlan === "monthly"}
@@ -47,14 +51,22 @@ export default function PlansPage() {
           caption="7일간 무료 체험 / 1년마다 결제"
           className="flex-1"
           name="Yearly Plan"
-          onSelect={() => setSelectedPlan("yearly")}
+          onSelect={() => {
+            setSelectedPlan("yearly");
+            setNotice(null);
+          }}
           plan="yearly"
           price="$ 99.99"
           selected={selectedPlan === "yearly"}
         />
       </div>
 
-      <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={selectedPlan === null}>
+      {notice ? <p className="absolute bottom-[102px] left-5 right-5 text-center text-body-2 text-text-tertiary" role="status">{notice}</p> : null}
+      <PrimaryButton
+        className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]"
+        disabled={selectedPlan === null}
+        onClick={() => setNotice("결제 기능은 백엔드 연동 후 사용할 수 있어요.")}
+      >
         확인
       </PrimaryButton>
     </MobileShell>
