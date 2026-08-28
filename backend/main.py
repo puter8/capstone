@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Dict, Optional
 
@@ -2144,3 +2144,226 @@ async def get_achievements(user_id: str = Depends(get_current_user_id)):
         "streak_count": streak_count,
         "daily_tasks": daily_tasks,
     }
+
+
+# ── Billing / Subscription — 5주차 (provider-neutral, 카카오페이 예정) ─────────
+#
+# 실제 결제사(카카오페이)는 가맹점 키 + sandbox 실호출 검증 후 어댑터를 채운다.
+# 지금은 mock 어댑터로 요금제 화면·구독 흐름을 붙일 수 있게 하고, provider 는
+# BILLING_PROVIDER env(mock|kakaopay, 기본 mock)로 고른다. Pro 권한은 클라이언트
+# 영수증이 아니라 subscriptions.entitled(서버 값)만 신뢰한다.
+
+# 상품 catalog (config). 통화는 Figma 기준 USD placeholder — 카카오페이(KRW) 확정 시 조정.
+_BILLING_PRODUCTS = [
+    {"id": "pro_monthly", "name": "Monthly", "interval": "month", "amount_minor": 999, "currency": "USD", "display_price": "$9.99", "trial_days": 0},
+    {"id": "pro_yearly", "name": "Yearly", "interval": "year", "amount_minor": 9999, "currency": "USD", "display_price": "$99.99", "trial_days": 7},
+]
+_PRODUCT_IDS = {p["id"] for p in _BILLING_PRODUCTS}
+
+
+class WebhookSignatureError(Exception):
+    pass
+
+
+class BillingProvider:
+    """provider-neutral 인터페이스. 실제 provider 는 이 메서드들을 채운다."""
+    name = "base"
+
+    def list_products(self) -> list:
+        return list(_BILLING_PRODUCTS)
+
+    def create_checkout(self, user_id: str, product_id: str, success_url: str, cancel_url: str) -> dict:
+        raise NotImplementedError
+
+    def refresh_subscription(self, user_id: str) -> Optional[dict]:
+        """provider 에서 최신 구독 상태를 조회. mock 은 None(변화 없음)."""
+        return None
+
+    def verify_and_parse_webhook(self, headers: dict, raw_body: bytes) -> tuple:
+        """(provider_event_id, event dict) 반환. 서명 실패는 WebhookSignatureError."""
+        raise NotImplementedError
+
+
+class MockBillingProvider(BillingProvider):
+    """개발용. 실제 결제 없이 흐름만. webhook 은 서명 없이 body 를 신뢰(테스트 전용)."""
+    name = "mock"
+
+    def create_checkout(self, user_id: str, product_id: str, success_url: str, cancel_url: str) -> dict:
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+        return {
+            "product_id": product_id,
+            "checkout_url": f"https://mock-checkout.local/session/{uuid.uuid4().hex}",
+            "expires_at": expires,
+        }
+
+    def verify_and_parse_webhook(self, headers: dict, raw_body: bytes) -> tuple:
+        try:
+            event = json.loads(raw_body.decode() or "{}")
+        except Exception:
+            raise WebhookSignatureError("invalid payload")
+        event_id = event.get("event_id")
+        if not event_id:
+            raise WebhookSignatureError("missing event_id")
+        return event_id, event
+
+
+class KakaoPayBillingProvider(BillingProvider):
+    """카카오페이 어댑터 자리. 가맹점 키 확보 + sandbox 실호출 검증 전에는 미설정."""
+    name = "kakaopay"
+
+    def create_checkout(self, user_id: str, product_id: str, success_url: str, cancel_url: str) -> dict:
+        raise AppError(503, "billing_not_configured", "KakaoPay is not configured yet")
+
+    def refresh_subscription(self, user_id: str) -> Optional[dict]:
+        raise AppError(503, "billing_not_configured", "KakaoPay is not configured yet")
+
+    def verify_and_parse_webhook(self, headers: dict, raw_body: bytes) -> tuple:
+        raise AppError(503, "billing_not_configured", "KakaoPay is not configured yet")
+
+
+_BILLING_PROVIDERS = {"mock": MockBillingProvider(), "kakaopay": KakaoPayBillingProvider()}
+_BILLING_PROVIDER_NAME = os.getenv("BILLING_PROVIDER", "mock")
+
+
+def _billing_provider_by_name(name: str) -> BillingProvider:
+    p = _BILLING_PROVIDERS.get(name)
+    if p is None:
+        raise AppError(404, "not_found", "Unknown billing provider")
+    return p
+
+
+def _get_billing_provider() -> BillingProvider:
+    return _billing_provider_by_name(_BILLING_PROVIDER_NAME)
+
+
+def _subscription_to_response(row: Optional[dict]) -> dict:
+    if not row or not row.get("entitled"):
+        return {
+            "plan": (row or {}).get("plan", "free") if row else "free",
+            "status": (row or {}).get("status", "none") if row else "none",
+            "entitled": False,
+            "product_id": (row or {}).get("product_id") if row else None,
+            "current_period_end": (row or {}).get("current_period_end") if row else None,
+            "will_renew": bool((row or {}).get("will_renew")) if row else False,
+            "entitlements": [],
+            "updated_at": (row or {}).get("updated_at") if row else None,
+        }
+    return {
+        "plan": row.get("plan", "pro"),
+        "status": row.get("status", "active"),
+        "entitled": True,
+        "product_id": row.get("product_id"),
+        "current_period_end": row.get("current_period_end"),
+        "will_renew": bool(row.get("will_renew")),
+        "entitlements": ["unlimited_turns"],
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def _read_subscription(sb, user_id: str) -> Optional[dict]:
+    try:
+        r = sb.table("subscriptions").select("*").eq("user_id", user_id).execute()
+    except Exception as e:
+        logging.error(f"subscription read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read subscription")
+    return r.data[0] if r.data else None
+
+
+class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: str
+    success_url: str
+    cancel_url: str
+
+
+@app.get("/api/billing/products")
+async def billing_products(user_id: str = Depends(get_current_user_id)):
+    """플랫폼별 상품 목록. 가격은 서버에서 (프론트 하드코딩 금지)."""
+    return {"products": _get_billing_provider().list_products()}
+
+
+@app.post("/api/billing/checkout", status_code=201)
+async def billing_checkout(
+    req: CheckoutRequest,
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """결제 시작. checkout 생성만으로 Pro 활성화 안 됨 — webhook/refresh 로 검증 후 entitled."""
+    if req.product_id not in _PRODUCT_IDS:
+        raise AppError(422, "invalid_product", "Unknown product_id")
+    checkout = _get_billing_provider().create_checkout(user_id, req.product_id, req.success_url, req.cancel_url)
+    return {"checkout": checkout}
+
+
+@app.get("/api/subscription")
+async def get_subscription(user_id: str = Depends(get_current_user_id)):
+    """서버 기준 구독 권한. 화면·quota 는 이 값만 신뢰."""
+    sb = get_supabase()
+    return {"subscription": _subscription_to_response(_read_subscription(sb, user_id))}
+
+
+@app.post("/api/subscription/refresh")
+async def refresh_subscription(
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """결제 성공 callback 후 등 — provider 에서 최신 상태 동기화."""
+    sb = get_supabase()
+    updated = _get_billing_provider().refresh_subscription(user_id)
+    if updated:
+        try:
+            sb.table("subscriptions").upsert({**updated, "user_id": user_id, "updated_at": _now_iso()},
+                                             on_conflict="user_id").execute()
+        except Exception as e:
+            logging.error(f"subscription refresh upsert failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to sync subscription")
+    return {"subscription": _subscription_to_response(_read_subscription(sb, user_id))}
+
+
+@app.post("/api/webhooks/billing/{provider}", status_code=204)
+async def billing_webhook(provider: str, request: Request):
+    """provider 결제 이벤트 반영. 사용자 JWT 없음, provider 서명 검증. 같은 event 재전송은 204(무시)."""
+    prov = _billing_provider_by_name(provider)
+    raw = await request.body()
+    try:
+        event_id, event = prov.verify_and_parse_webhook(dict(request.headers), raw)
+    except WebhookSignatureError:
+        raise AppError(401, "webhook_signature_invalid", "Webhook signature verification failed")
+
+    sb = get_supabase()
+    # 멱등: 같은 (provider, event_id) 이미 처리했으면 재처리 안 함
+    try:
+        dup = sb.table("billing_events").select("provider_event_id").eq("provider", provider).eq("provider_event_id", event_id).execute()
+    except Exception as e:
+        logging.error(f"billing_events read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to process webhook")
+    if dup.data:
+        return Response(status_code=204)
+
+    try:
+        sb.table("billing_events").insert({"provider": provider, "provider_event_id": event_id, "payload": event}).execute()
+    except Exception as e:
+        logging.error(f"billing_events insert failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to record webhook")
+
+    # 구독 상태 반영 (mock: event 의 user_id/action/product_id 로)
+    target_user = event.get("user_id")
+    action = event.get("action")
+    if target_user and action in ("activate", "cancel"):
+        entitled = action == "activate"
+        try:
+            sb.table("subscriptions").upsert({
+                "user_id": target_user,
+                "plan": "pro" if entitled else "free",
+                "status": "active" if entitled else "canceled",
+                "entitled": entitled,
+                "product_id": event.get("product_id"),
+                "will_renew": entitled,
+                "provider": provider,
+                "updated_at": _now_iso(),
+            }, on_conflict="user_id").execute()
+        except Exception as e:
+            logging.error(f"subscription apply failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to apply subscription")
+
+    return Response(status_code=204)
