@@ -910,11 +910,8 @@ async def chat(req: ChatRequest):
 # ── Auth — Supabase JWT 검증 ──────────────────────────────────────────────────
 
 
-def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
-    """
-    Authorization: Bearer <JWT> 를 Supabase Auth로 검증하고 user_id(uuid) 반환.
-    실패 시 401 unauthorized. user_id는 토큰에서만 추출하고 body 값을 신뢰하지 않는다.
-    """
+def _verify_bearer_user(authorization: Optional[str]):
+    """Authorization: Bearer <JWT> 를 Supabase Auth로 검증하고 user 객체 반환. 실패 시 401."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise AppError(401, "unauthorized", "Missing or invalid Authorization header")
 
@@ -936,7 +933,42 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
     if user is None or not getattr(user, "id", None):
         raise AppError(401, "unauthorized", "Invalid or expired token")
 
-    return user.id
+    return user
+
+
+def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
+    """user_id(uuid)만 반환. user_id는 토큰에서만 추출하고 body 값을 신뢰하지 않는다."""
+    return _verify_bearer_user(authorization).id
+
+
+def get_current_user(authorization: Optional[str] = Header(None)):
+    """검증된 user 객체 반환 (id + user_metadata). 프로필 사진 등 메타데이터가 필요할 때."""
+    return _verify_bearer_user(authorization)
+
+
+# OAuth provider 별로 프사 URL 이 들어가는 메타데이터 키가 달라(구글=avatar_url/picture,
+# 카카오=케이스별로 다름) 후보 키를 순서대로 확인해 하나로 정규화한다.
+# 정확한 카카오 키는 실제 카카오 로그인 유저로 확인 필요(실측 전 후보만 나열).
+_AVATAR_KEYS = ("avatar_url", "picture", "profile_image_url", "profile_image")
+
+
+def _extract_avatar(user) -> Optional[str]:
+    meta = getattr(user, "user_metadata", None) or {}
+    if not isinstance(meta, dict):
+        return None
+    for k in _AVATAR_KEYS:
+        v = meta.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+    # 카카오 raw 중첩(kakao_account.profile.profile_image_url) 방어적 처리
+    ka = meta.get("kakao_account")
+    if isinstance(ka, dict):
+        prof = ka.get("profile")
+        if isinstance(prof, dict):
+            v = prof.get("profile_image_url") or prof.get("thumbnail_image_url")
+            if isinstance(v, str) and v.strip():
+                return v
+    return None
 
 
 def require_idempotency_key(idempotency_key: str = Header(..., alias="Idempotency-Key")) -> str:
@@ -986,14 +1018,16 @@ class ProfilePatchRequest(BaseModel):
     english_level: Optional[str] = None
 
 
-def _profile_to_response(row: dict) -> dict:
+def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
     # 계약: snake_case UserProfile. traits는 DB seed 5개(생성 로직은 후속).
+    # avatar_url 은 DB 가 아니라 OAuth 메타데이터(구글/카카오)에서 정규화해 넣는다.
     return {
         "id": row["id"],
         "display_name": row["display_name"],
         "english_level": row["english_level"],
         "onboarding_completed": row["onboarding_completed"],
         "traits": row.get("traits"),
+        "avatar_url": avatar_url,
         "created_at": row["created_at"],
         "updated_at": row.get("updated_at"),
     }
@@ -1002,10 +1036,11 @@ def _profile_to_response(row: dict) -> dict:
 @app.post("/api/onboarding")
 async def onboarding(
     req: OnboardingRequest,
-    user_id: str = Depends(get_current_user_id),
+    user=Depends(get_current_user),
     _idem: str = Depends(require_idempotency_key),
 ):
     """최초 프로필 생성. 이미 온보딩 완료한 사용자는 409 conflict (덮어쓰지 않음)."""
+    user_id = user.id
     display_name = _validate_display_name(req.display_name)
     english_level = _validate_english_level(req.english_level)
 
@@ -1036,12 +1071,13 @@ async def onboarding(
     if not res.data:
         raise AppError(503, "persistence_failed", "Failed to save profile")
 
-    return {"profile": _profile_to_response(res.data[0])}
+    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
 
 
 @app.get("/api/profile")
-async def get_profile(user_id: str = Depends(get_current_user_id)):
-    """본인 profile 조회. 온보딩 전(row 없음)이면 404 profile_not_found."""
+async def get_profile(user=Depends(get_current_user)):
+    """본인 profile 조회. 온보딩 전(row 없음)이면 404 profile_not_found. avatar_url 포함(OAuth)."""
+    user_id = user.id
     sb = get_supabase()
     try:
         res = sb.table("profiles").select("*").eq("id", user_id).execute()
@@ -1052,15 +1088,16 @@ async def get_profile(user_id: str = Depends(get_current_user_id)):
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_to_response(res.data[0])}
+    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
 
 
 @app.patch("/api/profile")
 async def update_profile(
     req: ProfilePatchRequest,
-    user_id: str = Depends(get_current_user_id),
+    user=Depends(get_current_user),
 ):
     """본인 profile 부분 수정. traits 등 unknown 필드는 422 (extra=forbid)."""
+    user_id = user.id
     update_fields: Dict[str, object] = {}
 
     if req.display_name is not None:
@@ -1083,7 +1120,7 @@ async def update_profile(
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_to_response(res.data[0])}
+    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
 
 
 # ── Conversations & Turns — 3주차 음성 대화 (sessions/messages 재사용) ────────
