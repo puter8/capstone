@@ -16,7 +16,7 @@ interface UsePallyReturn {
   /** PallyCanvas에 직접 넘길 axes */
   axes: Axes;
   /** /api/chat 응답 받으면 이 함수 호출 — 세션 종료 전까지 표시에는 반영 안 됨 */
-  updateFromChatResponse: (res: ChatApiResponse) => void;
+  updateFromChatResponse: (res: Pick<ChatApiResponse, 'axes'>) => void;
   /** 세션 종료 시 호출 → 누적된 axes를 화면에 반영 */
   revealAxes: () => void;
   /** 현재 누적된 axes 반환 — /api/chat current_axes로 전달용 */
@@ -34,7 +34,7 @@ export function usePally(): UsePallyReturn {
   // Accumulates per-turn axes without triggering re-renders
   const pendingAxes = useRef<Axes>(DEFAULT_AXES);
 
-  const updateFromChatResponse = useCallback((res: ChatApiResponse) => {
+  const updateFromChatResponse = useCallback((res: Pick<ChatApiResponse, 'axes'>) => {
     pendingAxes.current = res.axes;
   }, []);
 

@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { LevelOption } from "@/components/onboarding/LevelOption";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
-import { pallyApi } from "@/lib/api";
+import { pallyApi, PallyApiError } from "@/lib/api";
 import type { Level } from "@/lib/types/session";
 
 const LEVELS = [
@@ -31,6 +32,10 @@ export default function LevelSettingsPage() {
         if (active) setLevel(profile.english_level);
       })
       .catch((caught: unknown) => {
+        if (caught instanceof PallyApiError && caught.code === "unauthorized") {
+          router.replace("/");
+          return;
+        }
         if (active) setError(caught instanceof Error ? caught.message : "영어 레벨을 불러오지 못했어요.");
       })
       .finally(() => {
@@ -39,7 +44,7 @@ export default function LevelSettingsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [router]);
 
   const saveLevel = async () => {
     setIsSaving(true);
@@ -56,7 +61,8 @@ export default function LevelSettingsPage() {
 
   return (
     <MobileShell>
-      <PageHeader backHref="/my" className="absolute left-0 top-[60px]" description="Pally와 대화할 영어 난이도를 선택해 주세요." title="영어 레벨 변경" variant="back" />
+      {isLoading || isSaving ? <PageLoader message={isSaving ? "영어 레벨을 저장하고 있어요" : "영어 레벨을 불러오고 있어요"} /> : null}
+      <PageHeader backHref="/my" className="absolute left-0 top-[60px]" description="영어 레벨을 변경할 수 있어요." title="영어 레벨 변경" variant="back" />
       <div className="absolute left-5 right-5 top-[220px] flex flex-col gap-3">
         {LEVELS.map((item) => (
           <LevelOption code={item.code} description={item.description} key={item.code} name={item.name} onSelect={() => setLevel(item.code)} selected={level === item.code} />

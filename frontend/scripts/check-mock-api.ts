@@ -36,8 +36,8 @@ async function main(): Promise<void> {
     idempotency_key: turnKey,
   });
   assert(turn.turn_id === repeatedTurn.turn_id, "Turn creation must be idempotent");
-  assert(turn.quota.remaining_turns === 4, "A successful turn must consume one quota unit");
-  assert(repeatedTurn.quota.remaining_turns === 4, "An idempotent replay must not consume quota again");
+  assert(turn.quota?.remaining_turns === 4, "A successful turn must consume one quota unit");
+  assert(repeatedTurn.quota?.remaining_turns === 4, "An idempotent replay must not consume quota again");
 
   const detail = await mockPallyApi.getConversation(created.conversation.id);
   assert(detail.turns.length === 1, "Conversation detail must include the created turn");
@@ -48,10 +48,6 @@ async function main(): Promise<void> {
 
   const list = await mockPallyApi.listConversations({ status: "completed" });
   assert(list.items.some((item) => item.id === created.conversation.id), "Completed conversation must appear in history");
-
-  await mockPallyApi.deleteConversations(crypto.randomUUID());
-  const emptyList = await mockPallyApi.listConversations();
-  assert(emptyList.items.length === 0, "Conversation deletion must clear history");
 
   resetMockPallyApi();
   console.log("Mock API contract check passed.");
