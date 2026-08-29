@@ -59,6 +59,8 @@ TERM_CATALOG: dict[str, TermMeta] = {
     "mid": TermMeta(
         meaningKo="평범한, 별로 인상적이지 않은",
         usageContext="Casual negative judgment meaning mediocre or average.",
+        baseSafety="review",
+        confidence=0.7,
     ),
     "slay": TermMeta(
         meaningKo="멋지게 해내다",
@@ -86,15 +88,11 @@ TERM_CATALOG: dict[str, TermMeta] = {
     ),
     "fr": TermMeta(
         meaningKo="진짜로, 정말",
-        usageContext="Casual abbreviation of 'for real'. Better for comprehension than Pally output.",
-        baseSafety="review",
-        confidence=0.66,
+        usageContext="Casual abbreviation of 'for real', used as a plain intensifier.",
     ),
     "fr fr": TermMeta(
         meaningKo="진짜 진심으로",
         usageContext="Repeated 'for real' for emphasis in casual speech/text.",
-        baseSafety="review",
-        confidence=0.66,
     ),
     "rizz": TermMeta(
         meaningKo="플러팅 매력, 사람을 끄는 말솜씨",

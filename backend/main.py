@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Dict, Optional
 
@@ -35,6 +35,7 @@ if BACKEND_DIR not in sys.path:
 
 from ai.analyzer import analyze_utterance
 from ai.matrix_engine import apply_ema, compute_character, describe_character
+from ai.reply_shaping import shape_reply
 
 try:
     from lib.supabase import get_supabase
@@ -75,9 +76,13 @@ GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # STT / TTS (Cloud
 
 app = FastAPI(title="Pally Backend API", version="1.0.0")
 
+# CORS 허용 origin: 기본 "*"(개발). 프로덕션은 CORS_ALLOW_ORIGINS 에 프론트 도메인을
+# 콤마로 넣어 제한한다. 예: CORS_ALLOW_ORIGINS=https://capstone-eight-virid.vercel.app
+_cors_env = os.getenv("CORS_ALLOW_ORIGINS", "*").strip()
+_allow_origins = ["*"] if _cors_env == "*" else [o.strip() for o in _cors_env.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -251,32 +256,31 @@ def health():
     return {"status": "ok", "version": app.version}
 
 
-@app.get("/api/metrics")
-def metrics():
-    """
-    최근 turn 파이프라인 latency 요약 (STT/Gemini/TTS/save/total 의 p50·p95·평균).
-    운영 데이터 노출이라 health 와 달리 debug 게이트 뒤에 둔다 (PALLY_DEBUG_ENDPOINTS=1).
-    단일 프로세스 메모리 기준(최근 200 turn). 다중 인스턴스면 인스턴스별로만 집계됨.
-    """
-    if not _DEBUG_ENDPOINTS_ENABLED:
-        raise AppError(404, "not_found", "Not found")
-
-    turns = list(_TURN_METRICS)
-    stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms", "total_ms")
-    summary = {}
-    for stage in stages:
-        vals = [t[stage] for t in turns if t.get(stage) is not None]
-        summary[stage] = {
-            "p50": _pct(vals, 50),
-            "p95": _pct(vals, 95),
-            "avg": round(sum(vals) / len(vals)) if vals else None,
-            "max": max(vals) if vals else None,
+if _DEBUG_ENDPOINTS_ENABLED:
+    # debug-keys 와 동일하게 조건부 등록 → 프로덕션에선 라우트 자체가 없어 openapi 에도 안 뜬다.
+    @app.get("/api/metrics")
+    def metrics():
+        """
+        최근 turn 파이프라인 latency 요약 (STT/Gemini/TTS/save/total 의 p50·p95·평균).
+        운영 데이터라 debug 게이트(PALLY_DEBUG_ENDPOINTS=1) 뒤에 둔다.
+        단일 프로세스 메모리 기준(최근 200 turn). 다중 인스턴스면 인스턴스별로만 집계됨.
+        """
+        turns = list(_TURN_METRICS)
+        stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms", "total_ms")
+        summary = {}
+        for stage in stages:
+            vals = [t[stage] for t in turns if t.get(stage) is not None]
+            summary[stage] = {
+                "p50": _pct(vals, 50),
+                "p95": _pct(vals, 95),
+                "avg": round(sum(vals) / len(vals)) if vals else None,
+                "max": max(vals) if vals else None,
+            }
+        return {
+            "count": len(turns),
+            "stages": summary,
+            "recent": turns[-20:],
         }
-    return {
-        "count": len(turns),
-        "stages": summary,
-        "recent": turns[-20:],
-    }
 
 
 if _DEBUG_ENDPOINTS_ENABLED:
@@ -667,7 +671,7 @@ def _build_chat_system_prompt(character_name: str, level: str) -> str:
     return f"""\
 You are {character_name}, a warm and playful English conversation friend.
 {level_guide}
-Keep responses to 1-3 sentences — natural, friendly, and engaging.
+Keep your reply to ONE short sentence (about 10-15 words). Never write two sentences.
 
 ## Grammar correction rules
 When the user makes grammar or vocabulary mistakes, do not list or explain the mistakes.
@@ -855,6 +859,8 @@ async def chat(req: ChatRequest):
     except Exception as e:
         logging.warning(f"Gemini chat fallback: {e}")
         reply = "I see! Tell me more."
+    # 답변 길이 정형화 (TTS·응답 모두 shaped 버전 사용)
+    reply = shape_reply(reply)
 
     # 6. TTS — 이모지 제거 후 호출
     tts_result = await asyncio.gather(
@@ -907,11 +913,8 @@ async def chat(req: ChatRequest):
 # ── Auth — Supabase JWT 검증 ──────────────────────────────────────────────────
 
 
-def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
-    """
-    Authorization: Bearer <JWT> 를 Supabase Auth로 검증하고 user_id(uuid) 반환.
-    실패 시 401 unauthorized. user_id는 토큰에서만 추출하고 body 값을 신뢰하지 않는다.
-    """
+def _verify_bearer_user(authorization: Optional[str]):
+    """Authorization: Bearer <JWT> 를 Supabase Auth로 검증하고 user 객체 반환. 실패 시 401."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise AppError(401, "unauthorized", "Missing or invalid Authorization header")
 
@@ -933,7 +936,42 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
     if user is None or not getattr(user, "id", None):
         raise AppError(401, "unauthorized", "Invalid or expired token")
 
-    return user.id
+    return user
+
+
+def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
+    """user_id(uuid)만 반환. user_id는 토큰에서만 추출하고 body 값을 신뢰하지 않는다."""
+    return _verify_bearer_user(authorization).id
+
+
+def get_current_user(authorization: Optional[str] = Header(None)):
+    """검증된 user 객체 반환 (id + user_metadata). 프로필 사진 등 메타데이터가 필요할 때."""
+    return _verify_bearer_user(authorization)
+
+
+# OAuth provider 별로 프사 URL 이 들어가는 메타데이터 키가 달라(구글=avatar_url/picture,
+# 카카오=케이스별로 다름) 후보 키를 순서대로 확인해 하나로 정규화한다.
+# 정확한 카카오 키는 실제 카카오 로그인 유저로 확인 필요(실측 전 후보만 나열).
+_AVATAR_KEYS = ("avatar_url", "picture", "profile_image_url", "profile_image")
+
+
+def _extract_avatar(user) -> Optional[str]:
+    meta = getattr(user, "user_metadata", None) or {}
+    if not isinstance(meta, dict):
+        return None
+    for k in _AVATAR_KEYS:
+        v = meta.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+    # 카카오 raw 중첩(kakao_account.profile.profile_image_url) 방어적 처리
+    ka = meta.get("kakao_account")
+    if isinstance(ka, dict):
+        prof = ka.get("profile")
+        if isinstance(prof, dict):
+            v = prof.get("profile_image_url") or prof.get("thumbnail_image_url")
+            if isinstance(v, str) and v.strip():
+                return v
+    return None
 
 
 def require_idempotency_key(idempotency_key: str = Header(..., alias="Idempotency-Key")) -> str:
@@ -983,14 +1021,16 @@ class ProfilePatchRequest(BaseModel):
     english_level: Optional[str] = None
 
 
-def _profile_to_response(row: dict) -> dict:
+def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
     # 계약: snake_case UserProfile. traits는 DB seed 5개(생성 로직은 후속).
+    # avatar_url 은 DB 가 아니라 OAuth 메타데이터(구글/카카오)에서 정규화해 넣는다.
     return {
         "id": row["id"],
         "display_name": row["display_name"],
         "english_level": row["english_level"],
         "onboarding_completed": row["onboarding_completed"],
         "traits": row.get("traits"),
+        "avatar_url": avatar_url,
         "created_at": row["created_at"],
         "updated_at": row.get("updated_at"),
     }
@@ -999,10 +1039,11 @@ def _profile_to_response(row: dict) -> dict:
 @app.post("/api/onboarding")
 async def onboarding(
     req: OnboardingRequest,
-    user_id: str = Depends(get_current_user_id),
+    user=Depends(get_current_user),
     _idem: str = Depends(require_idempotency_key),
 ):
     """최초 프로필 생성. 이미 온보딩 완료한 사용자는 409 conflict (덮어쓰지 않음)."""
+    user_id = user.id
     display_name = _validate_display_name(req.display_name)
     english_level = _validate_english_level(req.english_level)
 
@@ -1033,12 +1074,13 @@ async def onboarding(
     if not res.data:
         raise AppError(503, "persistence_failed", "Failed to save profile")
 
-    return {"profile": _profile_to_response(res.data[0])}
+    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
 
 
 @app.get("/api/profile")
-async def get_profile(user_id: str = Depends(get_current_user_id)):
-    """본인 profile 조회. 온보딩 전(row 없음)이면 404 profile_not_found."""
+async def get_profile(user=Depends(get_current_user)):
+    """본인 profile 조회. 온보딩 전(row 없음)이면 404 profile_not_found. avatar_url 포함(OAuth)."""
+    user_id = user.id
     sb = get_supabase()
     try:
         res = sb.table("profiles").select("*").eq("id", user_id).execute()
@@ -1049,15 +1091,16 @@ async def get_profile(user_id: str = Depends(get_current_user_id)):
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_to_response(res.data[0])}
+    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
 
 
 @app.patch("/api/profile")
 async def update_profile(
     req: ProfilePatchRequest,
-    user_id: str = Depends(get_current_user_id),
+    user=Depends(get_current_user),
 ):
     """본인 profile 부분 수정. traits 등 unknown 필드는 422 (extra=forbid)."""
+    user_id = user.id
     update_fields: Dict[str, object] = {}
 
     if req.display_name is not None:
@@ -1080,7 +1123,7 @@ async def update_profile(
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_to_response(res.data[0])}
+    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
 
 
 # ── Conversations & Turns — 3주차 음성 대화 (sessions/messages 재사용) ────────
@@ -1484,6 +1527,8 @@ async def create_turn(
         _release_turn(sb, user_id)
         raise AppError(502, "ai_engine_failed", "Reply generation failed")
     gemini_ms = round((time.perf_counter() - gemini_t0) * 1000)
+    # 답변 길이 정형화: 이후 TTS·저장·응답이 모두 shaped 버전을 써서 화면/음성 불일치 방지.
+    reply = shape_reply(reply)
 
     # 8. TTS + feedback 병렬 (둘 다 reply 만 있으면 됨 → asyncio.gather).
     #    feedback 은 AI 담당(동기 함수)이라 to_thread 로 offload 해 이벤트 루프를 막지 않는다.
@@ -2144,3 +2189,226 @@ async def get_achievements(user_id: str = Depends(get_current_user_id)):
         "streak_count": streak_count,
         "daily_tasks": daily_tasks,
     }
+
+
+# ── Billing / Subscription — 5주차 (provider-neutral, 카카오페이 예정) ─────────
+#
+# 실제 결제사(카카오페이)는 가맹점 키 + sandbox 실호출 검증 후 어댑터를 채운다.
+# 지금은 mock 어댑터로 요금제 화면·구독 흐름을 붙일 수 있게 하고, provider 는
+# BILLING_PROVIDER env(mock|kakaopay, 기본 mock)로 고른다. Pro 권한은 클라이언트
+# 영수증이 아니라 subscriptions.entitled(서버 값)만 신뢰한다.
+
+# 상품 catalog (config). 통화는 Figma 기준 USD placeholder — 카카오페이(KRW) 확정 시 조정.
+_BILLING_PRODUCTS = [
+    {"id": "pro_monthly", "name": "Monthly", "interval": "month", "amount_minor": 999, "currency": "USD", "display_price": "$9.99", "trial_days": 0},
+    {"id": "pro_yearly", "name": "Yearly", "interval": "year", "amount_minor": 9999, "currency": "USD", "display_price": "$99.99", "trial_days": 7},
+]
+_PRODUCT_IDS = {p["id"] for p in _BILLING_PRODUCTS}
+
+
+class WebhookSignatureError(Exception):
+    pass
+
+
+class BillingProvider:
+    """provider-neutral 인터페이스. 실제 provider 는 이 메서드들을 채운다."""
+    name = "base"
+
+    def list_products(self) -> list:
+        return list(_BILLING_PRODUCTS)
+
+    def create_checkout(self, user_id: str, product_id: str, success_url: str, cancel_url: str) -> dict:
+        raise NotImplementedError
+
+    def refresh_subscription(self, user_id: str) -> Optional[dict]:
+        """provider 에서 최신 구독 상태를 조회. mock 은 None(변화 없음)."""
+        return None
+
+    def verify_and_parse_webhook(self, headers: dict, raw_body: bytes) -> tuple:
+        """(provider_event_id, event dict) 반환. 서명 실패는 WebhookSignatureError."""
+        raise NotImplementedError
+
+
+class MockBillingProvider(BillingProvider):
+    """개발용. 실제 결제 없이 흐름만. webhook 은 서명 없이 body 를 신뢰(테스트 전용)."""
+    name = "mock"
+
+    def create_checkout(self, user_id: str, product_id: str, success_url: str, cancel_url: str) -> dict:
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+        return {
+            "product_id": product_id,
+            "checkout_url": f"https://mock-checkout.local/session/{uuid.uuid4().hex}",
+            "expires_at": expires,
+        }
+
+    def verify_and_parse_webhook(self, headers: dict, raw_body: bytes) -> tuple:
+        try:
+            event = json.loads(raw_body.decode() or "{}")
+        except Exception:
+            raise WebhookSignatureError("invalid payload")
+        event_id = event.get("event_id")
+        if not event_id:
+            raise WebhookSignatureError("missing event_id")
+        return event_id, event
+
+
+class KakaoPayBillingProvider(BillingProvider):
+    """카카오페이 어댑터 자리. 가맹점 키 확보 + sandbox 실호출 검증 전에는 미설정."""
+    name = "kakaopay"
+
+    def create_checkout(self, user_id: str, product_id: str, success_url: str, cancel_url: str) -> dict:
+        raise AppError(503, "billing_not_configured", "KakaoPay is not configured yet")
+
+    def refresh_subscription(self, user_id: str) -> Optional[dict]:
+        raise AppError(503, "billing_not_configured", "KakaoPay is not configured yet")
+
+    def verify_and_parse_webhook(self, headers: dict, raw_body: bytes) -> tuple:
+        raise AppError(503, "billing_not_configured", "KakaoPay is not configured yet")
+
+
+_BILLING_PROVIDERS = {"mock": MockBillingProvider(), "kakaopay": KakaoPayBillingProvider()}
+_BILLING_PROVIDER_NAME = os.getenv("BILLING_PROVIDER", "mock")
+
+
+def _billing_provider_by_name(name: str) -> BillingProvider:
+    p = _BILLING_PROVIDERS.get(name)
+    if p is None:
+        raise AppError(404, "not_found", "Unknown billing provider")
+    return p
+
+
+def _get_billing_provider() -> BillingProvider:
+    return _billing_provider_by_name(_BILLING_PROVIDER_NAME)
+
+
+def _subscription_to_response(row: Optional[dict]) -> dict:
+    if not row or not row.get("entitled"):
+        return {
+            "plan": (row or {}).get("plan", "free") if row else "free",
+            "status": (row or {}).get("status", "none") if row else "none",
+            "entitled": False,
+            "product_id": (row or {}).get("product_id") if row else None,
+            "current_period_end": (row or {}).get("current_period_end") if row else None,
+            "will_renew": bool((row or {}).get("will_renew")) if row else False,
+            "entitlements": [],
+            "updated_at": (row or {}).get("updated_at") if row else None,
+        }
+    return {
+        "plan": row.get("plan", "pro"),
+        "status": row.get("status", "active"),
+        "entitled": True,
+        "product_id": row.get("product_id"),
+        "current_period_end": row.get("current_period_end"),
+        "will_renew": bool(row.get("will_renew")),
+        "entitlements": ["unlimited_turns"],
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def _read_subscription(sb, user_id: str) -> Optional[dict]:
+    try:
+        r = sb.table("subscriptions").select("*").eq("user_id", user_id).execute()
+    except Exception as e:
+        logging.error(f"subscription read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read subscription")
+    return r.data[0] if r.data else None
+
+
+class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: str
+    success_url: str
+    cancel_url: str
+
+
+@app.get("/api/billing/products")
+async def billing_products(user_id: str = Depends(get_current_user_id)):
+    """플랫폼별 상품 목록. 가격은 서버에서 (프론트 하드코딩 금지)."""
+    return {"products": _get_billing_provider().list_products()}
+
+
+@app.post("/api/billing/checkout", status_code=201)
+async def billing_checkout(
+    req: CheckoutRequest,
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """결제 시작. checkout 생성만으로 Pro 활성화 안 됨 — webhook/refresh 로 검증 후 entitled."""
+    if req.product_id not in _PRODUCT_IDS:
+        raise AppError(422, "invalid_product", "Unknown product_id")
+    checkout = _get_billing_provider().create_checkout(user_id, req.product_id, req.success_url, req.cancel_url)
+    return {"checkout": checkout}
+
+
+@app.get("/api/subscription")
+async def get_subscription(user_id: str = Depends(get_current_user_id)):
+    """서버 기준 구독 권한. 화면·quota 는 이 값만 신뢰."""
+    sb = get_supabase()
+    return {"subscription": _subscription_to_response(_read_subscription(sb, user_id))}
+
+
+@app.post("/api/subscription/refresh")
+async def refresh_subscription(
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """결제 성공 callback 후 등 — provider 에서 최신 상태 동기화."""
+    sb = get_supabase()
+    updated = _get_billing_provider().refresh_subscription(user_id)
+    if updated:
+        try:
+            sb.table("subscriptions").upsert({**updated, "user_id": user_id, "updated_at": _now_iso()},
+                                             on_conflict="user_id").execute()
+        except Exception as e:
+            logging.error(f"subscription refresh upsert failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to sync subscription")
+    return {"subscription": _subscription_to_response(_read_subscription(sb, user_id))}
+
+
+@app.post("/api/webhooks/billing/{provider}", status_code=204)
+async def billing_webhook(provider: str, request: Request):
+    """provider 결제 이벤트 반영. 사용자 JWT 없음, provider 서명 검증. 같은 event 재전송은 204(무시)."""
+    prov = _billing_provider_by_name(provider)
+    raw = await request.body()
+    try:
+        event_id, event = prov.verify_and_parse_webhook(dict(request.headers), raw)
+    except WebhookSignatureError:
+        raise AppError(401, "webhook_signature_invalid", "Webhook signature verification failed")
+
+    sb = get_supabase()
+    # 멱등: 같은 (provider, event_id) 이미 처리했으면 재처리 안 함
+    try:
+        dup = sb.table("billing_events").select("provider_event_id").eq("provider", provider).eq("provider_event_id", event_id).execute()
+    except Exception as e:
+        logging.error(f"billing_events read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to process webhook")
+    if dup.data:
+        return Response(status_code=204)
+
+    try:
+        sb.table("billing_events").insert({"provider": provider, "provider_event_id": event_id, "payload": event}).execute()
+    except Exception as e:
+        logging.error(f"billing_events insert failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to record webhook")
+
+    # 구독 상태 반영 (mock: event 의 user_id/action/product_id 로)
+    target_user = event.get("user_id")
+    action = event.get("action")
+    if target_user and action in ("activate", "cancel"):
+        entitled = action == "activate"
+        try:
+            sb.table("subscriptions").upsert({
+                "user_id": target_user,
+                "plan": "pro" if entitled else "free",
+                "status": "active" if entitled else "canceled",
+                "entitled": entitled,
+                "product_id": event.get("product_id"),
+                "will_renew": entitled,
+                "provider": provider,
+                "updated_at": _now_iso(),
+            }, on_conflict="user_id").execute()
+        except Exception as e:
+            logging.error(f"subscription apply failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to apply subscription")
+
+    return Response(status_code=204)
