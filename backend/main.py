@@ -35,6 +35,7 @@ if BACKEND_DIR not in sys.path:
 
 from ai.analyzer import analyze_utterance
 from ai.matrix_engine import apply_ema, compute_character, describe_character
+from ai.reply_shaping import shape_reply
 
 try:
     from lib.supabase import get_supabase
@@ -670,7 +671,7 @@ def _build_chat_system_prompt(character_name: str, level: str) -> str:
     return f"""\
 You are {character_name}, a warm and playful English conversation friend.
 {level_guide}
-Keep responses to 1-3 sentences — natural, friendly, and engaging.
+Keep your reply to ONE short sentence (about 10-15 words). Never write two sentences.
 
 ## Grammar correction rules
 When the user makes grammar or vocabulary mistakes, do not list or explain the mistakes.
@@ -858,6 +859,8 @@ async def chat(req: ChatRequest):
     except Exception as e:
         logging.warning(f"Gemini chat fallback: {e}")
         reply = "I see! Tell me more."
+    # 답변 길이 정형화 (TTS·응답 모두 shaped 버전 사용)
+    reply = shape_reply(reply)
 
     # 6. TTS — 이모지 제거 후 호출
     tts_result = await asyncio.gather(
@@ -1524,6 +1527,8 @@ async def create_turn(
         _release_turn(sb, user_id)
         raise AppError(502, "ai_engine_failed", "Reply generation failed")
     gemini_ms = round((time.perf_counter() - gemini_t0) * 1000)
+    # 답변 길이 정형화: 이후 TTS·저장·응답이 모두 shaped 버전을 써서 화면/음성 불일치 방지.
+    reply = shape_reply(reply)
 
     # 8. TTS + feedback 병렬 (둘 다 reply 만 있으면 됨 → asyncio.gather).
     #    feedback 은 AI 담당(동기 함수)이라 to_thread 로 offload 해 이벤트 루프를 막지 않는다.
