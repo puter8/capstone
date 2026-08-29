@@ -75,9 +75,13 @@ GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # STT / TTS (Cloud
 
 app = FastAPI(title="Pally Backend API", version="1.0.0")
 
+# CORS 허용 origin: 기본 "*"(개발). 프로덕션은 CORS_ALLOW_ORIGINS 에 프론트 도메인을
+# 콤마로 넣어 제한한다. 예: CORS_ALLOW_ORIGINS=https://capstone-eight-virid.vercel.app
+_cors_env = os.getenv("CORS_ALLOW_ORIGINS", "*").strip()
+_allow_origins = ["*"] if _cors_env == "*" else [o.strip() for o in _cors_env.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -251,32 +255,31 @@ def health():
     return {"status": "ok", "version": app.version}
 
 
-@app.get("/api/metrics")
-def metrics():
-    """
-    최근 turn 파이프라인 latency 요약 (STT/Gemini/TTS/save/total 의 p50·p95·평균).
-    운영 데이터 노출이라 health 와 달리 debug 게이트 뒤에 둔다 (PALLY_DEBUG_ENDPOINTS=1).
-    단일 프로세스 메모리 기준(최근 200 turn). 다중 인스턴스면 인스턴스별로만 집계됨.
-    """
-    if not _DEBUG_ENDPOINTS_ENABLED:
-        raise AppError(404, "not_found", "Not found")
-
-    turns = list(_TURN_METRICS)
-    stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms", "total_ms")
-    summary = {}
-    for stage in stages:
-        vals = [t[stage] for t in turns if t.get(stage) is not None]
-        summary[stage] = {
-            "p50": _pct(vals, 50),
-            "p95": _pct(vals, 95),
-            "avg": round(sum(vals) / len(vals)) if vals else None,
-            "max": max(vals) if vals else None,
+if _DEBUG_ENDPOINTS_ENABLED:
+    # debug-keys 와 동일하게 조건부 등록 → 프로덕션에선 라우트 자체가 없어 openapi 에도 안 뜬다.
+    @app.get("/api/metrics")
+    def metrics():
+        """
+        최근 turn 파이프라인 latency 요약 (STT/Gemini/TTS/save/total 의 p50·p95·평균).
+        운영 데이터라 debug 게이트(PALLY_DEBUG_ENDPOINTS=1) 뒤에 둔다.
+        단일 프로세스 메모리 기준(최근 200 turn). 다중 인스턴스면 인스턴스별로만 집계됨.
+        """
+        turns = list(_TURN_METRICS)
+        stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms", "total_ms")
+        summary = {}
+        for stage in stages:
+            vals = [t[stage] for t in turns if t.get(stage) is not None]
+            summary[stage] = {
+                "p50": _pct(vals, 50),
+                "p95": _pct(vals, 95),
+                "avg": round(sum(vals) / len(vals)) if vals else None,
+                "max": max(vals) if vals else None,
+            }
+        return {
+            "count": len(turns),
+            "stages": summary,
+            "recent": turns[-20:],
         }
-    return {
-        "count": len(turns),
-        "stages": summary,
-        "recent": turns[-20:],
-    }
 
 
 if _DEBUG_ENDPOINTS_ENABLED:
