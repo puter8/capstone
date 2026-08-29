@@ -90,7 +90,7 @@ export default function MyPage() {
         <>
           {profile ? (
             <div className="absolute left-5 right-5 top-[172px] h-[228px]">
-              <ProfileSummary name={profile.display_name} onEditName={() => setDialog("name")} traits={profile.traits} />
+              <ProfileSummary avatarUrl={profile.avatar_url} name={profile.display_name} onEditName={() => setDialog("name")} traits={profile.traits} />
             </div>
           ) : null}
           {error ? <p className="absolute left-5 right-5 top-[420px] text-center text-body-2 text-red-600" role="alert">{error}</p> : null}

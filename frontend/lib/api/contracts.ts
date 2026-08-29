@@ -16,6 +16,7 @@ export interface UserProfile {
   english_level: Level;
   onboarding_completed: boolean;
   traits: string[];
+  avatar_url: string | null;
   created_at: string;
   updated_at: string;
 }

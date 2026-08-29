@@ -46,6 +46,7 @@ export const profileResponseSchema = z.object({
     english_level: z.enum(["A2", "B1", "B2", "C1"]),
     onboarding_completed: z.boolean(),
     traits: z.array(z.string()),
+    avatar_url: z.string().url().nullable(),
     created_at: z.string(),
     updated_at: z.string(),
   }),

@@ -14,6 +14,7 @@ export const MOCK_PROFILE: UserProfile = {
   english_level: "B1",
   onboarding_completed: false,
   traits: [],
+  avatar_url: null,
   created_at: "2026-08-01T09:00:00Z",
   updated_at: "2026-08-01T09:00:00Z",
 };
