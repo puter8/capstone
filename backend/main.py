@@ -1417,6 +1417,31 @@ async def record_activity_event(
     return {"recorded": True}
 
 
+def _is_unique_violation(e: Exception) -> bool:
+    """messages 멱등 unique index 위반인지 (동시 중복 요청의 진 쪽)."""
+    s = str(e).lower()
+    return "23505" in s or "duplicate key" in s or "messages_session_idem" in s
+
+
+def _replayed_turn(sb, conversation_id: str, u: dict) -> dict:
+    """이미 저장된 turn(user 행 u)을 replayed 응답으로. dedup·동시중복 진 쪽 공용.
+    feedback_pending: 저장된 feedback 이 null(생성 실패/미완)인지 → [] (교정 없음) 와 구분."""
+    return {
+        "conversation_id": conversation_id,
+        "turn_id": u["id"],
+        "status": "completed",
+        "replayed": True,
+        "created_at": u["created_at"],
+        "user": {"transcript": u["transcript"]},
+        "pally": {"text": _paired_reply(sb, conversation_id, u["created_at"]), "audio": None},
+        "axes": u.get("axes"),
+        "character": u.get("character"),
+        "feedback": u.get("feedback") or [],
+        "feedback_pending": u.get("feedback") is None,
+        "warnings": [],
+    }
+
+
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201)
 async def create_turn(
     conversation_id: str,
@@ -1458,20 +1483,7 @@ async def create_turn(
         logging.error(f"turn dedup read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to check idempotency")
     if dup.data:
-        u = dup.data[0]
-        return {
-            "conversation_id": conversation_id,
-            "turn_id": u["id"],
-            "status": "completed",
-            "replayed": True,
-            "created_at": u["created_at"],
-            "user": {"transcript": u["transcript"]},
-            "pally": {"text": _paired_reply(sb, conversation_id, u["created_at"]), "audio": None},
-            "axes": u.get("axes"),
-            "character": u.get("character"),
-            "feedback": u.get("feedback") or [],
-            "warnings": [],
-        }
+        return _replayed_turn(sb, conversation_id, dup.data[0])
 
     # 3. 오디오
     audio_bytes = await audio.read()
@@ -1570,6 +1582,8 @@ async def create_turn(
         logging.warning(f"turn feedback failed (non-fatal): {fb_result}")
     elif fb_result:
         feedback_items = fb_result
+    # 저장은 실패/무교정을 구분: 실패 → null(History 재생성 대상), 성공 → list([] 는 "교정 없음").
+    feedback_to_store = None if feedback_failed else feedback_items
 
     # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단) — latency 측정
     save_t0 = time.perf_counter()
@@ -1582,7 +1596,7 @@ async def create_turn(
                 "axes": smoothed,
                 "character": character,
                 "idempotency_key": idem_key,
-                "feedback": feedback_items,
+                "feedback": feedback_to_store,
             },
             {
                 "session_id": conversation_id,
@@ -1593,6 +1607,17 @@ async def create_turn(
             },
         ]).execute()
     except Exception as e:
+        if _is_unique_violation(e):
+            # 동시 중복 요청의 진 쪽: 이긴 요청이 이미 저장함 → 내 예약분 환불 후 저장된 turn 재반환.
+            # (503 을 주던 기존 동작 대신 replayed 로 정상 결과 반환)
+            _release_turn(sb, user_id)
+            try:
+                ex = sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute()
+            except Exception:
+                ex = None
+            if ex and ex.data:
+                return _replayed_turn(sb, conversation_id, ex.data[0])
+            raise AppError(409, "duplicate_turn", "Duplicate turn already being processed")
         logging.error(f"turn save failed: {e}")
         _release_turn(sb, user_id)
         raise AppError(503, "persistence_failed", "Failed to save turn")
@@ -1798,6 +1823,7 @@ def _turn_detail(user_msg: Optional[dict], pally_msg: Optional[dict], seq: int) 
         "user_transcript": user_msg["transcript"] if user_msg else None,
         "pally_text": pally_msg["transcript"] if pally_msg else None,
         "feedback": (user_msg.get("feedback") if user_msg else None) or [],
+        "feedback_pending": (user_msg.get("feedback") is None) if user_msg else False,
         "created_at": (user_msg or pally_msg)["created_at"],
     }
 
