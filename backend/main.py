@@ -1716,6 +1716,7 @@ async def create_turn(
         "axes": smoothed,
         "character": character,
         "feedback": feedback_items,
+        "feedback_pending": feedback_failed,
         "warnings": warnings,
         "quota": {
             "used_turns": quota_used,
