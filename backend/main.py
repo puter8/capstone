@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import hashlib
 import time
@@ -952,23 +953,56 @@ def get_current_user(authorization: Optional[str] = Header(None)):
 # OAuth provider 별로 프사 URL 이 들어가는 메타데이터 키가 달라(구글=avatar_url/picture,
 # 카카오=케이스별로 다름) 후보 키를 순서대로 확인해 하나로 정규화한다.
 # 정확한 카카오 키는 실제 카카오 로그인 유저로 확인 필요(실측 전 후보만 나열).
-_AVATAR_KEYS = ("avatar_url", "picture", "profile_image_url", "profile_image")
+_AVATAR_KEYS = ("profile_image_url", "avatar_url", "picture", "profile_image")
+_GOOGLE_AVATAR_SIZE = 512
+
+
+def _normalize_avatar_url(value: str) -> str:
+    """Google OAuth 사진은 Retina UI에서도 선명하도록 512px 정사각형을 요청한다."""
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return value
+
+    hostname = (parts.hostname or "").lower()
+    if hostname != "googleusercontent.com" and not hostname.endswith(".googleusercontent.com"):
+        return value
+
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    if "sz" in query:
+        query["sz"] = str(_GOOGLE_AVATAR_SIZE)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+    sized_path = re.sub(r"=s\d+(?:-c)?$", "", parts.path)
+    sized_path = f"{sized_path}=s{_GOOGLE_AVATAR_SIZE}-c"
+    return urlunsplit((parts.scheme, parts.netloc, sized_path, parts.query, parts.fragment))
 
 
 def _extract_avatar(user) -> Optional[str]:
     meta = getattr(user, "user_metadata", None) or {}
     if not isinstance(meta, dict):
         return None
-    for k in _AVATAR_KEYS:
-        v = meta.get(k)
-        if isinstance(v, str) and v.strip():
-            return v
-    # 카카오 raw 중첩(kakao_account.profile.profile_image_url) 방어적 처리
+
+    # Kakao profile_image_url 은 480~640px, thumbnail_image_url 은 100~110px다.
+    # 중첩된 고해상도 원본을 일반 avatar_url 후보보다 먼저 사용한다.
     ka = meta.get("kakao_account")
     if isinstance(ka, dict):
         prof = ka.get("profile")
         if isinstance(prof, dict):
-            v = prof.get("profile_image_url") or prof.get("thumbnail_image_url")
+            v = prof.get("profile_image_url")
+            if isinstance(v, str) and v.strip():
+                return v
+
+    for k in _AVATAR_KEYS:
+        v = meta.get(k)
+        if isinstance(v, str) and v.strip():
+            return _normalize_avatar_url(v)
+
+    # 고해상도 원본이 없을 때만 Kakao thumbnail 을 마지막 후보로 사용한다.
+    if isinstance(ka, dict):
+        prof = ka.get("profile")
+        if isinstance(prof, dict):
+            v = prof.get("thumbnail_image_url")
             if isinstance(v, str) and v.strip():
                 return v
     return None

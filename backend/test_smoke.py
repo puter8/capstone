@@ -44,3 +44,25 @@ def test_extract_avatar_returns_none_without_profile_picture():
         user_metadata = {"name": "Pally user"}
 
     assert main._extract_avatar(User()) is None
+
+
+def test_extract_avatar_requests_high_resolution_google_photo():
+    class User:
+        user_metadata = {"picture": "https://lh3.googleusercontent.com/a/example=s96-c"}
+
+    assert main._extract_avatar(User()) == "https://lh3.googleusercontent.com/a/example=s512-c"
+
+
+def test_extract_avatar_prefers_kakao_profile_image_over_thumbnail():
+    class User:
+        user_metadata = {
+            "avatar_url": "https://k.kakaocdn.net/thumbnail.jpg",
+            "kakao_account": {
+                "profile": {
+                    "profile_image_url": "https://k.kakaocdn.net/profile.jpg",
+                    "thumbnail_image_url": "https://k.kakaocdn.net/thumbnail.jpg",
+                },
+            },
+        }
+
+    assert main._extract_avatar(User()) == "https://k.kakaocdn.net/profile.jpg"
