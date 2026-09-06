@@ -40,7 +40,7 @@ export function LevelOption({ code, description, name, onSelect, selected = fals
       <p className={cn("absolute left-[46px] right-[58px] top-[49px] line-clamp-2 text-[11px] font-normal leading-[12px]", selected ? "text-white" : "text-text-secondary")}>
         {description}
       </p>
-      <SelectionIndicator className={cn("absolute right-[19px]", selected ? "top-[22px]" : "top-[24px]")} selected={selected} />
+      <SelectionIndicator className="absolute right-5 top-1/2 h-7 w-7 -translate-y-1/2" selected={selected} />
     </button>
   );
 }

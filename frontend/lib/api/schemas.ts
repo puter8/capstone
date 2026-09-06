@@ -52,6 +52,10 @@ export const profileResponseSchema = z.object({
   }),
 });
 
+export const profileAvatarResponseSchema = z.object({
+  avatar_url: z.string().url().nullable(),
+});
+
 export const conversationResponseSchema = z.object({ conversation: conversationSchema });
 
 export const conversationMutationResponseSchema = z.object({
