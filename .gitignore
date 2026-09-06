@@ -29,3 +29,8 @@ out/
 
 # Supabase CLI 임시 파일
 supabase/.temp/
+
+# Downloaded NICT JLE source corpus
+data/NICT_JLE_4.1.zip
+data/NICT_JLE_4.1/
+data/external_raw/

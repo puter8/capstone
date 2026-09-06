@@ -35,6 +35,7 @@ if BACKEND_DIR not in sys.path:
 
 from ai.analyzer import analyze_utterance
 from ai.matrix_engine import apply_ema, compute_character, describe_character
+from ai.reply_shaping import shape_reply
 
 try:
     from lib.supabase import get_supabase
@@ -734,7 +735,7 @@ async def _call_gemini_chat(
     reply = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
     if not reply:
         raise RuntimeError("Gemini returned empty chat response")
-    return reply
+    return shape_reply(reply)
 
 
 _HINT_KO_SYSTEM_PROMPT = """\

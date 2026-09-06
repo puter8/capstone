@@ -26,6 +26,7 @@ from data.dataset import DATASET
 
 TOKEN_PATTERN = re.compile(r"[a-z']+|[!?]+")
 WEEK2_DATASET_PATH = Path(ROOT) / "data" / "axis_dataset_week2.jsonl"
+AXIS_DATASET_ENV = "PALLY_AXIS_DATASET"
 
 
 @dataclass(frozen=True)
@@ -33,10 +34,22 @@ class AxisTrainingExample:
     utterance: str
     label: dict[str, int]
     style: str
+    source: str = ""
+    source_group: str = ""
 
 
 def _tokenize(text: str) -> list[str]:
     return TOKEN_PATTERN.findall(text.lower())
+
+
+def _feature_tokens(text: str, word_ngram_max: int) -> list[str]:
+    tokens = _tokenize(text)
+    if word_ngram_max == 1:
+        return tokens
+    features = list(tokens)
+    for size in range(2, word_ngram_max + 1):
+        features.extend(f"__ng{size}__:{'|'.join(tokens[index : index + size])}" for index in range(len(tokens) - size + 1))
+    return features
 
 
 def _validate_axes(raw_axes: dict[str, Any]) -> dict[str, int]:
@@ -60,6 +73,8 @@ def _load_jsonl_axis_dataset(path: Path) -> list[AxisTrainingExample]:
                     utterance=str(item["utterance"]),
                     label=_validate_axes(item["axes"]),
                     style=str(item.get("style", "conversation")),
+                    source=str(item.get("source", "")),
+                    source_group=str(item.get("source_group", "")),
                 )
             )
     if not examples:
@@ -73,6 +88,8 @@ def _load_legacy_axis_dataset() -> list[AxisTrainingExample]:
             utterance=item["utterance"],
             label=_validate_axes(item["label"]),
             style=item["style"],
+            source="legacy",
+            source_group="",
         )
         for item in DATASET
     ]
@@ -80,16 +97,25 @@ def _load_legacy_axis_dataset() -> list[AxisTrainingExample]:
 
 def load_default_axis_dataset() -> list[AxisTrainingExample]:
     """Load the active ML dataset, preferring the conversation-first Week 2 JSONL."""
+    configured_path = os.getenv(AXIS_DATASET_ENV)
+    if configured_path:
+        path = Path(configured_path)
+        if not path.is_absolute():
+            path = Path(ROOT) / path
+        return _load_jsonl_axis_dataset(path)
     if WEEK2_DATASET_PATH.exists():
         return _load_jsonl_axis_dataset(WEEK2_DATASET_PATH)
     return _load_legacy_axis_dataset()
 
 
 class TfidfKnnAxisRegressor:
-    def __init__(self, k: int = 5) -> None:
+    def __init__(self, k: int = 5, word_ngram_max: int = 1) -> None:
         if k <= 0:
             raise ValueError("k must be positive")
+        if word_ngram_max < 1:
+            raise ValueError("word_ngram_max must be at least one")
         self.k = k
+        self.word_ngram_max = word_ngram_max
         self.examples: list[AxisTrainingExample] = []
         self.idf: dict[str, float] = {}
         self.vectors: list[dict[str, float]] = []
@@ -101,7 +127,7 @@ class TfidfKnnAxisRegressor:
         doc_count = len(examples)
         document_frequency: Counter[str] = Counter()
         for example in examples:
-            document_frequency.update(set(_tokenize(example.utterance)))
+            document_frequency.update(set(_feature_tokens(example.utterance, self.word_ngram_max)))
         self.idf = {
             token: math.log((doc_count + 1) / (count + 1)) + 1.0
             for token, count in document_frequency.items()
@@ -129,7 +155,7 @@ class TfidfKnnAxisRegressor:
         return prediction
 
     def _vectorize(self, utterance: str) -> dict[str, float]:
-        counts = Counter(_tokenize(utterance))
+        counts = Counter(_feature_tokens(utterance, self.word_ngram_max))
         if not counts:
             return {}
         max_count = max(counts.values())
