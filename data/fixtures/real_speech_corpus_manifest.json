@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-09-06",
+  "purpose": "Experimental real-speech benchmark for Pally five-axis analyzer evaluation.",
+  "labeling_status": "The four external-corpus label files contain deterministic AI drafts and are not independent human-review gold data. The NICT accepted-draft file is also not an independent blind human relabeling pass.",
+  "ml_transition_review_sets": {
+    "gold_candidate_reservoir": "data/fixtures/ml_transition_gold_candidates_600.jsonl",
+    "train_candidate_reservoir": "data/fixtures/ml_transition_train_candidates_1200.jsonl",
+    "gold_stratified_candidates": "data/fixtures/ml_transition_gold_stratified_candidates_200.jsonl",
+    "gold_blind_review_csv": "data/fixtures/ml_transition_gold_blind_review_200.csv",
+    "train_active_ec_candidates": "data/fixtures/ml_transition_train_active_ec_candidates_120.jsonl",
+    "train_active_ec_review_csv": "data/fixtures/ml_transition_train_active_ec_review_120.csv",
+    "sources": ["nict_jle_real", "ami_real", "taskmaster1_woz_user_real"],
+    "gold_candidate_count": 600,
+    "train_candidate_count": 1200,
+    "gold_annotation_count": 200,
+    "train_annotation_count": 120,
+    "gold_source_groups": 161,
+    "train_source_groups": 120,
+    "overlapping_source_groups": 0,
+    "overlapping_normalized_texts": 0,
+    "review_policy": "Candidate reservoirs are not labeled datasets. Gold is selected by stratified random sampling and reviewed on all axes; active train selection reviews Energy and Curiosity only. The CSV exports deliberately omit source, provenance, focus buckets, draft labels, and model-selection metadata. Completed human reviews are the only labels eligible for the ML transition acceptance gate."
+  },
+  "conversation_context": {
+    "fields": ["conversation_id", "turn_index", "previous_turn", "previous_turn_speaker", "next_turn", "next_turn_speaker"],
+    "policy": "Context fields preserve source conversation structure for future context ablations. They are not used as axis labels or shown with source provenance in blind review."
+  },
+  "corpora": [
+    {
+      "source": "chime6_real",
+      "raw_input": "data/external_raw/chime6_transcriptions/transcriptions/transcriptions",
+      "utterance_file": "data/fixtures/chime6_utterances.jsonl",
+      "candidate_file": "data/fixtures/chime6_label_candidates_600.jsonl",
+      "draft_label_file": "data/fixtures/chime6_labeled_draft_600.jsonl",
+      "raw_utterance_count": 87539,
+      "candidate_count": 600,
+      "license": "CC BY-SA 4.0",
+      "license_status": "verified",
+      "official_url": "https://www.openslr.org/150/",
+      "commercial_use": "Requires attribution and ShareAlike compliance review before product use."
+    },
+    {
+      "source": "hcrc_maptask_real",
+      "raw_input": "data/external_raw/hcrc_maptask/maptaskv2-1/Data",
+      "utterance_file": "data/fixtures/hcrc_maptask_utterances.jsonl",
+      "candidate_file": "data/fixtures/hcrc_maptask_label_candidates_500.jsonl",
+      "draft_label_file": "data/fixtures/hcrc_maptask_labeled_draft_500.jsonl",
+      "raw_utterance_count": 20686,
+      "candidate_count": 500,
+      "license": "conflicting official records: local v2.1 archive says CC BY-NC-SA 2.5; current download page says CC BY 4.0",
+      "license_status": "blocked_pending_rightsholder_confirmation",
+      "official_url": "https://groups.inf.ed.ac.uk/maptask/maptasknxt.html",
+      "commercial_use": "Do not use in commercial training or deployment until the HCRC confirms which license applies to this archive."
+    },
+    {
+      "source": "taskmaster1_woz_user_real",
+      "raw_input": "data/external_raw/taskmaster_woz-dialogs.json",
+      "utterance_file": "data/fixtures/taskmaster1_woz_user_utterances.jsonl",
+      "candidate_file": "data/fixtures/taskmaster1_woz_user_label_candidates_500.jsonl",
+      "draft_label_file": "data/fixtures/taskmaster1_woz_user_labeled_draft_500.jsonl",
+      "raw_utterance_count": 60347,
+      "candidate_count": 500,
+      "license": "CC BY 4.0",
+      "license_status": "verified",
+      "official_url": "https://github.com/google-research-datasets/Taskmaster/blob/master/TM-1-2019/README.md",
+      "commercial_use": "Requires attribution before product use."
+    },
+    {
+      "source": "ami_real",
+      "raw_input": "data/external_raw/ami_manual",
+      "utterance_file": "data/fixtures/ami_utterances.jsonl",
+      "candidate_file": "data/fixtures/ami_label_candidates_600.jsonl",
+      "draft_label_file": "data/fixtures/ami_labeled_draft_600.jsonl",
+      "raw_utterance_count": 98475,
+      "candidate_count": 600,
+      "license": "CC BY 4.0",
+      "license_status": "verified",
+      "official_url": "https://groups.inf.ed.ac.uk/ami/download/",
+      "commercial_use": "Requires attribution before product use. Dialogue-act and speaker provenance are retained separately from Pally axis labels."
+    }
+  ]
+}

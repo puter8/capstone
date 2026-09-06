@@ -738,7 +738,7 @@ async def _call_gemini_chat(
     reply = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
     if not reply:
         raise RuntimeError("Gemini returned empty chat response")
-    return reply
+    return shape_reply(reply)
 
 
 _HINT_KO_SYSTEM_PROMPT = """\

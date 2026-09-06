@@ -6,6 +6,8 @@ Run from the repository root:
   python ai/evaluate_axis_analyzers.py
 """
 
+import argparse
+import hashlib
 import os
 import sys
 
@@ -62,10 +64,10 @@ def _spearman(rows: list[dict]) -> dict[str, float]:
     return result
 
 
-def _evaluate_rule_based() -> list[dict]:
+def _evaluate_rule_based(examples: list | None = None) -> list[dict]:
     analyzer = RuleBasedAxisAnalyzer()
     rows = []
-    for example in load_default_axis_dataset():
+    for example in examples or load_default_axis_dataset():
         rows.append(
             {
                 "style": example.style,
@@ -77,12 +79,12 @@ def _evaluate_rule_based() -> list[dict]:
     return rows
 
 
-def _evaluate_ml_leave_one_out() -> list[dict]:
+def _evaluate_ml_leave_one_out(word_ngram_max: int) -> list[dict]:
     examples = load_default_axis_dataset()
     rows = []
     for index, example in enumerate(examples):
         train_examples = examples[:index] + examples[index + 1 :]
-        model = TfidfKnnAxisRegressor().fit(train_examples)
+        model = TfidfKnnAxisRegressor(word_ngram_max=word_ngram_max).fit(train_examples)
         rows.append(
             {
                 "style": example.style,
@@ -94,7 +96,7 @@ def _evaluate_ml_leave_one_out() -> list[dict]:
     return rows
 
 
-def _evaluate_hybrid_leave_one_out() -> list[dict]:
+def _evaluate_hybrid_leave_one_out(word_ngram_max: int) -> list[dict]:
     """Same rule prediction as _evaluate_rule_based, blended per-axis with the
     leave-one-out ML prediction — matches HybridAxisAnalyzer's averaging."""
     rule_analyzer = RuleBasedAxisAnalyzer()
@@ -102,7 +104,7 @@ def _evaluate_hybrid_leave_one_out() -> list[dict]:
     rows = []
     for index, example in enumerate(examples):
         train_examples = examples[:index] + examples[index + 1 :]
-        ml_model = TfidfKnnAxisRegressor().fit(train_examples)
+        ml_model = TfidfKnnAxisRegressor(word_ngram_max=word_ngram_max).fit(train_examples)
         rule_pred = rule_analyzer.analyze(example.utterance).to_axes_dict()
         ml_pred = ml_model.predict(example.utterance)
         blended = {axis: round((rule_pred[axis] + ml_pred[axis]) / 2) for axis in AXIS_KEYS}
@@ -115,6 +117,47 @@ def _evaluate_hybrid_leave_one_out() -> list[dict]:
             }
         )
     return rows
+
+
+def split_by_source_group(examples: list) -> tuple[list, list]:
+    """Reserve deterministic whole source groups for a leakage-resistant check."""
+    train: list = []
+    test: list = []
+    for example in examples:
+        key = example.source_group or f"{example.source}:{example.utterance.lower()}"
+        bucket = int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:4], "big") % 10
+        (test if bucket == 0 else train).append(example)
+    if not train or not test:
+        raise ValueError("source-group holdout requires non-empty train and test splits")
+    return train, test
+
+
+def _predicted_rows(examples: list, predictions: list[dict[str, int]]) -> list[dict]:
+    return [
+        {
+            "style": example.style,
+            "utterance": example.utterance,
+            "expected": example.label,
+            "predicted": prediction,
+        }
+        for example, prediction in zip(examples, predictions)
+    ]
+
+
+def _evaluate_ml_holdout(word_ngram_max: int, train_examples: list, test_examples: list) -> list[dict]:
+    model = TfidfKnnAxisRegressor(word_ngram_max=word_ngram_max).fit(train_examples)
+    return _predicted_rows(test_examples, [model.predict(example.utterance) for example in test_examples])
+
+
+def _evaluate_hybrid_holdout(word_ngram_max: int, train_examples: list, test_examples: list) -> list[dict]:
+    rule_analyzer = RuleBasedAxisAnalyzer()
+    model = TfidfKnnAxisRegressor(word_ngram_max=word_ngram_max).fit(train_examples)
+    predictions = []
+    for example in test_examples:
+        rule_prediction = rule_analyzer.analyze(example.utterance).to_axes_dict()
+        ml_prediction = model.predict(example.utterance)
+        predictions.append({axis: round((rule_prediction[axis] + ml_prediction[axis]) / 2) for axis in AXIS_KEYS})
+    return _predicted_rows(test_examples, predictions)
 
 
 def _total_error(row: dict) -> int:
@@ -138,23 +181,64 @@ def _print_report(name: str, rows: list[dict]) -> None:
         print(f"  [{row['style']}] err={_total_error(row):3d} {utterance}")
 
 
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--word-ngram-max",
+        type=int,
+        default=1,
+        choices=(1, 2),
+        help="maximum word n-gram size for the ML-only feature set",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("leave-one-out", "source-group-holdout"),
+        default="leave-one-out",
+        help="evaluation mode; source-group-holdout is fast and keeps whole dialogue/source groups together",
+    )
+    return parser
+
+
 def main() -> None:
-    rule_rows = _evaluate_rule_based()
-    ml_rows = _evaluate_ml_leave_one_out()
-    hybrid_rows = _evaluate_hybrid_leave_one_out()
+    args = build_parser().parse_args()
+    evaluation_label = "leave-one-out"
+    if args.mode == "leave-one-out":
+        rule_rows = _evaluate_rule_based()
+        ml_rows = _evaluate_ml_leave_one_out(args.word_ngram_max)
+        hybrid_rows = _evaluate_hybrid_leave_one_out(args.word_ngram_max)
+    else:
+        train_examples, test_examples = split_by_source_group(load_default_axis_dataset())
+        print(f"source_group_holdout_train={len(train_examples)} test={len(test_examples)}")
+        evaluation_label = "source-group holdout"
+        rule_rows = _evaluate_rule_based(test_examples)
+        ml_rows = _evaluate_ml_holdout(args.word_ngram_max, train_examples, test_examples)
+        hybrid_rows = _evaluate_hybrid_holdout(args.word_ngram_max, train_examples, test_examples)
     _print_report("Rule-based baseline", rule_rows)
-    _print_report("ML baseline: TF-IDF weighted k-NN, leave-one-out", ml_rows)
-    _print_report("Hybrid: rule + ML (leave-one-out) averaged per axis", hybrid_rows)
+    _print_report(f"ML baseline: TF-IDF word 1-{args.word_ngram_max} gram weighted k-NN, {evaluation_label}", ml_rows)
+    _print_report(f"Hybrid: rule + word 1-{args.word_ngram_max} gram ML ({evaluation_label}) averaged per axis", hybrid_rows)
 
     rule_mae = sum(_mae(rule_rows).values()) / len(AXIS_KEYS)
     ml_mae = sum(_mae(ml_rows).values()) / len(AXIS_KEYS)
     hybrid_mae = sum(_mae(hybrid_rows).values()) / len(AXIS_KEYS)
+    rule_spearman = sum(_spearman(rule_rows).values()) / len(AXIS_KEYS)
+    ml_spearman = sum(_spearman(ml_rows).values()) / len(AXIS_KEYS)
+    hybrid_spearman = sum(_spearman(hybrid_rows).values()) / len(AXIS_KEYS)
     print("\nSummary")
     print(f"  rule_avg_mae  : {rule_mae:.2f}")
     print(f"  ml_avg_mae    : {ml_mae:.2f} (delta vs rule: {ml_mae - rule_mae:+.2f})")
     print(f"  hybrid_avg_mae: {hybrid_mae:.2f} (delta vs rule: {hybrid_mae - rule_mae:+.2f})")
-    best = min(("rule", rule_mae), ("ml", ml_mae), ("hybrid", hybrid_mae), key=lambda kv: kv[1])
-    print(f"  best_by_mae   : {best[0]} ({best[1]:.2f})")
+    best_mae = min(("rule", rule_mae), ("ml", ml_mae), ("hybrid", hybrid_mae), key=lambda kv: kv[1])
+    best_spearman = max(
+        ("rule", rule_spearman),
+        ("ml", ml_spearman),
+        ("hybrid", hybrid_spearman),
+        key=lambda kv: kv[1],
+    )
+    print(f"  rule_avg_spearman  : {rule_spearman:.2f}")
+    print(f"  ml_avg_spearman    : {ml_spearman:.2f}")
+    print(f"  hybrid_avg_spearman: {hybrid_spearman:.2f}")
+    print(f"  best_by_mae        : {best_mae[0]} ({best_mae[1]:.2f})")
+    print(f"  best_by_spearman   : {best_spearman[0]} ({best_spearman[1]:.2f})")
 
 
 if __name__ == "__main__":
