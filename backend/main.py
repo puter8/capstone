@@ -1021,6 +1021,10 @@ class ProfilePatchRequest(BaseModel):
     english_level: Optional[str] = None
 
 
+class ProfileAvatarResponse(BaseModel):
+    avatar_url: Optional[str] = None
+
+
 def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
     # 계약: snake_case UserProfile. traits는 DB seed 5개(생성 로직은 후속).
     # avatar_url 은 DB 가 아니라 OAuth 메타데이터(구글/카카오)에서 정규화해 넣는다.
@@ -1075,6 +1079,12 @@ async def onboarding(
         raise AppError(503, "persistence_failed", "Failed to save profile")
 
     return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
+
+
+@app.get("/api/profile/avatar", response_model=ProfileAvatarResponse)
+async def get_profile_avatar(user=Depends(get_current_user)):
+    """OAuth 프로필 사진 조회. profiles 행이 없는 온보딩 전에도 사용할 수 있다."""
+    return ProfileAvatarResponse(avatar_url=_extract_avatar(user))
 
 
 @app.get("/api/profile")

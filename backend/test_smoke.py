@@ -24,8 +24,23 @@ def test_core_routes_present():
         "/api/health",
         "/api/onboarding",
         "/api/profile",
+        "/api/profile/avatar",
         "/api/conversations",
         "/api/conversations/{conversation_id}/turns",
     }
     missing = required - paths
     assert not missing, f"core routes missing (merge clobber?): {sorted(missing)}"
+
+
+def test_extract_avatar_normalizes_oauth_metadata():
+    class User:
+        user_metadata = {"picture": "https://example.com/avatar.png"}
+
+    assert main._extract_avatar(User()) == "https://example.com/avatar.png"
+
+
+def test_extract_avatar_returns_none_without_profile_picture():
+    class User:
+        user_metadata = {"name": "Pally user"}
+
+    assert main._extract_avatar(User()) is None

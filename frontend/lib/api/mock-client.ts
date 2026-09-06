@@ -158,6 +158,12 @@ export const mockPallyApi: PallyApi = {
     return { profile: clone(mockState.profile) };
   },
 
+  async getProfileAvatar() {
+    await delay();
+    ensureActiveAccount();
+    return { avatar_url: mockState.profile.avatar_url };
+  },
+
   async onboard(input: OnboardingInput) {
     await delay();
     ensureActiveAccount();

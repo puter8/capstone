@@ -79,6 +79,10 @@ export interface ProfileResponse {
   profile: UserProfile;
 }
 
+export interface ProfileAvatarResponse {
+  avatar_url: string | null;
+}
+
 export interface ConversationResponse {
   conversation: Conversation;
 }
@@ -187,6 +191,7 @@ export interface GetConversationInput {
 
 export interface PallyApi {
   getProfile(): Promise<ProfileResponse>;
+  getProfileAvatar(): Promise<ProfileAvatarResponse>;
   onboard(input: OnboardingInput): Promise<ProfileResponse>;
   updateProfile(input: UpdateProfileInput): Promise<ProfileResponse>;
   createConversation(idempotencyKey: string): Promise<ConversationResponse>;

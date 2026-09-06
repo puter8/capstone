@@ -18,6 +18,7 @@ import {
   conversationResponseSchema,
   errorResponseSchema,
   profileResponseSchema,
+  profileAvatarResponseSchema,
   recordedEventResponseSchema,
   turnResponseSchema,
   usageResponseSchema,
@@ -96,6 +97,8 @@ function queryString(input: Record<string, string | number | undefined>): string
 
 export const httpPallyApi: PallyApi = {
   getProfile: () => apiRequest("/api/profile", { schema: profileResponseSchema }),
+
+  getProfileAvatar: () => apiRequest("/api/profile/avatar", { schema: profileAvatarResponseSchema }),
 
   onboard: (input: OnboardingInput) => apiRequest("/api/onboarding", {
     schema: profileResponseSchema,

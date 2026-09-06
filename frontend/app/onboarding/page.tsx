@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { MobileShell } from "@/components/layout/MobileShell";
 import { LevelOption } from "@/components/onboarding/LevelOption";
@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { TextInput } from "@/components/ui/TextInput";
-import { pallyApi } from "@/lib/api";
+import { pallyApi, PallyApiError } from "@/lib/api";
 import type { Level } from "@/lib/types/session";
 
 const LEVELS = [
@@ -24,10 +24,30 @@ const LEVELS = [
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [level, setLevel] = useState<Level>("B1");
+  const [level, setLevel] = useState<Level | null>(null);
   const [name, setName] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void pallyApi.getProfileAvatar()
+      .then(({ avatar_url: nextAvatarUrl }) => {
+        if (active) setAvatarUrl(nextAvatarUrl);
+      })
+      .catch((caught: unknown) => {
+        console.error("Profile avatar fetch failed", caught);
+        if (caught instanceof PallyApiError && caught.code === "unauthorized") {
+          router.replace("/");
+          return;
+        }
+        if (active) setError(caught instanceof Error ? caught.message : "프로필 사진을 불러오지 못했어요.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [router]);
 
   const goBack = () => setStep((value) => (value === 3 ? 2 : 1));
   const goNext = async () => {
@@ -36,7 +56,13 @@ export default function OnboardingPage() {
       return;
     }
     if (step === 1) {
+      if (level === null) return;
       setStep(2);
+      return;
+    }
+
+    if (level === null) {
+      setError("영어 레벨을 선택해 주세요.");
       return;
     }
 
@@ -59,7 +85,7 @@ export default function OnboardingPage() {
         <>
           <PageHeader
             className="absolute left-0 top-[60px]"
-            description={"Pally와 대화 하는 용어와 문장 길이를 결정할 수 있도록\n정보를 알려주세요"}
+            description={"Pally와 대화 하는 용어와 문장 길이를 결정할 수\n있도록 정보를 알려주세요"}
             title="영어 레벨은?"
             variant="intro"
           />
@@ -88,12 +114,24 @@ export default function OnboardingPage() {
           </button>
           <PageHeader
             className="absolute left-0 top-[60px]"
-            description={"Pally와 대화 하는 용어와 문장 길이를 결정할 수 있도록\n정보를 알려주세요"}
+            description={"Pally와 대화 하는 용어와 문장 길이를 결정할 수\n있도록 정보를 알려주세요"}
             showBackLink={false}
             title="이름 정하기"
             variant="back"
           />
-          <div className="absolute left-[117px] top-[220px] h-[149px] w-[155px] rounded-xl bg-[#dedede]" />
+          <div className="absolute left-[117px] top-[220px] h-[149px] w-[155px] overflow-hidden rounded-xl bg-[#dedede]">
+            <img
+              alt="프로필 사진"
+              className="size-full object-cover"
+              onError={() => {
+                if (avatarUrl === null) return;
+                console.error("Profile avatar image failed to load");
+                setAvatarUrl(null);
+              }}
+              referrerPolicy="no-referrer"
+              src={avatarUrl ?? "/pally/pally-character.svg"}
+            />
+          </div>
           <TextInput
             aria-label="이름"
             className="absolute left-5 top-[460px] w-[calc(100%-40px)]"
@@ -124,7 +162,7 @@ export default function OnboardingPage() {
         <OnboardingProgress className="w-[272px] px-[112px]" step={step} />
       </div>
       {error ? <p className="absolute bottom-[102px] left-5 right-5 text-center text-body-2 text-red-600" role="alert">{error}</p> : null}
-      <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={isSaving || (step === 2 && !name.trim())} onClick={goNext}>
+      <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={isSaving || (step === 1 && level === null) || (step === 2 && !name.trim())} onClick={goNext}>
         {isSaving ? "저장 중..." : "확인"}
       </PrimaryButton>
     </MobileShell>
