@@ -119,7 +119,7 @@ export default function OnboardingPage() {
             title="이름 정하기"
             variant="back"
           />
-          <div className="absolute left-[117px] top-[220px] h-[149px] w-[155px] overflow-hidden rounded-xl bg-[#dedede]">
+          <div className="absolute left-[117px] top-[220px] h-[149px] w-[155px] overflow-hidden rounded-full bg-[#dedede]">
             <img
               alt="프로필 사진"
               className="size-full object-cover"
