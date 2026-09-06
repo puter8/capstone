@@ -13,7 +13,7 @@ export interface RecorderHandlers {
   onStart: () => void;
   /**
    * blob: recorded audio from MediaRecorder.
-   * transcript: reserved for a pre-transcribed result; currently unused.
+   * transcript: browser-recognized preview shown while the backend processes the turn.
    */
   onStop: (blob: Blob | null, transcript?: string) => void;
   onPermissionDenied: () => void;

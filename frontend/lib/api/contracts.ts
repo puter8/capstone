@@ -64,11 +64,13 @@ export interface ConversationTurn {
   axes?: Axes | null;
   character?: CharacterParams | null;
   feedback: FeedbackItem[];
+  feedback_pending: boolean;
   warnings?: ApiWarning[];
   created_at: string;
 }
 
 export interface UsageQuota {
+  used_turns?: number;
   remaining_turns: number;
   daily_limit: number;
   exhausted: boolean;
@@ -106,6 +108,7 @@ export interface TurnResponse {
   conversation_id: string;
   turn_id: string | null;
   status: "completed" | "partial";
+  replayed: boolean;
   user: {
     transcript: string;
   };
@@ -116,6 +119,7 @@ export interface TurnResponse {
   axes: Axes;
   character: CharacterParams;
   feedback: FeedbackItem[];
+  feedback_pending: boolean;
   warnings: ApiWarning[];
   quota?: UsageQuota;
   created_at: string | null;
@@ -129,6 +133,63 @@ export interface UsageResponse {
   remaining_turns: number;
   daily_limit: number;
   reset_at: string;
+}
+
+export type BillingInterval = "month" | "year";
+
+export interface BillingProduct {
+  id: string;
+  name: string;
+  interval: BillingInterval;
+  amount_minor: number;
+  currency: string;
+  display_price: string;
+  trial_days: number;
+}
+
+export interface BillingProductsResponse {
+  products: BillingProduct[];
+}
+
+export interface CheckoutInput {
+  product_id: string;
+  success_url: string;
+  cancel_url: string;
+}
+
+export interface CheckoutResponse {
+  checkout: {
+    product_id: string;
+    checkout_url: string;
+    expires_at: string;
+  };
+}
+
+export interface Subscription {
+  plan: "free" | "pro";
+  status: string;
+  entitled: boolean;
+  product_id: string | null;
+  current_period_end: string | null;
+  will_renew: boolean;
+  entitlements: string[];
+  updated_at: string | null;
+}
+
+export interface SubscriptionResponse {
+  subscription: Subscription;
+}
+
+export interface AccountDeletionRequestInput {
+  reason?: string;
+  reauth_token?: string;
+}
+
+export interface AccountDeletionStatusResponse {
+  status: "none" | "pending";
+  requested_at?: string | null;
+  purge_after?: string | null;
+  retention_days?: number;
 }
 
 export type ActivityEventType =
@@ -203,6 +264,12 @@ export interface PallyApi {
   getUsage(): Promise<UsageResponse>;
   recordActivityEvent(input: ActivityEventInput): Promise<void>;
   getAchievements(): Promise<AchievementsResponse>;
+  getBillingProducts(): Promise<BillingProductsResponse>;
+  createCheckout(input: CheckoutInput): Promise<CheckoutResponse>;
+  getSubscription(): Promise<SubscriptionResponse>;
+  refreshSubscription(): Promise<SubscriptionResponse>;
+  getAccountDeletion(): Promise<AccountDeletionStatusResponse>;
+  requestAccountDeletion(input: AccountDeletionRequestInput): Promise<AccountDeletionStatusResponse>;
 }
 
 export type ApiErrorCode =

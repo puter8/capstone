@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { MobileShell } from "@/components/layout/MobileShell";
 import { LevelOption } from "@/components/onboarding/LevelOption";
@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { pallyApi, PallyApiError } from "@/lib/api";
+import { getCurrentUserId, invalidateProfile, loadProfile } from "@/lib/api/route-data";
 import type { Level } from "@/lib/types/session";
 
 const LEVELS = [
@@ -24,10 +25,15 @@ export default function LevelSettingsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    pallyApi.getProfile()
+    getCurrentUserId()
+      .then(async (userId) => {
+        userIdRef.current = userId;
+        return loadProfile(userId);
+      })
       .then(({ profile }) => {
         if (active) setLevel(profile.english_level);
       })
@@ -51,6 +57,8 @@ export default function LevelSettingsPage() {
     setError(null);
     try {
       await pallyApi.updateProfile({ english_level: level });
+      const userId = userIdRef.current;
+      if (userId) invalidateProfile(userId);
       router.push("/my");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "영어 레벨을 변경하지 못했어요.");

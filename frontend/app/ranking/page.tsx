@@ -7,9 +7,10 @@ import { ChallengeTask } from "@/components/challenge/ChallengeTask";
 import { StreakCard } from "@/components/challenge/StreakCard";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
-import { PageLoader } from "@/components/ui/PageLoader";
+import { ContentSkeleton } from "@/components/ui/ContentSkeleton";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { AchievementsResponse } from "@/lib/api";
+import { getCurrentUserId, loadAchievements } from "@/lib/api/route-data";
 
 export default function RankingPage() {
   const router = useRouter();
@@ -20,6 +21,7 @@ export default function RankingPage() {
   useEffect(() => {
     let active = true;
     const load = async () => {
+      const userId = await getCurrentUserId();
       void pallyApi.recordActivityEvent({
         event_id: crypto.randomUUID(),
         event_type: "achievements_opened",
@@ -28,7 +30,7 @@ export default function RankingPage() {
         if (caught instanceof PallyApiError && caught.code === "unauthorized") return;
         console.error("Activity event failed", caught);
       });
-      const response = await pallyApi.getAchievements();
+      const response = await loadAchievements(userId);
       if (active) setData(response);
     };
     void load()
@@ -47,7 +49,6 @@ export default function RankingPage() {
 
   return (
     <MobileShell>
-      {isLoading ? <PageLoader message="오늘의 성취를 불러오고 있어요" /> : null}
       <h1 className="absolute left-5 top-[62px] text-display text-primary">Achievements</h1>
 
       <div className="absolute left-4 right-6 top-[140px] h-[104px]">
@@ -56,6 +57,7 @@ export default function RankingPage() {
 
       <h2 className="absolute left-5 top-[280px] text-title-1 text-text">Daily Tasks</h2>
       <section aria-label="오늘의 과제" className="absolute left-5 right-5 top-[336px] flex flex-col gap-3">
+        {isLoading ? <ContentSkeleton rows={3} /> : null}
         {error ? <p className="text-center text-body text-red-600" role="alert">{error}</p> : null}
         {data?.daily_tasks.map((task) => (
           <ChallengeTask

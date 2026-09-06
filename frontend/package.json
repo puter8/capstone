@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "check:conversation-order": "tsx scripts/check-conversation-order.ts",
     "check:mock-api": "tsx scripts/check-mock-api.ts",
+    "check:query-cache": "tsx scripts/check-query-cache.ts",
     "check:supabase": "tsx scripts/check-supabase.ts"
   },
   "dependencies": {

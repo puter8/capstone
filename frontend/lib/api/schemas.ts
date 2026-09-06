@@ -90,6 +90,7 @@ export const conversationDetailResponseSchema = z.object({
     user_transcript: z.string().nullable(),
     pally_text: z.string().nullable(),
     feedback: z.array(feedbackSchema),
+    feedback_pending: z.boolean(),
     created_at: z.string(),
   })),
   next_cursor: z.string().nullable(),
@@ -99,11 +100,13 @@ export const turnResponseSchema = z.object({
   conversation_id: z.string().uuid(),
   turn_id: z.string().uuid().nullable(),
   status: z.enum(["completed", "partial"]),
+  replayed: z.boolean(),
   user: z.object({ transcript: z.string() }),
   pally: z.object({ text: z.string(), audio: z.string().nullable() }),
   axes: axesSchema,
   character: characterSchema,
   feedback: z.array(feedbackSchema),
+  feedback_pending: z.boolean(),
   warnings: z.array(warningSchema),
   quota: z.object({
     used_turns: z.number().int().nonnegative().optional(),
@@ -136,6 +139,46 @@ export const achievementsResponseSchema = z.object({
     status: z.enum(["completed", "default"]),
     completed_at: z.string().nullable(),
   })).length(3),
+});
+
+export const billingProductsResponseSchema = z.object({
+  products: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    interval: z.enum(["month", "year"]),
+    amount_minor: z.number().int().nonnegative(),
+    currency: z.string(),
+    display_price: z.string(),
+    trial_days: z.number().int().nonnegative(),
+  })),
+});
+
+export const checkoutResponseSchema = z.object({
+  checkout: z.object({
+    product_id: z.string(),
+    checkout_url: z.string().url(),
+    expires_at: z.string(),
+  }),
+});
+
+export const subscriptionResponseSchema = z.object({
+  subscription: z.object({
+    plan: z.enum(["free", "pro"]),
+    status: z.string(),
+    entitled: z.boolean(),
+    product_id: z.string().nullable(),
+    current_period_end: z.string().nullable(),
+    will_renew: z.boolean(),
+    entitlements: z.array(z.string()),
+    updated_at: z.string().nullable(),
+  }),
+});
+
+export const accountDeletionStatusResponseSchema = z.object({
+  status: z.enum(["none", "pending"]),
+  requested_at: z.string().nullable().optional(),
+  purge_after: z.string().nullable().optional(),
+  retention_days: z.number().int().positive().optional(),
 });
 
 export const errorResponseSchema = z.object({
