@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import os
 import sys
+from pathlib import Path
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -17,7 +18,9 @@ if ROOT not in sys.path:
 
 from ai.analyzers import RuleBasedAxisAnalyzer
 from ai.contracts import AXIS_KEYS
-from ai.ml_baseline import TfidfKnnAxisRegressor, load_default_axis_dataset
+from ai.ml_baseline import TfidfKnnAxisRegressor, _load_jsonl_axis_dataset, load_default_axis_dataset
+
+DEFAULT_GOLD_PATH = os.path.join(ROOT, "data", "fixtures", "ml_transition_gold_human_200.jsonl")
 
 
 def _mae(rows: list[dict]) -> dict[str, float]:
@@ -192,9 +195,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("leave-one-out", "source-group-holdout"),
+        choices=("leave-one-out", "source-group-holdout", "gold-holdout"),
         default="leave-one-out",
-        help="evaluation mode; source-group-holdout is fast and keeps whole dialogue/source groups together",
+        help=(
+            "evaluation mode; source-group-holdout is fast and keeps whole dialogue/source groups together; "
+            "gold-holdout trains on the configured dataset (PALLY_AXIS_DATASET) and evaluates against the "
+            "frozen human-reviewed gold set, which is never used for training"
+        ),
+    )
+    parser.add_argument(
+        "--gold-path",
+        default=DEFAULT_GOLD_PATH,
+        help="path to the frozen human-reviewed gold JSONL (only used with --mode gold-holdout)",
     )
     return parser
 
@@ -206,6 +218,14 @@ def main() -> None:
         rule_rows = _evaluate_rule_based()
         ml_rows = _evaluate_ml_leave_one_out(args.word_ngram_max)
         hybrid_rows = _evaluate_hybrid_leave_one_out(args.word_ngram_max)
+    elif args.mode == "gold-holdout":
+        train_examples = load_default_axis_dataset()
+        gold_examples = _load_jsonl_axis_dataset(Path(args.gold_path))
+        print(f"gold_holdout_train={len(train_examples)} test={len(gold_examples)} gold_path={args.gold_path}")
+        evaluation_label = "gold holdout (frozen human-reviewed, never trained on)"
+        rule_rows = _evaluate_rule_based(gold_examples)
+        ml_rows = _evaluate_ml_holdout(args.word_ngram_max, train_examples, gold_examples)
+        hybrid_rows = _evaluate_hybrid_holdout(args.word_ngram_max, train_examples, gold_examples)
     else:
         train_examples, test_examples = split_by_source_group(load_default_axis_dataset())
         print(f"source_group_holdout_train={len(train_examples)} test={len(test_examples)}")
