@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { pallyApi, PallyApiError } from "@/lib/api";
+import { invalidateCurrentUserConversationData } from "@/lib/api/route-data";
 
 type ConversationNoteCardProps = {
   conversationId: string;
@@ -28,6 +29,9 @@ export function ConversationNoteCard({ conversationId, feedbackHref, title }: Co
         return;
       }
     }
+    await invalidateCurrentUserConversationData(conversationId).catch((caught: unknown) => {
+      console.error("Conversation cache invalidation failed", caught);
+    });
     window.localStorage.setItem("pally:conversationId", conversationId);
     router.push(`/home?conversation_id=${encodeURIComponent(conversationId)}`);
   };
@@ -46,8 +50,8 @@ export function ConversationNoteCard({ conversationId, feedbackHref, title }: Co
       />
       {error ? <p className="absolute bottom-1 left-[13px] text-[11px] text-red-100" role="alert">{error}</p> : null}
       <div className="absolute right-[10px] top-[84px] flex gap-4">
-        <button className="grid h-9 w-[83px] place-items-center rounded-full border border-surface text-button-2 text-surface disabled:opacity-60" disabled={isReopening} onClick={() => { void reopen(); }} type="button">
-          {isReopening ? "재개 중..." : "대화하기"}
+        <button aria-busy={isReopening} className="grid h-9 w-[83px] place-items-center rounded-full border border-surface text-button-2 text-surface disabled:opacity-60" disabled={isReopening} onClick={() => { void reopen(); }} type="button">
+          대화하기
         </button>
         <Link className="grid h-9 w-[102px] place-items-center rounded-full border border-primary bg-primary text-button-2 text-white" href={feedbackHref}>피드백 보기</Link>
       </div>

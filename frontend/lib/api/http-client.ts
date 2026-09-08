@@ -2,6 +2,8 @@ import type { z } from "zod";
 
 import type {
   ActivityEventInput,
+  AccountDeletionRequestInput,
+  CheckoutInput,
   GetConversationInput,
   ListConversationsInput,
   OnboardingInput,
@@ -12,6 +14,9 @@ import type {
 import { PallyApiError } from "@/lib/api/contracts";
 import {
   achievementsResponseSchema,
+  accountDeletionStatusResponseSchema,
+  billingProductsResponseSchema,
+  checkoutResponseSchema,
   conversationDetailResponseSchema,
   conversationListResponseSchema,
   conversationMutationResponseSchema,
@@ -20,6 +25,7 @@ import {
   profileResponseSchema,
   profileAvatarResponseSchema,
   recordedEventResponseSchema,
+  subscriptionResponseSchema,
   turnResponseSchema,
   usageResponseSchema,
 } from "@/lib/api/schemas";
@@ -168,5 +174,33 @@ export const httpPallyApi: PallyApi = {
   },
 
   getAchievements: () => apiRequest("/api/achievements", { schema: achievementsResponseSchema }),
+
+  getBillingProducts: () => apiRequest("/api/billing/products", { schema: billingProductsResponseSchema }),
+
+  createCheckout: (input: CheckoutInput) => apiRequest("/api/billing/checkout", {
+    schema: checkoutResponseSchema,
+    method: "POST",
+    contentType: "application/json",
+    idempotencyKey: createIdempotencyKey(),
+    body: JSON.stringify(input),
+  }),
+
+  getSubscription: () => apiRequest("/api/subscription", { schema: subscriptionResponseSchema }),
+
+  refreshSubscription: () => apiRequest("/api/subscription/refresh", {
+    schema: subscriptionResponseSchema,
+    method: "POST",
+    idempotencyKey: createIdempotencyKey(),
+  }),
+
+  getAccountDeletion: () => apiRequest("/api/account/deletion-request", { schema: accountDeletionStatusResponseSchema }),
+
+  requestAccountDeletion: (input: AccountDeletionRequestInput) => apiRequest("/api/account/deletion-request", {
+    schema: accountDeletionStatusResponseSchema,
+    method: "POST",
+    contentType: "application/json",
+    idempotencyKey: createIdempotencyKey(),
+    body: JSON.stringify(input),
+  }),
 
 };

@@ -1748,6 +1748,14 @@ def _owned_session(sb, conversation_id: str, user_id: str) -> dict:
     return res.data[0]
 
 
+def _latest_user_axes(messages: list) -> dict:
+    """Return the most recent persisted user axes, or the initial shape when no turn exists."""
+    for message in reversed(messages):
+        if message["role"] == "user" and message.get("axes"):
+            return message["axes"]
+    return dict(_INITIAL_AXES)
+
+
 @app.get("/api/conversations")
 async def list_conversations(
     user_id: str = Depends(get_current_user_id),
@@ -1776,7 +1784,7 @@ async def list_conversations(
     msgs_by_session: Dict[str, list] = {sid: [] for sid in ids}
     if ids:
         try:
-            msgs = sb.table("messages").select("session_id, role, transcript, feedback, created_at").in_("session_id", ids).order("created_at").execute()
+            msgs = sb.table("messages").select("session_id, role, transcript, axes, feedback, created_at").in_("session_id", ids).order("created_at").execute()
         except Exception as e:
             logging.error(f"list_conversations messages failed: {e}")
             raise AppError(503, "persistence_failed", "Failed to load conversation summaries")
@@ -1795,6 +1803,7 @@ async def list_conversations(
             "last_turn_at": ms[-1]["created_at"] if ms else None,
             "completed_at": s.get("ended_at"),
             "turn_count": len(user_msgs),
+            "current_axes": _latest_user_axes(ms),
             "feedback_count": sum(len(m.get("feedback") or []) for m in user_msgs),
             "preview": _truncate(user_msgs[-1]["transcript"], 120) if user_msgs else None,
         })
@@ -1823,24 +1832,7 @@ async def get_conversation(
         logging.error(f"get_conversation messages failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to load turns")
     ms = msgs.data or []
-
-    # user→pally 쌍으로 turn 구성. turn_id = user 메시지 id.
-    turns = []
-    seq = 0
-    pending_user = None
-    for m in ms:
-        if m["role"] == "user":
-            if pending_user is not None:
-                seq += 1
-                turns.append(_turn_detail(pending_user, None, seq))
-            pending_user = m
-        else:
-            seq += 1
-            turns.append(_turn_detail(pending_user, m, seq))
-            pending_user = None
-    if pending_user is not None:
-        seq += 1
-        turns.append(_turn_detail(pending_user, None, seq))
+    turns = _conversation_turns(ms)
 
     page = turns[:limit]
     next_cursor = page[-1]["created_at"] if len(turns) > limit else None
@@ -1856,8 +1848,41 @@ async def get_conversation(
         "reopened_at": session.get("reopened_at"),
         "reopen_count": session.get("reopen_count", 0),
         "turn_count": len(user_msgs),
+        "current_axes": _latest_user_axes(ms),
     }
     return {"conversation": conv, "turns": page, "next_cursor": next_cursor}
+
+
+def _conversation_turns(messages: list[dict]) -> list[dict]:
+    """Build user→pally turns even when equal timestamps arrive out of order."""
+    role_order = {"user": 0, "pally": 1}
+    ordered = sorted(
+        messages,
+        key=lambda message: (
+            message["created_at"],
+            role_order[message["role"]],
+            message["id"],
+        ),
+    )
+
+    # user→pally 쌍으로 turn 구성. turn_id = user 메시지 id.
+    turns = []
+    seq = 0
+    pending_user = None
+    for m in ordered:
+        if m["role"] == "user":
+            if pending_user is not None:
+                seq += 1
+                turns.append(_turn_detail(pending_user, None, seq))
+            pending_user = m
+        else:
+            seq += 1
+            turns.append(_turn_detail(pending_user, m, seq))
+            pending_user = None
+    if pending_user is not None:
+        seq += 1
+        turns.append(_turn_detail(pending_user, None, seq))
+    return turns
 
 
 def _turn_detail(user_msg: Optional[dict], pally_msg: Optional[dict], seq: int) -> dict:

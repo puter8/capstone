@@ -66,3 +66,35 @@ def test_extract_avatar_prefers_kakao_profile_image_over_thumbnail():
         }
 
     assert main._extract_avatar(User()) == "https://k.kakaocdn.net/profile.jpg"
+
+
+def test_conversation_turns_restore_user_before_pally_for_equal_timestamps():
+    messages = [
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "role": "pally",
+            "transcript": "That's great you're focused on your project!",
+            "feedback": None,
+            "created_at": "2026-09-06T10:00:00+00:00",
+        },
+        {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "role": "user",
+            "transcript": "just working on my project",
+            "feedback": [],
+            "created_at": "2026-09-06T10:00:00+00:00",
+        },
+    ]
+
+    assert main._conversation_turns(messages) == [
+        {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "sequence": 1,
+            "status": "completed",
+            "user_transcript": "just working on my project",
+            "pally_text": "That's great you're focused on your project!",
+            "feedback": [],
+            "feedback_pending": False,
+            "created_at": "2026-09-06T10:00:00+00:00",
+        }
+    ]

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,16 @@ function TabIcon({ id, active, size }: { id: string; active: boolean; size: numb
 
 export function BottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const prefetchTab = useCallback((href: string) => {
+    router.prefetch(href);
+    void import("@/lib/api/route-data")
+      .then(({ prefetchRouteData }) => prefetchRouteData(href))
+      .catch((error: unknown) => {
+        console.error("Tab data prefetch failed", { href, error });
+      });
+  }, [router]);
 
   return (
     <nav
@@ -59,6 +70,9 @@ export function BottomNav() {
                   active && "text-primary-soft",
                 )}
                 href={tab.href}
+                onFocus={() => prefetchTab(tab.href)}
+                onPointerEnter={() => prefetchTab(tab.href)}
+                onTouchStart={() => prefetchTab(tab.href)}
                 style={{ width: tab.size, height: tab.size }}
               >
                 <TabIcon active={active} id={tab.id} size={tab.size} />

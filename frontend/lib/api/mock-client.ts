@@ -1,4 +1,6 @@
 import type {
+  AccountDeletionStatusResponse,
+  BillingProduct,
   ConversationDetailResponse,
   ConversationListItem,
   ConversationListResponse,
@@ -45,6 +47,8 @@ interface MockState {
   profile: ProfileResponse["profile"];
   quota: UsageQuota;
   records: MockConversationRecord[];
+  subscriptionEntitled: boolean;
+  accountDeletion: AccountDeletionStatusResponse;
 }
 
 interface IdempotencyEntry {
@@ -64,8 +68,31 @@ function createInitialState(): MockState {
       conversation: clone(conversation),
       turns: MOCK_TURNS.filter((turn) => turn.conversation_id === conversation.id).map(clone),
     })),
+    subscriptionEntitled: false,
+    accountDeletion: { status: "none" },
   };
 }
+
+const MOCK_BILLING_PRODUCTS: BillingProduct[] = [
+  {
+    id: "pro_monthly",
+    name: "Monthly",
+    interval: "month",
+    amount_minor: 999,
+    currency: "USD",
+    display_price: "$9.99",
+    trial_days: 0,
+  },
+  {
+    id: "pro_yearly",
+    name: "Yearly",
+    interval: "year",
+    amount_minor: 9999,
+    currency: "USD",
+    display_price: "$99.99",
+    trial_days: 7,
+  },
+];
 
 function clone<T>(value: T): T {
   return typeof structuredClone === "function"
@@ -225,6 +252,13 @@ export const mockPallyApi: PallyApi = {
     await delay();
     ensureActiveAccount();
     const operation = `create_turn:${conversationId}`;
+    const cached = idempotencyCache.get(input.idempotency_key);
+    if (cached) {
+      if (cached.operation !== operation) {
+        throw new PallyApiError(409, "idempotency_conflict", "같은 idempotency key를 다른 요청에 사용할 수 없어요.");
+      }
+      return { ...clone(cached.result as TurnResponse), replayed: true };
+    }
     return withIdempotency(input.idempotency_key, operation, () => {
       const record = getRecord(conversationId);
       if (record.conversation.status !== "active") {
@@ -259,6 +293,7 @@ export const mockPallyApi: PallyApi = {
         axes: clone(script.axes),
         character: clone(script.character),
         feedback: clone(script.feedback),
+        feedback_pending: false,
         warnings: [],
         created_at: createdAt,
       };
@@ -281,6 +316,7 @@ export const mockPallyApi: PallyApi = {
         conversation_id: conversationId,
         turn_id: turnId,
         status: "completed",
+        replayed: false,
         user: { transcript: script.transcript },
         pally: {
           text: script.reply,
@@ -289,6 +325,7 @@ export const mockPallyApi: PallyApi = {
         axes: clone(script.axes),
         character: clone(script.character),
         feedback: clone(script.feedback),
+        feedback_pending: false,
         warnings: [],
         quota: clone(mockState.quota),
         created_at: createdAt,
@@ -392,6 +429,67 @@ export const mockPallyApi: PallyApi = {
         { id: "A3", title: "피드백 확인하기", description: "오늘 받은 피드백을 확인해보세요", status: "default" as const, completed_at: null },
       ],
     };
+  },
+
+  async getBillingProducts() {
+    await delay();
+    ensureActiveAccount();
+    return { products: clone(MOCK_BILLING_PRODUCTS) };
+  },
+
+  async createCheckout(input) {
+    await delay();
+    ensureActiveAccount();
+    if (!MOCK_BILLING_PRODUCTS.some((product) => product.id === input.product_id)) {
+      throw new PallyApiError(422, "invalid_product", "선택한 요금제를 찾을 수 없어요.");
+    }
+    return {
+      checkout: {
+        product_id: input.product_id,
+        checkout_url: `https://mock-checkout.local/session/${createUuid()}`,
+        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      },
+    };
+  },
+
+  async getSubscription() {
+    await delay();
+    ensureActiveAccount();
+    return {
+      subscription: {
+        plan: mockState.subscriptionEntitled ? "pro" as const : "free" as const,
+        status: mockState.subscriptionEntitled ? "active" : "none",
+        entitled: mockState.subscriptionEntitled,
+        product_id: mockState.subscriptionEntitled ? "pro_monthly" : null,
+        current_period_end: null,
+        will_renew: mockState.subscriptionEntitled,
+        entitlements: mockState.subscriptionEntitled ? ["unlimited_turns"] : [],
+        updated_at: null,
+      },
+    };
+  },
+
+  async refreshSubscription() {
+    return this.getSubscription();
+  },
+
+  async getAccountDeletion() {
+    await delay();
+    ensureActiveAccount();
+    return clone(mockState.accountDeletion);
+  },
+
+  async requestAccountDeletion() {
+    await delay();
+    ensureActiveAccount();
+    const now = new Date();
+    mockState.accountDeletion = {
+      status: "pending",
+      requested_at: now.toISOString(),
+      purge_after: new Date(now.getTime() + 730 * 24 * 60 * 60 * 1000).toISOString(),
+      retention_days: 730,
+    };
+    return clone(mockState.accountDeletion);
   },
 
 };

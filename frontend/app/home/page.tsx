@@ -10,21 +10,30 @@ import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
 import PallyCanvas from "@/components/pally/PallyCanvas";
 import { Toast } from "@/components/ui/Toast";
-import { PageLoader } from "@/components/ui/PageLoader";
 import { pallyApi, PallyApiError } from "@/lib/api";
+import type { Subscription, UsageResponse } from "@/lib/api";
+import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
+import {
+  invalidateConversationData,
+  invalidateUsage,
+  loadSubscription,
+  loadUsage,
+  schedulePrimaryRoutePrefetch,
+} from "@/lib/api/route-data";
 import { blobToMonoWav } from "@/lib/audio/blobToWav";
 import { useRecorder } from "@/lib/audio/useRecorder";
 import { usePally } from "@/lib/hooks/usePally";
 import { initialState, reducer } from "@/lib/state/conversation";
 import type { Message } from "@/lib/types/message";
 import { supabase } from "@/lib/supabase/client";
+import { UsageSummary } from "@/components/usage/UsageSummary";
 
 const CONVERSATION_KEY = "pally:conversationId";
 
 export default function HomePage() {
   const router = useRouter();
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { axes, revealAxes, updateFromChatResponse } = usePally();
+  const { axes, restoreAxes, revealAxes, updateFromChatResponse } = usePally();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -33,14 +42,19 @@ export default function HomePage() {
   const pendingTurnRef = useRef<Promise<void> | null>(null);
   const closingRef = useRef(false);
   const conversationIdRef = useRef<string | null>(null);
+  const userIdRef = useRef<string | null>(null);
   const [limitDialogOpen, setLimitDialogOpen] = useState(false);
   const [quotaExhausted, setQuotaExhausted] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
   const [warning, setWarning] = useState<string | null>(null);
+  const [pendingUserTranscript, setPendingUserTranscript] = useState<string | null>(null);
+  const [usage, setUsage] = useState<UsageResponse | null>(null);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
 
   useEffect(() => {
     let active = true;
+    let cancelPrefetch: (() => void) | null = null;
 
     const restoreConversation = async () => {
       const auth = await supabase.auth.getSession();
@@ -50,12 +64,23 @@ export default function HomePage() {
         return;
       }
 
-      const usage = await pallyApi.getUsage();
-      if (active) {
-        const exhausted = usage.remaining_turns === 0;
-        setQuotaExhausted(exhausted);
-        if (exhausted) setLimitDialogOpen(true);
-      }
+      const userId = auth.data.session.user.id;
+      userIdRef.current = userId;
+      const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
+      const storedId = window.localStorage.getItem(CONVERSATION_KEY);
+      const conversationId = requestedId ?? storedId;
+
+      const usagePromise = loadUsage(userId);
+      const completedPromise = pallyApi.listConversations({ status: "completed", limit: 1 });
+      const detailPromise = conversationId
+        ? pallyApi.getConversation(conversationId, { limit: 50 })
+        : Promise.resolve(null);
+
+      void loadSubscription(userId)
+        .then((response) => {
+          if (active) setSubscription(response.subscription);
+        })
+        .catch((error: unknown) => console.error("Subscription status failed", error));
 
       void pallyApi.recordActivityEvent({
         event_id: crypto.randomUUID(),
@@ -63,40 +88,36 @@ export default function HomePage() {
         occurred_at: new Date().toISOString(),
       }).catch((error: unknown) => console.error("Activity event failed", error));
 
-      const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
-      const storedId = window.localStorage.getItem(CONVERSATION_KEY);
-      const conversationId = requestedId ?? storedId;
-      if (!conversationId) return;
+      const [usage, completed, detail] = await Promise.all([
+        usagePromise,
+        completedPromise,
+        detailPromise,
+      ]);
+      if (!active) return;
 
-      const detail = await pallyApi.getConversation(conversationId, { limit: 50 });
+      if (active) {
+        setUsage(usage);
+        const exhausted = usage.remaining_turns === 0;
+        setQuotaExhausted(exhausted);
+        if (exhausted) setLimitDialogOpen(true);
+      }
+
+      const revealedAxes = completed.items[0]?.current_axes;
+      if (active && revealedAxes) restoreAxes(revealedAxes);
+
+      cancelPrefetch = schedulePrimaryRoutePrefetch(userId);
+      if (!conversationId || !detail) return;
+
       if (detail.conversation.status !== "active") {
         window.localStorage.removeItem(CONVERSATION_KEY);
         return;
       }
 
-      const messages: Message[] = detail.turns.flatMap((turn) => {
-        const turnMessages: Message[] = [];
-        if (turn.user_transcript) {
-          turnMessages.push({
-            id: `${turn.id}-user`,
-            sessionId: conversationId,
-            role: "user",
-            transcript: turn.user_transcript,
-            createdAt: turn.created_at,
-          });
-        }
-        if (turn.pally_text) {
-          turnMessages.push({
-            id: `${turn.id}-pally`,
-            sessionId: conversationId,
-            role: "pally",
-            transcript: turn.pally_text,
-            createdAt: turn.created_at,
-          });
-        }
-        return turnMessages;
-      });
+      const messages = conversationTurnsToMessages(conversationId, detail.turns);
       if (!active) return;
+      if (detail.conversation.current_axes) {
+        updateFromChatResponse({ axes: detail.conversation.current_axes });
+      }
       conversationIdRef.current = conversationId;
       window.localStorage.setItem(CONVERSATION_KEY, conversationId);
       dispatch({ type: "session/load", id: conversationId, messages });
@@ -116,8 +137,11 @@ export default function HomePage() {
       .finally(() => {
         if (active) setIsRestoring(false);
       });
-    return () => { active = false; };
-  }, [router]);
+    return () => {
+      active = false;
+      cancelPrefetch?.();
+    };
+  }, [restoreAxes, router, updateFromChatResponse]);
 
   const ensureConversation = useCallback(async () => {
     if (conversationIdRef.current) return conversationIdRef.current;
@@ -248,15 +272,33 @@ export default function HomePage() {
           transcript: response.pally.text,
           createdAt: response.created_at ?? new Date().toISOString(),
         };
+        setPendingUserTranscript(null);
         dispatch({ type: "rec/processed", userMsg: userMessage, pallyMsg: pallyMessage });
         updateFromChatResponse({ axes: response.axes });
-        if (response.quota?.exhausted) {
+        const userId = userIdRef.current;
+        if (userId) {
+          invalidateUsage(userId);
+          invalidateConversationData(userId, conversationId);
+        }
+        const quota = response.quota;
+        if (quota?.exhausted) {
           setQuotaExhausted(true);
           setLimitDialogOpen(true);
         }
-        if (response.warnings.length > 0) {
-          setWarning(response.warnings.map((item) => item.message).join(" "));
+        if (quota) {
+          setUsage((current) => ({
+            plan: "free",
+            date: current?.date ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date()),
+            timezone: "Asia/Seoul",
+            used_turns: quota.used_turns ?? quota.daily_limit - quota.remaining_turns,
+            remaining_turns: quota.remaining_turns,
+            daily_limit: quota.daily_limit,
+            reset_at: quota.resets_at,
+          }));
         }
+        const notices = response.warnings.map((item) => item.message);
+        if (response.replayed) notices.push("네트워크 재시도로 저장된 응답을 다시 불러왔어요.");
+        setWarning(notices.length > 0 ? notices.join(" ") : null);
 
         if (response.pally.audio) {
           await playTts(response.pally.audio);
@@ -270,6 +312,7 @@ export default function HomePage() {
       } catch (error) {
         console.error("Conversation request failed.", error);
         if (closingRef.current) return;
+        setPendingUserTranscript(null);
         if (error instanceof PallyApiError && error.code === "quota_exceeded") {
           setQuotaExhausted(true);
           setLimitDialogOpen(true);
@@ -286,10 +329,15 @@ export default function HomePage() {
 
   const recorder = useRecorder({
     onStart: () => {
-      if (!closingRef.current) dispatch({ type: "rec/start" });
+      if (!closingRef.current) {
+        setPendingUserTranscript(null);
+        dispatch({ type: "rec/start" });
+      }
     },
-    onStop: (blob) => {
+    onStop: (blob, transcript) => {
       if (closingRef.current) return;
+      const normalizedTranscript = transcript?.trim();
+      setPendingUserTranscript(normalizedTranscript ? normalizedTranscript : null);
       dispatch({ type: "rec/stop" });
 
       const pendingTurn = (async () => {
@@ -300,6 +348,7 @@ export default function HomePage() {
         } catch (error) {
           console.error("Audio processing failed.", error);
           if (closingRef.current) return;
+          setPendingUserTranscript(null);
           dispatch({
             type: "rec/error",
             reason: "generic",
@@ -313,10 +362,16 @@ export default function HomePage() {
       });
     },
     onPermissionDenied: () => {
-      if (!closingRef.current) dispatch({ type: "rec/error", reason: "permission-denied", message: "마이크 권한이 필요해요. 브라우저 설정에서 허용해 주세요." });
+      if (!closingRef.current) {
+        setPendingUserTranscript(null);
+        dispatch({ type: "rec/error", reason: "permission-denied", message: "마이크 권한이 필요해요. 브라우저 설정에서 허용해 주세요." });
+      }
     },
     onError: (message) => {
-      if (!closingRef.current) dispatch({ type: "rec/error", reason: "generic", message });
+      if (!closingRef.current) {
+        setPendingUserTranscript(null);
+        dispatch({ type: "rec/error", reason: "generic", message });
+      }
     },
   });
 
@@ -338,7 +393,10 @@ export default function HomePage() {
     try {
       const conversationId = conversationIdRef.current;
       if (conversationId) await pallyApi.completeConversation(conversationId);
+      const userId = userIdRef.current;
+      if (userId) invalidateConversationData(userId, conversationId ?? undefined);
       revealAxes();
+      setPendingUserTranscript(null);
       conversationIdRef.current = null;
       window.localStorage.removeItem(CONVERSATION_KEY);
       dispatch({ type: "session/end" });
@@ -398,7 +456,15 @@ export default function HomePage() {
 
   return (
     <MobileShell>
-      {isRestoring ? <PageLoader message="대화를 준비하고 있어요" /> : null}
+      {isRestoring ? (
+        <div aria-live="polite" className="absolute left-4 top-6 z-40 flex items-center gap-2 text-caption-1 text-primary" role="status">
+          <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-primary-soft border-t-primary" />
+          대화 준비 중
+        </div>
+      ) : null}
+      <div className="absolute right-4 top-5 z-40">
+        <UsageSummary subscription={subscription} usage={usage} />
+      </div>
       {showChatBubble ? (
         <>
           <button aria-label="대화 종료" className="absolute left-4 top-[23px] z-50 grid size-[41px] place-items-center border-0 bg-transparent p-0" disabled={isClosing} onClick={() => { void handleSessionEnd(); }} type="button">
@@ -411,6 +477,7 @@ export default function HomePage() {
               expanded={state.historyOpen}
               listening={isRecording}
               messages={state.messages}
+              pendingUserTranscript={pendingUserTranscript}
               onToggleExpand={handleToggleHistory}
               thinking={isProcessing}
             />
