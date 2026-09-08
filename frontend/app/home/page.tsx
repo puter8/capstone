@@ -47,6 +47,7 @@ export default function HomePage() {
   const [quotaExhausted, setQuotaExhausted] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [isRestoring, setIsRestoring] = useState(true);
+  const [hasRestoredPally, setHasRestoredPally] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [pendingUserTranscript, setPendingUserTranscript] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
@@ -104,6 +105,7 @@ export default function HomePage() {
 
       const revealedAxes = completed.items[0]?.current_axes;
       if (active && revealedAxes) restoreAxes(revealedAxes);
+      setHasRestoredPally(true);
 
       cancelPrefetch = schedulePrimaryRoutePrefetch(userId);
       if (!conversationId || !detail) return;
@@ -413,9 +415,9 @@ export default function HomePage() {
   }, [recorder, revealAxes, stopPlayback]);
 
   const handlePressStart = useCallback(() => {
-    if (closingRef.current || quotaExhausted || isRestoring) return;
+    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
     void recorder.start();
-  }, [isRestoring, quotaExhausted, recorder]);
+  }, [hasRestoredPally, isRestoring, quotaExhausted, recorder]);
 
   const handlePressStop = useCallback(() => {
     if (closingRef.current) return;
@@ -488,10 +490,28 @@ export default function HomePage() {
       {!historyCoversScreen ? (
         <>
           <div className={`absolute left-1/2 -translate-x-1/2 ${showChatBubble ? "top-[382px]" : "top-[369px]"}`}>
-            <PallyCanvas axes={axes} size={308} />
+            {hasRestoredPally ? (
+              <PallyCanvas axes={axes} size={308} />
+            ) : (
+              <div className="flex size-[308px] flex-col items-center justify-center gap-3 text-caption-1 text-primary" role="status">
+                {isRestoring ? (
+                  <>
+                    <span aria-hidden="true" className="size-6 animate-spin rounded-full border-2 border-primary-soft border-t-primary" />
+                    Pally를 불러오는 중
+                  </>
+                ) : (
+                  <>
+                    Pally를 불러오지 못했어요.
+                    <button className="underline underline-offset-4" onClick={() => window.location.reload()} type="button">
+                      다시 불러오기
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${showChatBubble ? "top-[690px]" : "top-[649px]"}`}>
-            <TalkButton disabled={isClosing || isRestoring || quotaExhausted} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
+            <TalkButton disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
           </div>
         </>
       ) : null}
