@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FeedbackCard } from "@/components/feedback/FeedbackCard";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
-import { ContentSkeleton } from "@/components/ui/ContentSkeleton";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { FeedbackItem } from "@/lib/api";
@@ -100,6 +100,7 @@ export default function HistoryPage() {
   }, [nextCursor, router]);
 
   useEffect(() => {
+    if (isLoading) return;
     const root = listRef.current;
     const sentinel = sentinelRef.current;
     if (!root || !sentinel || !nextCursor || loadMoreError) return;
@@ -109,7 +110,7 @@ export default function HistoryPage() {
     }, { root, rootMargin: "120px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMore, loadMoreError, nextCursor]);
+  }, [isLoading, loadMore, loadMoreError, nextCursor]);
 
   const recordFeedbackOpen = useCallback((conversationId: string, item: FeedbackItem) => {
     const key = item.id ?? `${conversationId}:${item.original}:${item.corrected}`;
@@ -118,6 +119,14 @@ export default function HistoryPage() {
     void recordFeedbackItemOpened(conversationId, item)
       .catch((eventError: unknown) => console.error("Activity event failed", eventError));
   }, []);
+
+  if (isLoading) {
+    return (
+      <MobileShell>
+        <PageLoader />
+      </MobileShell>
+    );
+  }
 
   return (
     <MobileShell>
@@ -128,13 +137,12 @@ export default function HistoryPage() {
         title="Feedback"
         variant="back"
       />
-      {!isLoading && !error && feedback.length === 0 ? (
+      {!error && feedback.length === 0 ? (
         <p className="absolute left-[5px] top-[399px] flex h-6 w-[362px] items-center justify-center text-body text-text-tertiary">
           아직 피드백이 없어요!
         </p>
       ) : null}
       <section ref={listRef} aria-label="대화 피드백" className="absolute left-[21px] right-[19px] top-[188px] flex max-h-[560px] flex-col gap-3 overflow-y-auto pb-4">
-        {isLoading ? <ContentSkeleton rows={3} /> : null}
         {error ? (
           <div className="flex flex-col items-center gap-2 text-center text-body text-red-600" role="alert">
             <p>{error}</p>

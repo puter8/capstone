@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationNoteCard } from "@/components/feedback/ConversationNoteCard";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
-import { ContentSkeleton } from "@/components/ui/ContentSkeleton";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { PallyApiError } from "@/lib/api";
 import type { ConversationListItem } from "@/lib/api";
 import { getCurrentUserId, loadHistoryPage } from "@/lib/api/route-data";
@@ -81,6 +81,7 @@ export default function FeedbackNotePage() {
   }, [nextCursor, router]);
 
   useEffect(() => {
+    if (isLoading) return;
     const root = listRef.current;
     const sentinel = sentinelRef.current;
     if (!root || !sentinel || !nextCursor || loadMoreError) return;
@@ -90,18 +91,25 @@ export default function FeedbackNotePage() {
     }, { root, rootMargin: "120px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadMore, loadMoreError, nextCursor]);
+  }, [isLoading, loadMore, loadMoreError, nextCursor]);
+
+  if (isLoading) {
+    return (
+      <MobileShell>
+        <PageLoader />
+      </MobileShell>
+    );
+  }
 
   return (
     <MobileShell>
       <h1 className="absolute left-5 top-[79px] text-display text-primary">History</h1>
-      {!isLoading && !error && items.length === 0 ? (
+      {!error && items.length === 0 ? (
         <p className="absolute left-5 right-5 top-1/2 -translate-y-1/2 text-center text-body text-text-tertiary">
           아직 대화 기록이 없어요!
         </p>
       ) : null}
       <div ref={listRef} className="absolute left-5 right-5 top-[180px] flex max-h-[560px] flex-col gap-3 overflow-y-auto pb-4">
-        {isLoading ? <ContentSkeleton rows={3} /> : null}
         {error ? (
           <div className="flex flex-col items-center gap-2 text-center text-body text-red-600" role="alert">
             <p>{error}</p>

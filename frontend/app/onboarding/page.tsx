@@ -13,6 +13,7 @@ import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { TextInput } from "@/components/ui/TextInput";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { Level } from "@/lib/types/session";
+import { cn } from "@/lib/utils";
 
 const LEVELS = [
   { code: "A2", name: "Elementary", description: "간단한 용어를 사용해 다양한 것들을 묘사하고 간단한 표현을 이해할 수 있어요" },
@@ -122,7 +123,7 @@ export default function OnboardingPage() {
           <div className="absolute left-1/2 top-[220px] size-[150px] -translate-x-1/2 overflow-hidden rounded-full bg-[#dedede]">
             <img
               alt="프로필 사진"
-              className="size-full object-cover"
+              className={cn("size-full object-cover", !avatarUrl && "scale-125")}
               onError={() => {
                 if (avatarUrl === null) return;
                 console.error("Profile avatar image failed to load");

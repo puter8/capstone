@@ -8,7 +8,7 @@ import type {
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
 import { pallyApi } from "@/lib/api";
-import { clearUser, invalidate, prefetch, read } from "@/lib/api/query-cache";
+import { clearUser, invalidate, prefetch, read, write } from "@/lib/api/query-cache";
 import { supabase } from "@/lib/supabase/client";
 
 const USAGE_TTL_MS = 15_000;
@@ -45,6 +45,10 @@ export function loadSubscription(userId: string): Promise<SubscriptionResponse> 
 
 export function loadProfile(userId: string): Promise<ProfileResponse> {
   return read(userId, CACHE_KEYS.profile, ROUTE_DATA_TTL_MS, () => pallyApi.getProfile());
+}
+
+export function cacheProfile(userId: string, response: ProfileResponse): void {
+  write(userId, CACHE_KEYS.profile, ROUTE_DATA_TTL_MS, response);
 }
 
 export function loadAchievements(userId: string): Promise<AchievementsResponse> {

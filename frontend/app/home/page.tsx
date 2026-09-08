@@ -9,6 +9,7 @@ import { ConfirmDialog } from "@/components/dialogs/ConfirmDialog";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
 import PallyCanvas from "@/components/pally/PallyCanvas";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { Toast } from "@/components/ui/Toast";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { Subscription, UsageResponse } from "@/lib/api";
@@ -456,14 +457,16 @@ export default function HomePage() {
   const showChatBubble = (state.messages.length > 0 || isRecording || isProcessing) && !errorVisible;
   const historyCoversScreen = state.historyOpen && !isIdle;
 
+  if (isRestoring) {
+    return (
+      <MobileShell>
+        <PageLoader />
+      </MobileShell>
+    );
+  }
+
   return (
     <MobileShell>
-      {isRestoring ? (
-        <div aria-live="polite" className="absolute left-4 top-6 z-40 flex items-center gap-2 text-caption-1 text-primary" role="status">
-          <span aria-hidden="true" className="size-4 animate-spin rounded-full border-2 border-primary-soft border-t-primary" />
-          대화 준비 중
-        </div>
-      ) : null}
       <div className="absolute right-4 top-5 z-40">
         <UsageSummary subscription={subscription} usage={usage} />
       </div>
@@ -494,19 +497,10 @@ export default function HomePage() {
               <PallyCanvas axes={axes} size={308} />
             ) : (
               <div className="flex size-[308px] flex-col items-center justify-center gap-3 text-caption-1 text-primary" role="status">
-                {isRestoring ? (
-                  <>
-                    <span aria-hidden="true" className="size-6 animate-spin rounded-full border-2 border-primary-soft border-t-primary" />
-                    Pally를 불러오는 중
-                  </>
-                ) : (
-                  <>
-                    Pally를 불러오지 못했어요.
-                    <button className="underline underline-offset-4" onClick={() => window.location.reload()} type="button">
-                      다시 불러오기
-                    </button>
-                  </>
-                )}
+                Pally를 불러오지 못했어요.
+                <button className="underline underline-offset-4" onClick={() => window.location.reload()} type="button">
+                  다시 불러오기
+                </button>
               </div>
             )}
           </div>

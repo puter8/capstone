@@ -7,7 +7,7 @@ import { ChallengeTask } from "@/components/challenge/ChallengeTask";
 import { StreakCard } from "@/components/challenge/StreakCard";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
-import { ContentSkeleton } from "@/components/ui/ContentSkeleton";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { AchievementsResponse } from "@/lib/api";
 import { getCurrentUserId, loadAchievements } from "@/lib/api/route-data";
@@ -47,6 +47,14 @@ export default function RankingPage() {
     return () => { active = false; };
   }, [router]);
 
+  if (isLoading) {
+    return (
+      <MobileShell>
+        <PageLoader />
+      </MobileShell>
+    );
+  }
+
   return (
     <MobileShell>
       <h1 className="absolute left-5 top-[62px] text-display text-primary">Achievements</h1>
@@ -57,7 +65,6 @@ export default function RankingPage() {
 
       <h2 className="absolute left-5 top-[280px] text-title-1 text-text">Daily Tasks</h2>
       <section aria-label="오늘의 과제" className="absolute left-5 right-5 top-[336px] flex flex-col gap-3">
-        {isLoading ? <ContentSkeleton rows={3} /> : null}
         {error ? <p className="text-center text-body text-red-600" role="alert">{error}</p> : null}
         {data?.daily_tasks.map((task) => (
           <ChallengeTask

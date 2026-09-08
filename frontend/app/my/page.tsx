@@ -9,7 +9,7 @@ import { NameEditDialog } from "@/components/dialogs/NameEditDialog";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
 import { ProfileSummary } from "@/components/profile/ProfileSummary";
-import { ContentSkeleton } from "@/components/ui/ContentSkeleton";
+import { PageLoader } from "@/components/ui/PageLoader";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { AccountDeletionStatusResponse, UserProfile } from "@/lib/api";
 import {
@@ -128,12 +128,18 @@ export default function MyPage() {
     }
   };
 
+  if (isLoading) {
+    return (
+      <MobileShell>
+        <PageLoader delayMs={200} />
+      </MobileShell>
+    );
+  }
+
   return (
     <MobileShell>
       <h1 className="absolute left-5 top-[62px] text-display text-primary">My Pally</h1>
-      {isLoading ? (
-        <ContentSkeleton className="absolute left-5 right-5 top-[172px]" rows={2} />
-      ) : profile ? (
+      {profile ? (
         <div className="absolute left-5 right-5 top-[172px] h-[228px]">
           <ProfileSummary avatarUrl={profile.avatar_url} name={profile.display_name} onEditName={() => setDialog("name")} traits={profile.traits} />
         </div>
