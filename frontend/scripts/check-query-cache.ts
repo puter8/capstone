@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { clearUser, invalidate, read } from "../lib/api/query-cache";
+import { clearUser, invalidate, read, write } from "../lib/api/query-cache";
 
 async function main(): Promise<void> {
   let calls = 0;
@@ -58,6 +58,21 @@ async function main(): Promise<void> {
   assert.equal(await staleRequest, "stale");
   const afterRace = await read("user-a", "history:first", 60_000, async () => "fresh");
   assert.equal(afterRace, "fresh", "invalidated in-flight requests must not repopulate cache");
+
+  let resolveOldProfile!: (value: string) => void;
+  invalidate("user-a", "profile");
+  const oldProfile = read("user-a", "profile", 60_000, () => new Promise<string>((resolve) => {
+    resolveOldProfile = resolve;
+  }));
+  write("user-a", "profile", 60_000, "B2");
+  const unexpectedReload = async (): Promise<string> => {
+    throw new Error("saved profiles must not be fetched again");
+  };
+  assert.equal(await read("user-a", "profile", 60_000, unexpectedReload), "B2");
+  resolveOldProfile("B1");
+  await oldProfile;
+  assert.equal(await read("user-a", "profile", 60_000, unexpectedReload), "B2", "older reads must not overwrite saved profiles");
+  assert.equal(await read("user-b", "profile", 60_000, unexpectedReload), "Other user", "writes must stay scoped to the current user");
 
   clearUser("user-a");
   clearUser("user-b");

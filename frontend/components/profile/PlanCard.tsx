@@ -21,6 +21,7 @@ export function PlanCard({ caption, className, name, onSelect, plan, price, sele
         yearly
           ? "bg-gradient-to-b from-primary-soft to-primary px-[13px]"
           : "bg-gradient-to-b from-[#ffe3b8] to-primary-soft pl-3 pr-[15px]",
+        selected && "shadow-[inset_0_0_0_2px_#c65f00]",
         className,
       )}
       onClick={onSelect}

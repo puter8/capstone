@@ -67,6 +67,13 @@ export async function prefetch<T>(
   await read(userId, key, ttlMs, loader);
 }
 
+export function write<T>(userId: string, key: string, ttlMs: number, value: T): void {
+  const keyWithScope = scopedKey(userId, key);
+  entries.delete(keyWithScope);
+  entries.set(keyWithScope, { expiresAt: Date.now() + ttlMs, value });
+  enforceLimit();
+}
+
 export function invalidate(userId: string, keyPrefix: string): void {
   const scopedPrefix = scopedKey(userId, keyPrefix);
   entries.forEach((_entry, key) => {
