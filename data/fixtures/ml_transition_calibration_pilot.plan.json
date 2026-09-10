@@ -1,0 +1,44 @@
+{
+  "seed": 20260910,
+  "reservoir_rows": 1200,
+  "blocked_groups": {
+    "ec120": 120,
+    "reserved": 156
+  },
+  "pool_rows_after_block": 887,
+  "pilot": {
+    "event_yield": 13,
+    "ami_control": 13,
+    "disagree": {
+      "Energy": 8,
+      "Humor": 8
+    },
+    "residual": 16,
+    "total": 58,
+    "axes": [
+      "Energy",
+      "Humor"
+    ],
+    "source_mix": {
+      "ami_real": 28,
+      "nict_jle_real": 12,
+      "taskmaster1_woz_user_real": 18
+    }
+  },
+  "calibration": {
+    "per_source": {
+      "ami_real": 16,
+      "nict_jle_real": 16,
+      "taskmaster1_woz_user_real": 16
+    },
+    "total": 48,
+    "axes": [
+      "Formality",
+      "Energy",
+      "Intimacy",
+      "Humor",
+      "Curiosity"
+    ]
+  },
+  "note": "calibration is not a natural-distribution performance estimate; it measures inter-rater agreement and scale bias."
+}

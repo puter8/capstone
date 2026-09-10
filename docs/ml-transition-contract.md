@@ -119,12 +119,18 @@
 ## 7. 검수자 (2026-09-10 확정)
 
 - **검수자 2명 확보.** calibration/pilot/first40 전부 slot A/B 2행.
-- 규모 (provisional — Phase 2 후보 추출에서 실제 행 수 확정 후 재계산):
-  calibration 48×5×2 + pilot 60×2×2 + first40 40×3×2 ≈ **960 축 점수, 296 발화-검수 건**
-  (조정/재채점 비용 별도). pilot 60은 이벤트-힌트 실제 가용치(현재 추정 AMI-only ~14)에
-  묶여 있으므로 후보 추출 후 하향 조정될 수 있다.
+- 규모 (2026-09-10 Phase 2 후보 추출 결과로 확정):
+  | batch | items | axes | slots | 축 점수 |
+  |---|---:|---:|---:|---:|
+  | calibration | 48 | 5 | 2 | 480 |
+  | pilot (E/H) | 58 | 2 | 2 | 232 |
+  | first40 (E/C/I) | 40 | 3 | 2 | 240 |
+  | **합계** | **146** | | | **952** |
+  발화-검수 건 = (48+58+40)×2 = **292**. 조정/재채점 비용 별도.
+  pilot 58 = event 13(실제 가용치, 라운드업 안 함) + AMI 비-event 대조 13 +
+  model-disagreement 16(Energy 8 / Humor 8) + residual random 16.
 - 실제 B2(pilot)/B3(first40) 채점은 **calibration 불일치 검토 + rubric/input version
-  고정 후** 시작한다. 후보/빈 CSV 준비는 병행 가능.
+  고정 후** 시작한다. 후보 + 빈 slot CSV는 생성 완료 (아래 §12).
 
 ## 8. NA (상수 입력 상관계수) 정책
 
@@ -195,3 +201,20 @@ dev(=gold-200 + calibration/pilot/first40)에서 먼저 할 것:
 gate 이후 / 별도 트랙:
 
 - 새 AMI 그룹 확보 (학습·dev 미겹침).
+
+## 12. Phase 2 산출물 (2026-09-10, 후보 + 빈 CSV만 / 채점 전)
+
+| batch | candidate 파일 | manifest | slot CSV | 상태 |
+|---|---|---|---|---|
+| calibration 48 | `ml_transition_calibration_candidates_48.jsonl` | `ml_transition_calibration_review.manifest.json` | `..._calibration_review.slot{A,B}.csv` | 채점 가능 (dev, calibration 먼저) |
+| pilot 58 | `ml_transition_pilot_eh_candidates.jsonl` | `ml_transition_pilot_review.manifest.json` | `..._pilot_review.slot{A,B}.csv` | **채점 보류** — calibration 검토 + rubric 고정 후 |
+| first40 40 | `ml_transition_train_first40_candidates.jsonl` | `ml_transition_first40_review.manifest.json` | `..._first40_review.slot{A,B}.csv` | **채점 보류** — 동일 |
+| first40 remainder 80 | `ml_transition_train_active_remainder_candidates.jsonl` | — | 미생성 | 사용/채점 보류 |
+
+- 생성: `scripts/build_calibration_pilot_sets.py` (B1+B2 공동 quota), `scripts/build_train_first40_set.py` (B3).
+  공통 seed 20260910. plan JSON에 arm별 quota·source 배분 기록.
+- pilot arm: event 13 / ami_control 13 / disagree(E8·H8) 16 / residual 16.
+  event yield는 실제 가용치(train-120·reserved 그룹 제외 후 라흐터 13그룹). AMI 비-event
+  대조로 라흐터 효과 vs AMI 소스 효과 분리.
+- reservoir는 gold reservoir와 canonical group 교집합 0 → reserved pool 유출 불가 (스크립트가 assert).
+- 채점 시작 전제: calibration 2인 불일치 검토 → rubric/input version 고정 → §7 검수량 재확인.

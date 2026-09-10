@@ -94,14 +94,15 @@ def write_legacy_csv(rows: list[dict[str, Any]], review_set: str, output_path: P
 
 # --- batch schema ----------------------------------------------------------
 
+# Batch review CSVs show the current utterance only, to match the model's
+# input (contract section 4). previous_turn / next_turn stay in the manifest
+# for reference but are never put in front of the reviewer here.
 BATCH_BASE = (
     "annotation_batch",
     "dataset_partition",
     "item_id",
     "reviewer_slot",
     "utterance",
-    "previous_turn",
-    "next_turn",
 )
 BATCH_TAIL = ("reviewer_id", "review_status", "reviewer_notes")
 
@@ -177,8 +178,6 @@ def write_batch_csvs(manifest: dict[str, Any], output_path: Path) -> list[Path]:
                         "item_id": item_id,
                         "reviewer_slot": slot,
                         "utterance": item["utterance"],
-                        "previous_turn": item["previous_turn"],
-                        "next_turn": item["next_turn"],
                         **{f"reviewed_{axis}": "" for axis in scored},
                         "reviewer_id": "",
                         "review_status": "pending",
