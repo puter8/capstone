@@ -96,13 +96,23 @@
 - **reviewer별 별도 blind export.** 같은 CSV의 인접 복제 행에서 상대 점수가 보이면
   독립 채점이 아니다. 항목 순서도 무작위화하고 seed를 보존.
 - 무결성 검사: 누락 / 중복 / 범위 / 축 schema / 발화·context 일치.
+- 구현: `scripts/export_axis_review_csv.py --annotation-batch <b> --reviewers 2 --seed <n>`
+  → slot별 blind CSV(`<stem>.slotA.csv` / `.slotB.csv`) + 비공개 manifest
+  (`<stem>.manifest.json`, item_id↔candidate 매핑·slot별 순서·seed 보존).
+  legacy `--review-set` 경로는 gold-200 / train-120 재현용으로 유지(출력 byte-identical).
+- import: `scripts/build_human_reviewed_axis_dataset.py --manifest <manifest> --input slotA.csv --input slotB.csv`
+  → PK `(annotation_batch, item_id, reviewer_slot)` 검증, item×slot **원점수 1행씩**
+  (`label_status=human_reviewed_blind_raw`, `label_source` 축별 `human`).
 
 ## 6. 집계 / 조정
 
-- 원점수는 **덮어쓰지 않는다.**
-- aggregation / adjudication은 별도 산출물 (`scripts/aggregate_axis_reviews.py`).
-  검수자 수, rubric version, 큰 불일치의 제3자 조정 이력을 남긴다.
-- 평균만으로 불일치를 없애지 않는다.
+- 원점수는 **덮어쓰지 않는다.** raw JSONL은 불변.
+- aggregation / adjudication은 별도 산출물 (`scripts/aggregate_axis_reviews.py`):
+  raw → item별 평균(소수점 보존) + `slot_spread` + `--disagreement-threshold` 초과
+  항목 목록 + `<output>.report.json`(축별 slot간 평균/최대 차이).
+  `--adjudication <json>`(`{item_id: {axis: value, note}}`)은 평균 위에 얹고
+  `label_source`를 `human_adjudicated`로 표시, `raw_scores`에 원점수 보존.
+- 평균만으로 불일치를 없애지 않는다. threshold 초과 항목은 제3자 조정 대상.
 - A/B의 같은 우선순위 human label은 집계·조정을 먼저 하고, 임의 행 순서로 하나를
   고르지 않는다.
 
