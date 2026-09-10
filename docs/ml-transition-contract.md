@@ -119,16 +119,24 @@
 ## 7. 검수자 (2026-09-10 확정)
 
 - **검수자 2명 확보.** calibration/pilot/first40 전부 slot A/B 2행.
-- 규모 (2026-09-10 Phase 2 후보 추출 결과로 확정):
+- calibration 표본 수는 **탐지 확률**에서 계산 (2026-09-10 Codex round): 한 발화에서
+  5축 중 하나라도 두 검수자 점수차 >20점인 "큰 불일치"가 한 출처에서 ≥10% 빈도로
+  발생할 때, 그 출처에서 최소 1건 이상 볼 확률 ≥95%. `0.9^n ≤ 0.05 → n ≥ 29`,
+  출처당 30으로 반올림. **출처별 보장이지 세 출처 동시 보장은 아님**(동시 보장은
+  Bonferroni로 출처당 ~39 필요, 이번 범위 밖).
+- 규모 (2026-09-10 확정):
   | batch | items | axes | slots | 축 점수 |
   |---|---:|---:|---:|---:|
-  | calibration | 48 | 5 | 2 | 480 |
-  | pilot (E/H) | 58 | 2 | 2 | 232 |
+  | calibration | 90 (AMI 30 / NICT 30 / Taskmaster 30) | 5 | 2 | 900 |
+  | pilot (E/H) | 54 | 2 | 2 | 216 |
   | first40 (E/C/I) | 40 | 3 | 2 | 240 |
-  | **합계** | **146** | | | **952** |
-  발화-검수 건 = (48+58+40)×2 = **292**. 조정/재채점 비용 별도.
-  pilot 58 = event 13(실제 가용치, 라운드업 안 함) + AMI 비-event 대조 13 +
-  model-disagreement 16(Energy 8 / Humor 8) + residual random 16.
+  | **합계** | **184** | | | **1,356** |
+  발화-검수 건 = (90+54+40)×2 = **368**. 조정/재채점 비용 별도.
+  pilot 54 = event 13(실제 라흐터 가용치, 라운드업 안 함) + AMI 비-라흐터 대조 9
+  (calibration이 AMI 39 non-laugh 그룹 중 30 사용 후 잔여) + model-disagreement 16
+  (Energy 8 / Humor 8) + residual random 16.
+- calibration은 **무작위 표본**이다. 희소 사례(Humor 등)를 의도적으로 넣지 않는다
+  (넣으면 위 탐지 확률 해석이 깨진다). 적용 범위 = 후보 pool, 자연 사용 분포 아님.
 - 실제 B2(pilot)/B3(first40) 채점은 **calibration 불일치 검토 + rubric/input version
   고정 후** 시작한다. 후보 + 빈 slot CSV는 생성 완료 (아래 §12).
 
@@ -206,15 +214,20 @@ gate 이후 / 별도 트랙:
 
 | batch | candidate 파일 | manifest | slot CSV | 상태 |
 |---|---|---|---|---|
-| calibration 48 | `ml_transition_calibration_candidates_48.jsonl` | `ml_transition_calibration_review.manifest.json` | `..._calibration_review.slot{A,B}.csv` | 채점 가능 (dev, calibration 먼저) |
-| pilot 58 | `ml_transition_pilot_eh_candidates.jsonl` | `ml_transition_pilot_review.manifest.json` | `..._pilot_review.slot{A,B}.csv` | **채점 보류** — calibration 검토 + rubric 고정 후 |
+| calibration 90 | `ml_transition_calibration_candidates_90.jsonl` | `ml_transition_calibration_review.manifest.json` | `..._calibration_review.slot{A,B}.csv` | 채점 가능 (dev, calibration 먼저) |
+| pilot 54 | `ml_transition_pilot_eh_candidates.jsonl` | `ml_transition_pilot_review.manifest.json` | `..._pilot_review.slot{A,B}.csv` | **채점 보류** — calibration 검토 + rubric 고정 후 |
 | first40 40 | `ml_transition_train_first40_candidates.jsonl` | `ml_transition_first40_review.manifest.json` | `..._first40_review.slot{A,B}.csv` | **채점 보류** — 동일 |
 | first40 remainder 80 | `ml_transition_train_active_remainder_candidates.jsonl` | — | 미생성 | 사용/채점 보류 |
 
-- 생성: `scripts/build_calibration_pilot_sets.py` (B1+B2 공동 quota), `scripts/build_train_first40_set.py` (B3).
+- 생성: `scripts/build_calibration_pilot_sets.py` (할당 순서 = 라흐터 예약 → calibration
+  30/출처 → AMI 비-라흐터 대조 → disagree → residual), `scripts/build_train_first40_set.py` (B3).
   공통 seed 20260910. plan JSON에 arm별 quota·source 배분 기록.
-- pilot arm: event 13 / ami_control 13 / disagree(E8·H8) 16 / residual 16.
-  event yield는 실제 가용치(train-120·reserved 그룹 제외 후 라흐터 13그룹). AMI 비-event
-  대조로 라흐터 효과 vs AMI 소스 효과 분리.
+- calibration: 적격 그룹 무작위 + 그룹 내 발화 무작위, 출처별 서로 다른 30그룹.
+  라흐터 그룹 제외(pilot event arm용).
+- pilot arm: event 13 / ami_nonlaugh_control 9 / disagree(E8·H8) 16 / residual 16.
+  event yield는 실제 라흐터 가용치(train-120·reserved 제외 후 13그룹, 라운드업 안 함).
+  대조군 9 = AMI non-laugh 39 − calibration 30. AMI 신규 그룹 확보 시 대조군 확대.
 - reservoir는 gold reservoir와 canonical group 교집합 0 → reserved pool 유출 불가 (스크립트가 assert).
 - 채점 시작 전제: calibration 2인 불일치 검토 → rubric/input version 고정 → §7 검수량 재확인.
+- calibration 채점 후 확인: 출처별 큰 불일치 비율 / 축별 평균 부호차 / 축별 평균 절대차 /
+  불일치 원인. rubric 수정 시 기존 90개는 "기준 개선용 데이터"로 남기고 효과는 새 표본에서 재검증.

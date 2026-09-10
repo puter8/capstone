@@ -5,25 +5,33 @@ Both draw from the 1,200-row train candidate reservoir. The reservoir shares
 no ``canonical_group`` with the gold reservoir, so the reserved final-test
 pool cannot leak here, but the exclusion is still asserted.
 
-Fixed policy (recorded in the manifest; do not change after CSVs go out):
+Fixed policy (recorded in the manifest; do not change after CSVs go out).
 
-B2 pilot arms are allocated first, each removing its groups from the pool:
-  1. event      -- every AMI row with a 'laugh' annotation event that survives
-                   the train-120 and reserved-group exclusion (actual yield,
-                   currently 14; NOT padded to a round number).
-  2. ami_control-- the same count of AMI rows with NO annotation event, so the
-                   'laughter' signal can be separated from a plain AMI-source
-                   effect.
-  3. disagree   -- top rows by |rule - ML| on Energy and on Humor, an equal
-                   per-axis quota fixed at 8 + 8 = 16.
-  4. residual   -- 16 rows drawn at random from whatever is left ("residual
-                   control").
+Sizing rationale for calibration (2026-09-10, Codex round): the goal is to
+detect a large scoring disagreement (any of the 5 axes differing by >20
+points between the two reviewers) that occurs at >=10% frequency within a
+source, with >=95% probability per source. 0.9**n <= 0.05 => n >= 29, rounded
+to 30 per source => 90 total. This is a per-source guarantee, not a
+simultaneous one across all three sources.
+
+Allocation order (each step removes its canonical groups from the pool):
+
+  1. event reservation -- every AMI group with a 'laugh' annotation event that
+     survives the train-120 / reserved-group exclusion (actual yield, ~13; NOT
+     padded). Held for the pilot event arm.
+  2. B1 calibration    -- 30 groups per source (AMI / NICT / Taskmaster) drawn
+     at random (seeded) from the remaining groups; one random utterance per
+     group. Five axes, dataset_partition = dev. A random sample so the
+     detection-probability argument above holds -- NO deliberate rare-case
+     padding. Result generalises only to the candidate pool, not to the
+     natural utterance distribution.
+  3. pilot ami_nonlaugh_control -- the AMI non-laughter groups left after
+     calibration (<= 9 with the current pool), as a control that separates the
+     laughter signal from a plain AMI-source effect.
+  4. pilot disagree    -- top groups by |rule - ML| on Energy and on Humor, an
+     equal per-axis quota fixed at 8 + 8 = 16.
+  5. pilot residual    -- 16 groups drawn at random from whatever is left.
   pilot axes: Energy, Humor. dataset_partition = train.
-
-B1 calibration then takes 16 rows per source (AMI / NICT / Taskmaster) from
-the still-unused groups, one row per canonical group, deterministic.
-  calibration axes: all five. dataset_partition = dev.
-  Explicitly NOT a natural-distribution performance estimate.
 
 Run from the repository root:
   python scripts/build_calibration_pilot_sets.py
@@ -51,11 +59,12 @@ from ai.ml_baseline import TfidfKnnAxisRegressor, load_default_axis_dataset
 DEFAULT_RESERVOIR = Path("data/fixtures/ml_transition_train_candidates_1200.jsonl")
 DEFAULT_EC120 = Path("data/fixtures/ml_transition_train_active_ec_candidates_120.jsonl")
 DEFAULT_RESERVED_POOL = Path("data/fixtures/ml_transition_reserved_final_test_pool.jsonl")
-DEFAULT_CALIB_OUT = Path("data/fixtures/ml_transition_calibration_candidates_48.jsonl")
+DEFAULT_CALIB_OUT = Path("data/fixtures/ml_transition_calibration_candidates_90.jsonl")
 DEFAULT_PILOT_OUT = Path("data/fixtures/ml_transition_pilot_eh_candidates.jsonl")
 DEFAULT_SEED = 20260910
 
-CALIB_PER_SOURCE = 16
+CALIB_PER_SOURCE = 30
+AMI_CONTROL_MAX = 9
 DISAGREE_PER_AXIS = 8
 RESIDUAL_COUNT = 16
 DISAGREE_AXES = ("Energy", "Humor")
@@ -92,11 +101,6 @@ def _has_laugh(row: dict[str, Any]) -> bool:
     return "laugh" in [str(event).lower() for event in events]
 
 
-def _has_any_event(row: dict[str, Any]) -> bool:
-    events = row.get("annotation_events") or []
-    return bool(events)
-
-
 def _take_by_hash(rows: list[dict[str, Any]], count: int, seed: int, used_groups: set[str]) -> list[dict[str, Any]]:
     ordered = sorted(rows, key=lambda r: _hash_key(seed, canonical_group(r) + "|" + str(r["utterance"])))
     picked: list[dict[str, Any]] = []
@@ -125,19 +129,52 @@ def build_sets(
     pool = [r for r in reservoir if canonical_group(r) not in blocked]
     used_groups: set[str] = set()
 
-    # --- B2 arm 1: event (actual yield, not padded) ---
-    event_rows = _take_by_hash([r for r in pool if r["source"] == "ami_real" and _has_laugh(r)], 10_000, seed, used_groups)
+    # --- step 1: reserve AMI laughter groups for the pilot event arm ---
+    laugh_groups = {canonical_group(r) for r in pool if r["source"] == "ami_real" and _has_laugh(r)}
+    event_rows = _take_by_hash(
+        [r for r in pool if r["source"] == "ami_real" and _has_laugh(r)], 10_000, seed, used_groups
+    )
     event_count = len(event_rows)
 
-    # --- B2 arm 2: AMI non-event control, matched count ---
+    # --- step 2: B1 calibration -- 30 random groups per source, laughter
+    #     groups excluded so they stay available for the event arm ---
+    calib_rows: list[dict[str, Any]] = []
+    calib_plan: dict[str, int] = {}
+    for source in ("ami_real", "nict_jle_real", "taskmaster1_woz_user_real"):
+        source_pool = [
+            r
+            for r in pool
+            if r["source"] == source
+            and canonical_group(r) not in used_groups
+            and canonical_group(r) not in laugh_groups
+        ]
+        picked = _take_by_hash(source_pool, CALIB_PER_SOURCE, seed, used_groups)
+        calib_plan[source] = len(picked)
+        if len(picked) < CALIB_PER_SOURCE:
+            raise SystemExit(f"calibration {source}: only {len(picked)}/{CALIB_PER_SOURCE} groups available")
+        for row in picked:
+            tagged = dict(row)
+            tagged["annotation_batch"] = "calibration"
+            tagged["dataset_partition"] = "dev"
+            tagged["review_axes"] = ["Formality", "Energy", "Intimacy", "Humor", "Curiosity"]
+            calib_rows.append(tagged)
+
+    # --- step 3: pilot AMI non-laughter control -- the AMI non-laughter groups
+    #     still free after calibration (separates laughter from AMI source) ---
     control_rows = _take_by_hash(
-        [r for r in pool if r["source"] == "ami_real" and not _has_any_event(r)],
-        event_count,
+        [
+            r
+            for r in pool
+            if r["source"] == "ami_real"
+            and canonical_group(r) not in used_groups
+            and canonical_group(r) not in laugh_groups
+        ],
+        AMI_CONTROL_MAX,
         seed,
         used_groups,
     )
 
-    # --- B2 arm 3: model disagreement, fixed per-axis quota ---
+    # --- step 4: model disagreement, fixed per-axis quota ---
     rule = RuleBasedAxisAnalyzer()
     ml = TfidfKnnAxisRegressor().fit(load_default_axis_dataset(), require_full_axes=True)
     scored: list[tuple[dict[str, Any], dict[str, float]]] = []
@@ -166,14 +203,19 @@ def build_sets(
             if sum(1 for r in disagree_rows if r["_disagree_axis"] == axis) == DISAGREE_PER_AXIS:
                 break
 
-    # --- B2 arm 4: residual random ---
+    # --- step 5: residual random ---
     residual_pool = [r for r in pool if canonical_group(r) not in used_groups]
     rng = random.Random(f"{seed}|residual")
     rng.shuffle(residual_pool)
     residual_rows = _take_by_hash(residual_pool, RESIDUAL_COUNT, seed, used_groups)
 
     pilot_rows: list[dict[str, Any]] = []
-    for arm, rows in (("event", event_rows), ("ami_control", control_rows), ("disagree", disagree_rows), ("residual", residual_rows)):
+    for arm, rows in (
+        ("event", event_rows),
+        ("ami_nonlaugh_control", control_rows),
+        ("disagree", disagree_rows),
+        ("residual", residual_rows),
+    ):
         for row in rows:
             tagged = {k: v for k, v in row.items() if not k.startswith("_")}
             tagged["annotation_batch"] = "pilot"
@@ -185,22 +227,6 @@ def build_sets(
                 tagged["disagree_delta"] = row["_disagree_delta"]
             pilot_rows.append(tagged)
 
-    # --- B1 calibration: 16 per source from still-unused groups ---
-    calib_rows: list[dict[str, Any]] = []
-    calib_plan: dict[str, int] = {}
-    for source in ("ami_real", "nict_jle_real", "taskmaster1_woz_user_real"):
-        source_pool = [r for r in pool if r["source"] == source and canonical_group(r) not in used_groups]
-        picked = _take_by_hash(source_pool, CALIB_PER_SOURCE, seed, used_groups)
-        calib_plan[source] = len(picked)
-        if len(picked) < CALIB_PER_SOURCE:
-            raise SystemExit(f"calibration {source}: only {len(picked)}/{CALIB_PER_SOURCE} groups available")
-        for row in picked:
-            tagged = dict(row)
-            tagged["annotation_batch"] = "calibration"
-            tagged["dataset_partition"] = "dev"
-            tagged["review_axes"] = ["Formality", "Energy", "Intimacy", "Humor", "Curiosity"]
-            calib_rows.append(tagged)
-
     manifest = {
         "seed": seed,
         "reservoir_rows": len(reservoir),
@@ -208,7 +234,7 @@ def build_sets(
         "pool_rows_after_block": len(pool),
         "pilot": {
             "event_yield": event_count,
-            "ami_control": len(control_rows),
+            "ami_nonlaugh_control": len(control_rows),
             "disagree": {axis: sum(1 for r in disagree_rows if r["_disagree_axis"] == axis) for axis in DISAGREE_AXES},
             "residual": len(residual_rows),
             "total": len(pilot_rows),
@@ -217,10 +243,12 @@ def build_sets(
         },
         "calibration": {
             "per_source": calib_plan,
+            "per_source_target": CALIB_PER_SOURCE,
             "total": len(calib_rows),
             "axes": ["Formality", "Energy", "Intimacy", "Humor", "Curiosity"],
+            "sizing": "30/source detects a >20pt per-axis reviewer gap occurring at >=10% within a source with >=95% probability per source (0.9**29<=0.05). Per-source, not simultaneous across sources.",
         },
-        "note": "calibration is not a natural-distribution performance estimate; it measures inter-rater agreement and scale bias.",
+        "note": "calibration is a random sample of the candidate pool for inter-rater agreement + scale bias; not a natural-distribution performance estimate, no rare-case padding.",
     }
     return calib_rows, pilot_rows, manifest
 

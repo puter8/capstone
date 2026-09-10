@@ -42,11 +42,11 @@ def test_calibration_pilot_disjoint_and_reserved_safe() -> None:
 
     calib, pilot, manifest = build_sets(reservoir, ec120, reserved, seed=20260910)
 
-    assert len(calib) == 48
+    assert len(calib) == 90
     assert manifest["calibration"]["per_source"] == {
-        "ami_real": 16,
-        "nict_jle_real": 16,
-        "taskmaster1_woz_user_real": 16,
+        "ami_real": 30,
+        "nict_jle_real": 30,
+        "taskmaster1_woz_user_real": 30,
     }
     assert manifest["pilot"]["disagree"] == {"Energy": 8, "Humor": 8}
 
@@ -55,8 +55,13 @@ def test_calibration_pilot_disjoint_and_reserved_safe() -> None:
     assert calib_groups.isdisjoint(pilot_groups)
     assert (calib_groups | pilot_groups).isdisjoint(reserved)
     assert (calib_groups | pilot_groups).isdisjoint(ec120)
+    # one distinct group per calibration item
+    assert len(calib_groups) == 90
 
     # every pilot row carries an arm label; event + control arms are AMI-only
-    assert {r["pilot_arm"] for r in pilot} == {"event", "ami_control", "disagree", "residual"}
-    for arm in ("event", "ami_control"):
+    assert {r["pilot_arm"] for r in pilot} == {"event", "ami_nonlaugh_control", "disagree", "residual"}
+    for arm in ("event", "ami_nonlaugh_control"):
         assert all(r["source"] == "ami_real" for r in pilot if r["pilot_arm"] == arm)
+    # calibration must not consume the laughter groups the event arm needs
+    event_groups = {canonical_group(r) for r in pilot if r["pilot_arm"] == "event"}
+    assert calib_groups.isdisjoint(event_groups)
