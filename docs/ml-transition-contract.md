@@ -229,5 +229,9 @@ gate 이후 / 별도 트랙:
   대조군 9 = AMI non-laugh 39 − calibration 30. AMI 신규 그룹 확보 시 대조군 확대.
 - reservoir는 gold reservoir와 canonical group 교집합 0 → reserved pool 유출 불가 (스크립트가 assert).
 - 채점 시작 전제: calibration 2인 불일치 검토 → rubric/input version 고정 → §7 검수량 재확인.
+- 검수자 배포용: `scripts/export_calibration_workbook.py` → `calibration_scoring_slot{A,B}.xlsx`
+  (시트: 안내 / 채점 기준표 / 채점 예시 / 채점 시트, 0~100 정수 검증). slot별 문항 순서는
+  manifest `slot_order` 사용. 채점 완료본은 slot CSV로 옮겨 `--manifest` importer에 넣는다.
+  (openpyxl 필요 — dev 전용 도구 의존성, 런타임 아님)
 - calibration 채점 후 확인: 출처별 큰 불일치 비율 / 축별 평균 부호차 / 축별 평균 절대차 /
   불일치 원인. rubric 수정 시 기존 90개는 "기준 개선용 데이터"로 남기고 효과는 새 표본에서 재검증.
