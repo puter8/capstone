@@ -118,20 +118,22 @@
 
 ## 7. 검수자 (2026-09-10 확정)
 
-- **검수자 2명 확보.** calibration/pilot/first40 전부 slot A/B 2행.
+- **검수자 4명 확보** (팀원 4인). calibration은 slot A/B/C/D 4행 (inter-rater 신호가
+  많을수록 기준 차이 탐지에 유리). pilot / first40은 slot A/B 2행 유지
+  (규모가 작고 축이 특화됨; 필요 시 확대).
 - calibration 표본 수는 **탐지 확률**에서 계산 (2026-09-10 Codex round): 한 발화에서
   5축 중 하나라도 두 검수자 점수차 >20점인 "큰 불일치"가 한 출처에서 ≥10% 빈도로
   발생할 때, 그 출처에서 최소 1건 이상 볼 확률 ≥95%. `0.9^n ≤ 0.05 → n ≥ 29`,
   출처당 30으로 반올림. **출처별 보장이지 세 출처 동시 보장은 아님**(동시 보장은
   Bonferroni로 출처당 ~39 필요, 이번 범위 밖).
-- 규모 (2026-09-10 확정):
+- 규모 (2026-09-10, 검수자 4명 확정):
   | batch | items | axes | slots | 축 점수 |
   |---|---:|---:|---:|---:|
-  | calibration | 90 (AMI 30 / NICT 30 / Taskmaster 30) | 5 | 2 | 900 |
+  | calibration | 90 (AMI 30 / NICT 30 / Taskmaster 30) | 5 | 4 | 1,800 |
   | pilot (E/H) | 54 | 2 | 2 | 216 |
   | first40 (E/C/I) | 40 | 3 | 2 | 240 |
-  | **합계** | **184** | | | **1,356** |
-  발화-검수 건 = (90+54+40)×2 = **368**. 조정/재채점 비용 별도.
+  | **합계** | | | | **2,256** |
+  발화-검수 건 = 90×4 + 54×2 + 40×2 = **548**. 조정/재채점 비용 별도.
   pilot 54 = event 13(실제 라흐터 가용치, 라운드업 안 함) + AMI 비-라흐터 대조 9
   (calibration이 AMI 39 non-laugh 그룹 중 30 사용 후 잔여) + model-disagreement 16
   (Energy 8 / Humor 8) + residual random 16.
@@ -214,7 +216,7 @@ gate 이후 / 별도 트랙:
 
 | batch | candidate 파일 | manifest | slot CSV | 상태 |
 |---|---|---|---|---|
-| calibration 90 | `ml_transition_calibration_candidates_90.jsonl` | `ml_transition_calibration_review.manifest.json` | `..._calibration_review.slot{A,B}.csv` | 채점 가능 (dev, calibration 먼저) |
+| calibration 90 | `ml_transition_calibration_candidates_90.jsonl` | `ml_transition_calibration_review.manifest.json` | `..._calibration_review.slot{A,B,C,D}.csv` + `calibration_scoring_slot{A,B,C,D}.xlsx` | 채점 가능 (dev, calibration 먼저) |
 | pilot 54 | `ml_transition_pilot_eh_candidates.jsonl` | `ml_transition_pilot_review.manifest.json` | `..._pilot_review.slot{A,B}.csv` | **채점 보류** — calibration 검토 + rubric 고정 후 |
 | first40 40 | `ml_transition_train_first40_candidates.jsonl` | `ml_transition_first40_review.manifest.json` | `..._first40_review.slot{A,B}.csv` | **채점 보류** — 동일 |
 | first40 remainder 80 | `ml_transition_train_active_remainder_candidates.jsonl` | — | 미생성 | 사용/채점 보류 |
@@ -229,9 +231,11 @@ gate 이후 / 별도 트랙:
   대조군 9 = AMI non-laugh 39 − calibration 30. AMI 신규 그룹 확보 시 대조군 확대.
 - reservoir는 gold reservoir와 canonical group 교집합 0 → reserved pool 유출 불가 (스크립트가 assert).
 - 채점 시작 전제: calibration 2인 불일치 검토 → rubric/input version 고정 → §7 검수량 재확인.
-- 검수자 배포용: `scripts/export_calibration_workbook.py` → `calibration_scoring_slot{A,B}.xlsx`
-  (시트: 안내 / 채점 기준표 / 채점 예시 / 채점 시트, 0~100 정수 검증). slot별 문항 순서는
-  manifest `slot_order` 사용. 채점 완료본은 slot CSV로 옮겨 `--manifest` importer에 넣는다.
+- 검수자 배포용: `scripts/export_calibration_workbook.py` → `calibration_scoring_slot{A,B,C,D}.xlsx`
+  (시트: 안내 / 채점 기준표 / 채점 예시 / 채점 시트, 0~100 정수 검증). 검수자 1명당 파일 1개,
+  같은 90발화·순서만 다름. slot별 문항 순서는 manifest `slot_order` 사용.
+  채점 완료본은 slot CSV로 옮겨 `--manifest` importer에 넣는다. importer는 제출된 slot만
+  완결성 검사하므로 4명이 다 끝나기 전에 부분 집계 가능.
   (openpyxl 필요 — dev 전용 도구 의존성, 런타임 아님)
 - calibration 채점 후 확인: 출처별 큰 불일치 비율 / 축별 평균 부호차 / 축별 평균 절대차 /
   불일치 원인. rubric 수정 시 기존 90개는 "기준 개선용 데이터"로 남기고 효과는 새 표본에서 재검증.

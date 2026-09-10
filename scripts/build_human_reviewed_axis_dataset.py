@@ -208,9 +208,13 @@ def load_batch_reviews(
                 }
             )
 
+    # Require completeness only for the slots actually supplied (a batch may be
+    # imported before every reviewer has finished). Each supplied slot must
+    # cover all items.
+    supplied_slots = {slot for _, _, slot in seen_keys}
     expected = {
         (annotation_batch, item_id, slot)
-        for slot in manifest["slots"]
+        for slot in supplied_slots
         for item_id in by_item
     }
     missing = expected - seen_keys

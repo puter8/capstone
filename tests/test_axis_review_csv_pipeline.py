@@ -165,6 +165,46 @@ def test_batch_export_import_aggregate_round_trip(tmp_path: Path) -> None:
     assert report["flagged"][0]["item_id"] == "pilot-0002"
 
 
+def test_batch_import_accepts_a_subset_of_slots(tmp_path: Path) -> None:
+    manifest = build_manifest(
+        _CANDIDATES, annotation_batch="calibration", dataset_partition="dev",
+        axes="all", slots=["A", "B", "C", "D"], seed=5,
+    )
+    write_batch_csvs(manifest, tmp_path / "cal.csv")
+    scores = {iid: {a: 50 for a in ("Formality", "Energy", "Intimacy", "Humor", "Curiosity")}
+              for iid in ("calibration-0001", "calibration-0002", "calibration-0003")}
+    _fill_slot_csv(tmp_path / "cal.slotA.csv", scores, "r1")
+    _fill_slot_csv(tmp_path / "cal.slotC.csv", scores, "r3")
+
+    raw = load_batch_reviews(
+        [tmp_path / "cal.slotA.csv", tmp_path / "cal.slotC.csv"], manifest, _CANDIDATES, "test",
+    )
+    assert {r["reviewer_slot"] for r in raw} == {"A", "C"}
+    assert len(raw) == 6  # 3 items x 2 supplied slots, D and B not required yet
+
+
+def test_batch_import_still_requires_all_items_within_a_supplied_slot(tmp_path: Path) -> None:
+    manifest = build_manifest(
+        _CANDIDATES, annotation_batch="calibration", dataset_partition="dev",
+        axes="all", slots=["A", "B"], seed=5,
+    )
+    write_batch_csvs(manifest, tmp_path / "cal.csv")
+    rows = list(csv.DictReader((tmp_path / "cal.slotA.csv").open("r", encoding="utf-8-sig")))
+    fieldnames = list(rows[0].keys())
+    rows = rows[:2]  # drop one item
+    for row in rows:
+        for axis in ("Formality", "Energy", "Intimacy", "Humor", "Curiosity"):
+            row[f"reviewed_{axis}"] = "50"
+        row["reviewer_id"] = "r1"
+        row["review_status"] = "completed"
+    with (tmp_path / "cal.slotA.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    with pytest.raises(ReviewError, match="missing"):
+        load_batch_reviews([tmp_path / "cal.slotA.csv"], manifest, _CANDIDATES, "test")
+
+
 def test_batch_import_rejects_duplicate_pk(tmp_path: Path) -> None:
     manifest = build_manifest(
         _CANDIDATES, annotation_batch="calibration", dataset_partition="train",
