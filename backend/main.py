@@ -189,14 +189,19 @@ def _reset_supabase_client() -> None:
         logging.warning(f"supabase client reset failed (non-fatal): {e}")
 
 
-# 쓰기 재시도는 "요청이 전송되지 않은 것이 확실한" 연결 실패에만 허용한다.
+# 쓰기 재시도는 "요청이 서버에서 처리되지 않은 것이 확실한" 실패에만 허용한다.
 # ReadTimeout 등은 서버가 이미 처리했을 수 있어 재시도하면 중복 실행 위험이 있다.
 _WRITE_OPS = {"insert", "update", "upsert", "delete"}
+
+# Supabase 가 HTTP/2 GOAWAY(ConnectionTerminated)로 커넥션을 주기적으로 정리한다.
+# httpx 는 이를 RemoteProtocolError 로 올리는데, GOAWAY 규약상 last_stream_id 이후의
+# 요청은 서버가 처리하지 않았음이 보장되므로 쓰기라도 재시도해도 중복되지 않는다.
+_WRITE_SAFE_RETRY = (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError)
 
 
 def _should_retry(exc: BaseException, is_write: bool) -> bool:
     if is_write:
-        return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+        return isinstance(exc, _WRITE_SAFE_RETRY)
     return _is_transport_error(exc)
 
 
