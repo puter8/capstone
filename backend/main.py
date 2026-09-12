@@ -172,8 +172,29 @@ def _error_body(code: str, message: str, request_id: str, details: Optional[dict
     return {"error": error}
 
 
+def _is_transport_error(exc: BaseException) -> bool:
+    """Supabase 호출이 '연결' 때문에 실패했는지 판별 (죽은 keep-alive 커넥션·타임아웃 등).
+    무효 토큰 같은 논리적 거절(AuthApiError)과 구분하기 위해 쓴다."""
+    return isinstance(exc, httpx.TransportError)
+
+
+def _reset_supabase_client() -> None:
+    """죽은 커넥션을 물고 있는 Supabase 싱글톤을 폐기해, 다음 호출에서 새 커넥션으로
+    재생성되게 한다. lib/supabase.py(다른 담당 영역)는 수정하지 않고 모듈 전역만 비운다.
+    이게 없으면 Supabase 가 잠시 끊겼다 복구돼도 프로세스를 재배포할 때까지 계속 실패한다."""
+    try:
+        import lib.supabase as _sb_module
+        _sb_module._client = None
+    except Exception as e:
+        logging.warning(f"supabase client reset failed (non-fatal): {e}")
+
+
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError):
+    # 503(연결·저장소 실패)은 커넥션이 죽었을 가능성이 있으므로 싱글톤을 폐기해
+    # 다음 요청이 새 커넥션으로 자가 회복하게 한다 (수동 재배포 없이 복구).
+    if exc.status_code == 503:
+        _reset_supabase_client()
     return JSONResponse(
         status_code=exc.status_code,
         content=_error_body(exc.code, exc.message, _request_id(request), exc.details),
@@ -927,11 +948,28 @@ def _verify_bearer_user(authorization: Optional[str]):
         raise AppError(503, "service_unavailable", "Supabase is not configured")
 
     try:
-        sb = get_supabase()
-        user_res = sb.auth.get_user(token)
+        user_res = get_supabase().auth.get_user(token)
     except Exception as e:
-        logging.warning(f"Auth verification failed: {e}")
-        raise AppError(401, "unauthorized", "Invalid or expired token")
+        # 연결 실패를 "토큰 만료"로 응답하면 클라이언트가 원인을 오판한다.
+        # 전송 오류(죽은 커넥션 등)와 토큰 거절을 반드시 구분한다.
+        if _is_transport_error(e):
+            logging.warning(f"Auth transport error, retrying with fresh client: {e}")
+            _reset_supabase_client()
+            try:
+                user_res = get_supabase().auth.get_user(token)
+            except Exception as retry_e:
+                logging.error(f"Auth service unreachable after retry: {retry_e}")
+                raise AppError(503, "auth_unavailable",
+                               "인증 서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.")
+        else:
+            status = getattr(e, "status", None)
+            if isinstance(status, int) and status >= 500:
+                logging.error(f"Auth service error {status}: {e}")
+                raise AppError(503, "auth_unavailable",
+                               "인증 서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해 주세요.")
+            # 인증 서버가 토큰을 명시적으로 거절한 경우만 401.
+            logging.warning(f"Token rejected by auth service: {e}")
+            raise AppError(401, "unauthorized", "Invalid or expired token")
 
     user = getattr(user_res, "user", None)
     if user is None or not getattr(user, "id", None):
