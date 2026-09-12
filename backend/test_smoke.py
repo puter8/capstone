@@ -106,14 +106,48 @@ def test_retrying_query_replays_attribute_chaining():
 
 
 def test_should_retry_is_conservative_for_writes():
-    """읽기는 전송 오류 전부 재시도하되, 쓰기는 요청이 전송되지 않은 것이 확실한
-    연결 실패만 재시도한다 (중복 실행 방지)."""
+    """읽기는 전송 오류 전부 재시도하되, 쓰기는 서버가 처리하지 않은 것이 확실한
+    실패만 재시도한다 (중복 실행 방지)."""
     import httpx
 
     assert main._should_retry(httpx.ReadTimeout("x"), is_write=False) is True
     assert main._should_retry(httpx.ReadTimeout("x"), is_write=True) is False
     assert main._should_retry(httpx.ConnectError("x"), is_write=True) is True
     assert main._should_retry(ValueError("x"), is_write=False) is False
+
+
+def test_should_retry_writes_on_http2_goaway():
+    """Supabase 가 HTTP/2 GOAWAY 로 커넥션을 정리하면 httpx 가 RemoteProtocolError 를 낸다.
+    GOAWAY 규약상 그 요청은 서버가 처리하지 않았으므로 쓰기도 재시도해야 한다.
+
+    이 케이스를 쓰기에서 제외했다가 온보딩·대화 생성·업적 저장이 503 으로 실패한 적이 있다.
+    """
+    import httpx
+
+    assert main._should_retry(httpx.RemoteProtocolError("goaway"), is_write=True) is True
+    assert main._should_retry(httpx.RemoteProtocolError("goaway"), is_write=False) is True
+
+
+def test_retrying_query_retries_write_after_goaway():
+    """GOAWAY 로 첫 시도가 끊겨도 쓰기가 새 커넥션으로 재시도되어 성공해야 한다."""
+    import httpx
+
+    attempts = []
+
+    class FlakyBuilder:
+        def insert(self, *args, **kwargs):
+            return self
+
+        def execute(self):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise httpx.RemoteProtocolError("<ConnectionTerminated error_code:0>")
+            return "SAVED"
+
+    query = main._RetryingQuery(lambda: FlakyBuilder())
+
+    assert query.insert({"a": 1}).execute() == "SAVED"
+    assert len(attempts) == 2
 
 
 def test_conversation_turns_restore_user_before_pally_for_equal_timestamps():
