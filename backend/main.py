@@ -113,6 +113,9 @@ _DEBUG_ENDPOINTS_ENABLED = os.getenv("PALLY_DEBUG_ENDPOINTS") == "1"
 
 # 무료 일일 turn 한도. 하드코딩하지 않고 config 로 빼서 정책 변경 시 재배포 없이 조정.
 FREE_DAILY_TURNS = int(os.getenv("FREE_DAILY_TURNS", "20"))
+# Pro 는 한도를 적용하지 않는다. 다만 비용 분석·남용 탐지를 위해 사용량 카운트는 계속
+# 남겨야 하므로, 예약을 건너뛰지 않고 사실상 도달 불가능한 한도를 넘겨 증가만 시킨다.
+_UNLIMITED_TURN_LIMIT = 1_000_000_000
 _KST = timezone(timedelta(hours=9))  # 한국은 DST 없음 → 고정 UTC+9
 
 
@@ -1477,16 +1480,41 @@ def _kst_reset_at() -> str:
     return midnight_kst.astimezone(timezone.utc).isoformat()
 
 
-def _reserve_turn(sb, user_id: str) -> int:
+def _has_unlimited_turns(sb, user_id: str) -> bool:
+    """Pro 구독자인지. 서버 값(subscriptions.entitled)만 신뢰한다.
+    구독 조회가 실패하면 무제한을 주지 않고 무료 한도를 적용한다(fail-safe)."""
+    try:
+        row = _read_subscription(sb, user_id)
+    except Exception as e:
+        logging.warning(f"subscription check failed, applying free limit: {e}")
+        return False
+    return bool(row and row.get("entitled"))
+
+
+def _quota_view(used: int, unlimited: bool) -> dict:
+    """turn 응답·usage 조회가 공유하는 quota 표현.
+    unlimited=True 면 remaining_turns/daily_limit/exhausted 는 의미가 없으니 무시한다
+    (사용자에겐 '무제한'으로 보이고, 카운트는 서버 기록용으로 계속 쌓인다)."""
+    return {
+        "used_turns": used,
+        "remaining_turns": max(FREE_DAILY_TURNS - used, 0),
+        "daily_limit": FREE_DAILY_TURNS,
+        "exhausted": (not unlimited) and used >= FREE_DAILY_TURNS,
+        "unlimited": unlimited,
+    }
+
+
+def _reserve_turn(sb, user_id: str, limit: int = FREE_DAILY_TURNS) -> int:
     """
     turn 1개를 원자적으로 예약(차감). 반환: 예약 후 used_turns(>=1), 소진이면 -1.
     DB 함수(reserve_turn)가 행 잠금으로 동시성 race 를 막는다.
+    Pro 는 limit 을 사실상 무한대로 넘겨 차단 없이 카운트만 쌓는다.
     """
     try:
         res = sb.rpc("reserve_turn", {
             "p_user_id": user_id,
             "p_date": _kst_date(),
-            "p_limit": FREE_DAILY_TURNS,
+            "p_limit": limit,
         }).execute()
     except Exception as e:
         logging.error(f"reserve_turn failed: {e}")
@@ -1509,7 +1537,7 @@ def _release_turn(sb, user_id: str) -> None:
 
 @app.get("/api/usage")
 async def get_usage(user_id: str = Depends(get_current_user_id)):
-    """당일 무료 사용량 조회 (§4.11). 현재는 전원 free plan."""
+    """당일 사용량 조회 (§4.11). Pro 는 unlimited=true 로 무제한을 알린다."""
     sb = get_supabase()
     date_kst = _kst_date()
     try:
@@ -1518,14 +1546,13 @@ async def get_usage(user_id: str = Depends(get_current_user_id)):
         logging.error(f"get_usage failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read usage")
     used = res.data[0]["used_turns"] if res.data else 0
+    unlimited = _has_unlimited_turns(sb, user_id)
     return {
-        "plan": "free",
+        "plan": "pro" if unlimited else "free",
         "date": date_kst,
         "timezone": "Asia/Seoul",
-        "used_turns": used,
-        "remaining_turns": max(FREE_DAILY_TURNS - used, 0),
-        "daily_limit": FREE_DAILY_TURNS,
         "reset_at": _kst_reset_at(),
+        **_quota_view(used, unlimited),
     }
 
 
@@ -1681,7 +1708,8 @@ async def create_turn(
 
     # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
     #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
-    quota_used = _reserve_turn(sb, user_id)
+    unlimited = _has_unlimited_turns(sb, user_id)
+    quota_used = _reserve_turn(sb, user_id, _UNLIMITED_TURN_LIMIT if unlimited else FREE_DAILY_TURNS)
     if quota_used < 0:
         raise AppError(429, "quota_exceeded", "오늘 사용할 수 있는 대화를 모두 사용했어요.",
                        {"reset_at": _kst_reset_at(), "daily_limit": FREE_DAILY_TURNS})
@@ -1864,10 +1892,7 @@ async def create_turn(
         "feedback_pending": feedback_failed,
         "warnings": warnings,
         "quota": {
-            "used_turns": quota_used,
-            "remaining_turns": max(FREE_DAILY_TURNS - quota_used, 0),
-            "daily_limit": FREE_DAILY_TURNS,
-            "exhausted": quota_used >= FREE_DAILY_TURNS,
+            **_quota_view(quota_used, unlimited),
             "resets_at": _kst_reset_at(),
         },
     }

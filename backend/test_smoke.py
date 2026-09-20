@@ -182,6 +182,34 @@ def test_retrying_query_replays_attribute_chaining():
     assert trace == ["select", "eq", "not_", "is_(ended_at,null)", "execute"]
 
 
+def test_quota_view_marks_pro_unlimited_but_keeps_counting():
+    """Pro 는 사용자에게 무제한으로 보이되 카운트는 서버에 계속 쌓인다.
+
+    무료 한도를 넘긴 사용량이어도 exhausted 가 서지 않아야 대화가 막히지 않는다.
+    """
+    free = main._quota_view(used=main.FREE_DAILY_TURNS, unlimited=False)
+    assert free["unlimited"] is False
+    assert free["exhausted"] is True
+    assert free["remaining_turns"] == 0
+
+    pro = main._quota_view(used=main.FREE_DAILY_TURNS + 5, unlimited=True)
+    assert pro["unlimited"] is True
+    assert pro["exhausted"] is False
+    assert pro["used_turns"] == main.FREE_DAILY_TURNS + 5
+
+
+def test_unlimited_check_falls_back_to_free_limit_on_failure(monkeypatch):
+    """구독 조회가 실패하면 무제한을 주지 않는다 (fail-safe)."""
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("subscription unavailable")
+
+    monkeypatch.setattr(main, "_read_subscription", boom)
+    assert main._has_unlimited_turns(object(), "user-id") is False
+
+    monkeypatch.setattr(main, "_read_subscription", lambda *_: {"entitled": True})
+    assert main._has_unlimited_turns(object(), "user-id") is True
+
+
 def test_should_retry_is_conservative_for_writes():
     """읽기는 전송 오류 전부 재시도하되, 쓰기는 서버가 처리하지 않은 것이 확실한
     실패만 재시도한다 (중복 실행 방지)."""
