@@ -101,6 +101,17 @@ def test_axes_to_traits_uses_renderer_tier_boundaries():
     assert main._axes_to_traits(high) == ["bestie", "ridiculous", "energetic", "inquisitive", "formal"]
 
 
+def test_default_traits_match_the_default_pally_shown_to_new_users():
+    """신규 가입자 기본 태그(DB default)는 홈 화면의 기본 Pally 모습과 같아야 한다.
+
+    frontend/lib/types/character.ts 의 DEFAULT_AXES 를 태그 규칙에 넣은 결과가
+    supabase/migrations/20260922000000_profiles_default_traits.sql 의 기본값이다.
+    둘 중 하나를 바꾸면 이 테스트와 다른 쪽도 함께 바꿔야 한다.
+    """
+    frontend_default_axes = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+    assert main._axes_to_traits(frontend_default_axes) == ["acquaint", "serious", "calm", "indifferent", "casual"]
+
+
 def test_axes_to_traits_always_returns_five_unique_tags():
     """profiles.traits 는 DB 제약상 정확히 5개, 프론트는 태그 텍스트를 key 로 쓴다."""
     for value in (0, 33, 34, 66, 67, 100):
