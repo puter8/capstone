@@ -1739,6 +1739,14 @@ async def create_turn(
         if m["role"] == "user" and m.get("axes"):
             current_axes = m["axes"]
             break
+    # 이 대화의 첫 발화면 직전에 끝낸 대화의 최종 5축에서 이어간다(대화 간 EMA 연결).
+    # 새 대화마다 백지에서 시작하면 "대화할수록 닮아간다"가 대화 사이에서 끊긴다.
+    if current_axes is None:
+        try:
+            current_axes = _carried_over_axes(sb, user_id)
+        except AppError:
+            _release_turn(sb, user_id)
+            raise
 
     # 6. 5축 → EMA → character (분석 어댑터: rule|ml|hybrid, 기본 rule)
     raw_axes = _analyze_axes(transcript)
@@ -1927,6 +1935,58 @@ def _latest_user_axes(messages: list) -> dict:
     return dict(_INITIAL_AXES)
 
 
+# 마이페이지 성향 태그. 축마다 캐릭터 렌더러(frontend PallyCanvas tier)와 같은
+# 0~33 / 34~66 / 67~100 구간 라벨을 쓴다 → 태그와 Pally 모습이 항상 같은 기준.
+# 순서가 곧 표시 순서다(기존 seed: bestie·ridiculous·lively·curious·blunt 와 같은 축 순서).
+_TRAIT_TIERS = (
+    ("Intimacy", ("acquaint", "buddy", "bestie")),
+    ("Humor", ("serious", "funny", "ridiculous")),
+    ("Energy", ("calm", "lively", "energetic")),
+    ("Curiosity", ("indifferent", "curious", "inquisitive")),
+    ("Formality", ("blunt", "casual", "formal")),
+)
+
+
+def _axis_tier(value: float) -> int:
+    if value <= 33:
+        return 0
+    if value <= 66:
+        return 1
+    return 2
+
+
+def _axes_to_traits(axes: dict) -> list:
+    return [labels[_axis_tier(axes[axis])] for axis, labels in _TRAIT_TIERS]
+
+
+def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
+    """새 대화의 EMA 출발점 = 가장 최근에 끝낸 대화의 최종 5축.
+
+    홈 화면이 복원해 보여주는 Pally(완료 대화 중 최신)와 같은 기준이라
+    '보이는 Pally'에서 다음 대화가 이어진다. 발화가 없는 완료 대화는 건너뛰고,
+    이전 완료 대화가 없으면 None(첫 발화 원점수로 시작).
+    """
+    try:
+        sessions = (sb.table("sessions").select("id").eq("user_id", user_id)
+                    .not_.is_("ended_at", "null").order("created_at", desc=True).limit(20).execute())
+        ids = [row["id"] for row in (sessions.data or [])]
+        if not ids:
+            return None
+        msgs = (sb.table("messages").select("session_id, axes, created_at")
+                .in_("session_id", ids).eq("role", "user").not_.is_("axes", "null")
+                .order("created_at").execute())
+    except Exception as e:
+        logging.error(f"carried-over axes read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load previous Pally state")
+    latest_by_session: Dict[str, dict] = {}
+    for m in (msgs.data or []):
+        latest_by_session[m["session_id"]] = m["axes"]
+    for session_id in ids:  # 최신 완료 대화부터
+        if session_id in latest_by_session:
+            return latest_by_session[session_id]
+    return None
+
+
 @app.get("/api/conversations")
 async def list_conversations(
     user_id: str = Depends(get_current_user_id),
@@ -2078,6 +2138,7 @@ async def complete_conversation(
     """대화 종료. 재호출해도 같은 결과(멱등)."""
     sb = get_supabase()
     session = _owned_session(sb, conversation_id, user_id)
+    warnings: list = []
 
     if not session.get("ended_at"):
         try:
@@ -2086,12 +2147,36 @@ async def complete_conversation(
             logging.error(f"complete_conversation failed: {e}")
             raise AppError(503, "persistence_failed", "Failed to complete conversation")
         session = res.data[0] if res.data else session
+        if not _refresh_profile_traits(sb, user_id, conversation_id):
+            warnings.append({"code": "traits_update_failed",
+                             "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
 
     return {"conversation": {
         "id": session["id"],
         "status": "completed",
         "completed_at": session.get("ended_at"),
-    }}
+    }, "warnings": warnings}
+
+
+def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
+    """방금 끝낸 대화의 최종 5축으로 마이페이지 성향 태그를 갱신한다.
+
+    대화 간 EMA 가 이어지므로 이 값이 곧 지금까지의 누적 상태다. 발화가 없는 대화는
+    갱신하지 않는다. 대화 종료 자체는 이미 성공했으므로 실패해도 종료를 되돌리지 않고
+    False 를 돌려 응답 warnings 로 알린다(에러 로그는 남긴다).
+    """
+    try:
+        msgs = (sb.table("messages").select("axes").eq("session_id", conversation_id)
+                .eq("role", "user").not_.is_("axes", "null")
+                .order("created_at", desc=True).limit(1).execute())
+        if not msgs.data:
+            return True
+        traits = _axes_to_traits(msgs.data[0]["axes"])
+        sb.table("profiles").update({"traits": traits, "updated_at": _now_iso()}).eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"profile traits refresh failed: {e}")
+        return False
+    return True
 
 
 @app.post("/api/conversations/{conversation_id}/reopen")
