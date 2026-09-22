@@ -146,6 +146,7 @@ def test_turn_waits_for_feedback_and_saves_the_same_card_for_history(monkeypatch
     sb.table.side_effect = lambda name: {"sessions": sessions, "messages": messages}[name]
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
+    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Chirp3-HD-Leda")
