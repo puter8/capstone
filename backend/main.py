@@ -1494,10 +1494,12 @@ def _has_unlimited_turns(sb, user_id: str) -> bool:
 def _quota_view(used: int, unlimited: bool) -> dict:
     """turn 응답·usage 조회가 공유하는 quota 표현.
     unlimited=True 면 remaining_turns/daily_limit/exhausted 는 의미가 없으니 무시한다
-    (사용자에겐 '무제한'으로 보이고, 카운트는 서버 기록용으로 계속 쌓인다)."""
+    (사용자에겐 '무제한'으로 보이고, 카운트는 서버 기록용으로 계속 쌓인다).
+    단 기존 클라이언트는 remaining_turns == 0 을 소진으로 판단하므로(홈 한도 팝업),
+    무제한이면 remaining_turns 를 한도값으로 고정해 0 이 되지 않게 한다."""
     return {
         "used_turns": used,
-        "remaining_turns": max(FREE_DAILY_TURNS - used, 0),
+        "remaining_turns": FREE_DAILY_TURNS if unlimited else max(FREE_DAILY_TURNS - used, 0),
         "daily_limit": FREE_DAILY_TURNS,
         "exhausted": (not unlimited) and used >= FREE_DAILY_TURNS,
         "unlimited": unlimited,

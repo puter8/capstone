@@ -196,6 +196,8 @@ def test_quota_view_marks_pro_unlimited_but_keeps_counting():
     assert pro["unlimited"] is True
     assert pro["exhausted"] is False
     assert pro["used_turns"] == main.FREE_DAILY_TURNS + 5
+    # 홈 화면이 remaining_turns == 0 으로 한도 팝업을 띄우므로 Pro 는 0 이 되면 안 된다.
+    assert pro["remaining_turns"] > 0
 
 
 def test_unlimited_check_falls_back_to_free_limit_on_failure(monkeypatch):
