@@ -37,7 +37,7 @@ export function LevelOption({ code, description, name, onSelect, selected = fals
       <p className="absolute left-[46px] right-[62px] top-[22px] truncate text-[18px] font-bold leading-[24px]">
         {code} - <span className="font-normal">{name}</span>
       </p>
-      <p className={cn("absolute left-[46px] right-[58px] top-[49px] line-clamp-2 text-[11px] font-normal leading-[12px]", selected ? "text-white" : "text-text-secondary")}>
+      <p className={cn("absolute left-[46px] right-[58px] top-[49px] line-clamp-3 text-[11px] font-normal leading-[12px]", selected ? "text-white" : "text-text-secondary")}>
         {description}
       </p>
       <SelectionIndicator className="absolute right-5 top-1/2 h-7 w-7 -translate-y-1/2" selected={selected} />

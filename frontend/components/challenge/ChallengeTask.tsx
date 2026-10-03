@@ -11,7 +11,7 @@ export function ChallengeTask({ completed = false, description, title }: Challen
   return (
     <article
       className={cn(
-        "relative h-[90px] w-full overflow-hidden rounded-[10px]",
+        "relative min-h-[90px] w-full overflow-hidden rounded-[10px] py-[22px] pl-[46px] pr-[62px]",
         completed ? "text-white" : "text-primary",
       )}
     >
@@ -29,8 +29,8 @@ export function ChallengeTask({ completed = false, description, title }: Challen
           src={completed ? "/icons/challenge-star-completed.svg" : "/icons/challenge-star-default.svg"}
         />
       </span>
-      <h3 className="absolute left-[46px] right-[62px] top-[22px] truncate text-body-sb">{title}</h3>
-      <p className={cn("absolute left-[46px] right-[64px] top-[56px] truncate text-[11px] font-normal leading-[12px]", completed ? "text-white" : "text-text-secondary")}>
+      <h3 className="relative text-body-sb">{title}</h3>
+      <p className={cn("relative mt-[10px] text-[11px] font-normal leading-[12px]", completed ? "text-white" : "text-text-secondary")}>
         {description}
       </p>
       <SelectionIndicator className="absolute right-5 top-1/2 h-7 w-7 -translate-y-1/2" selected={completed} />
