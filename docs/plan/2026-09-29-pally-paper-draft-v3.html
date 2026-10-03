@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>명시적 대화 목적을 활용한 Pally의 응답 적합성과 후속 대화 연속성 평가</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm 20mm 20mm; }
+  :root{
+    --ink:#1c1f26; --ink-dim:#565b68; --rule:#d8dbe3;
+    --navy:#2a3b6b; --navy-soft:#eef1fa;
+    --green:#2f8f72; --green-soft:#e7f4ef;
+    --amber:#b0562d; --amber-soft:#fbebe2;
+    --red:#a13a3a; --red-soft:#f8e6e6;
+    --paper:#ffffff;
+  }
+  *{box-sizing:border-box;}
+  html,body{background:var(--paper); color:var(--ink); margin:0; padding:0;}
+  body{
+    font-family:"Batang","바탕",'Noto Serif KR',serif;
+    font-size:11.3pt; line-height:1.72; letter-spacing:-0.001em;
+  }
+  .titlepage{ text-align:center; padding:18mm 6mm 10mm; border-bottom:1.4pt solid var(--ink); margin-bottom:10mm; }
+  .titlepage .kicker{ font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-size:9.5pt; letter-spacing:.18em; text-transform:uppercase; color:var(--navy); font-weight:700; margin-bottom:8mm; }
+  .titlepage h1{ font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-size:19pt; line-height:1.45; font-weight:700; margin:0 0 6mm; }
+  .titlepage .sub{ font-size:11pt; color:var(--ink-dim); font-family:"Malgun Gothic","맑은 고딕",sans-serif; }
+  .titlepage .meta{ margin-top:8mm; font-size:9.8pt; color:var(--ink-dim); font-family:"Malgun Gothic","맑은 고딕",sans-serif; }
+  .status-box{
+    background:var(--navy-soft); border-left:3pt solid var(--navy); border-radius:2pt;
+    padding:5mm 6mm; margin:8mm 0 0; font-size:10pt; font-family:"Malgun Gothic","맑은 고딕",sans-serif; line-height:1.65; text-align:left;
+  }
+  .status-box b{ color:var(--navy); }
+
+  h2{ font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-size:14.5pt; font-weight:700; color:var(--navy);
+      border-bottom:1pt solid var(--rule); padding-bottom:2mm; margin:12mm 0 5mm; page-break-after:avoid; }
+  h3{ font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-size:12pt; font-weight:700; margin:8mm 0 3.5mm; page-break-after:avoid; }
+  h4{ font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-size:10.6pt; font-weight:700; color:var(--navy); margin:6mm 0 2.5mm; page-break-after:avoid; }
+  p{ margin:0 0 3.6mm; text-align:justify; }
+  .lede{ color:var(--ink-dim); }
+  code{ font-family:"Consolas","D2Coding",monospace; font-size:9.6pt; background:#f2f3f6; padding:0.5px 4px; border-radius:3px; }
+
+  table{ width:100%; border-collapse:collapse; margin:3mm 0 5mm; font-size:9.8pt; page-break-inside:avoid; }
+  caption{ caption-side:top; text-align:left; font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-weight:700; font-size:10pt; margin-bottom:1.6mm; }
+  th,td{ border:0.6pt solid var(--rule); padding:2.4mm 3mm; vertical-align:top; }
+  th{ background:var(--navy-soft); font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-weight:700; font-size:9.4pt; color:var(--navy); text-align:left; }
+  td.num, th.num{ text-align:right; font-variant-numeric:tabular-nums; }
+  tr:nth-child(even) td{ background:#fbfbfd; }
+  .mono-id{ font-family:"Consolas",monospace; font-size:9pt; }
+
+  .figure{ margin:5mm 0 6mm; page-break-inside:avoid; text-align:center; }
+  .figure svg{ max-width:100%; height:auto; }
+  figcaption{ font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-size:9.6pt; color:var(--ink-dim); margin-top:2.5mm; text-align:left; }
+  figcaption b{ color:var(--ink); }
+
+  .callout{ background:var(--green-soft); border-left:3pt solid var(--green); border-radius:2pt; padding:4mm 5.5mm; margin:4mm 0; font-size:10.2pt; }
+  .callout.warn{ background:var(--amber-soft); border-left-color:var(--amber); }
+  .refs{ font-size:9.6pt; line-height:1.9; }
+  .refs p{ text-align:left; margin:0 0 1.6mm; text-indent:-7mm; padding-left:7mm; }
+  .section-note{ font-size:9.6pt; color:var(--ink-dim); font-style:italic; }
+  hr.sep{ border:none; border-top:0.6pt solid var(--rule); margin:9mm 0; }
+  .appendix-tag{ display:inline-block; font-family:"Malgun Gothic","맑은 고딕",sans-serif; font-size:8.6pt; font-weight:700; letter-spacing:.05em; color:var(--navy); background:var(--navy-soft); border-radius:2px; padding:1.2px 6px; margin-bottom:2mm; }
+  .pagebreak{ page-break-before:always; }
+</style>
+</head>
+<body>
+
+<div class="titlepage">
+  <div class="kicker">Pally / CharaShift · Purpose-Aware Response Generation Study</div>
+  <h1>명시적 대화 목적을 활용한 Pally의<br>응답 적합성과 후속 대화 연속성 평가</h1>
+  <div class="sub">— 100항목 통제 파일럿에서의 목적 조건화(Purpose-Conditioning) 효과 검증 및 실패 원인 진단 —</div>
+  <div class="meta">초안 v3 · 2026년 9월 30일</div>
+  <div class="status-box">
+    <b>작성 상태</b> — 실험설계·데이터셋·Phase 1(목적 분류기·축 회귀기) 결과와 블라인드 A/B 평가(§5.4, RQ1의 주 결과), 목적 분류기 vs 응답생성기 원인 분리 진단(§5.2, RQ2)까지 모두 확정. 연구자 4인의 최종 판정이 20개 항목 전원에 대해 결정됐으며, 조건 B(Purpose-aware)가 조건 A(Direct)보다 통계적으로 유의하게 선호됨을 확인했다(§5.4).
+  </div>
+</div>
+
+<h2>1. 서론</h2>
+<p>대규모 언어모델(LLM)의 활용 범위는 대화형 상호작용과 학습 지원 등으로 확장되고 있다. 특히 언어 분야에서는 생성형 AI 챗봇을 상대로 한 회화 학습 연구가 이루어지고 있다[12]. 그러나 자연스러운 회화에 등장하는 비격식 표현(슬랭, 비표준적 구어 표현)의 이해에는 한계가 존재한다. 비격식 표현은 동일한 표현도 문맥에 따라 문자적(literal) 의미와 다른 의미로 사용될 수 있기 때문에 문맥과 의미적 확장을 함께 고려할 필요가 있다[2].</p>
+<p>슬랭을 탐지하고 해석하는 방법에 있어 많은 연구가 이루어져왔으나, 탐지만으로 LLM이 비격식 표현에 적절하게 응답하고 사용자의 의도에 따른 맥락을 유지할 수 있는지 판단하는 것에는 한계가 있다. LLM이 아닌 일반적 대화·평가 연구에서도 개별 응답 단위의 의미뿐 아니라 대화 전체 흐름의 일관성과 사용자 발화에 대한 이해를 별도의 평가 요소로 다룬다[7]. 따라서 자연스러운 대화 경험을 지원하기 위해서는 비격식 표현의 의미를 파악하는 것을 넘어, 화자의 의도와 대화 맥락이 응답에 반영되는지 그 여부를 검증할 필요가 있다.</p>
+<p>본 연구는 자체 개발한 AI 영어 회화 학습 서비스 <b>Pally</b>를 활용하여 비격식 표현의 이해와 적절한 응답 생성 사이의 연결성에 주목한다. 구체적으로 응답을 생성하기에 앞서 추정한 대화 목적(communicative purpose)을 명시적 중간표현(intermediate representation)으로 활용하고, 이를 활용하지 않는 조건과 비교하여 응답 품질에 미치는 효과를 검증하고자 한다. 이를 통해 생성된 응답이 발화의 표면적 의미에만 머무르지 않고 화자의 의도에 부합하며, 이후 이어질 대화 맥락과도 양립할 수 있는지를 모델링 차원에서 탐색하고자 한다.</p>
+<p>본 연구는 100개 항목 규모의 파일럿(pilot) 연구로 설계됐다. 목적 분류기 자체의 분류 성능 향상을 주된 기여로 주장하지 않으며, 통제된 조건에서 명시적 의사소통 기능 표현이 만드는 증분 효과와 오류 전파 경로를 검증하는 데 초점을 둔다. 결과적으로 본 연구는 이 소규모 파일럿에서도 명시적 목적 결합이 응답 선호도에 통계적으로 유의한 차이를 만든다는 증거를 제시하며(§5.4), 동시에 그 효과가 어디서 비롯되는지 — 목적 분류의 정확도인지, 목적 정보 자체의 존재인지 — 를 진단적으로 분리한다(§5.2).</p>
+
+<h2>2. 관련연구</h2>
+<p>표 1은 슬랭 처리, 대화행위 모델링 및 응답 평가의 주요 접근을 비교한다. 대화행위나 계획을 생성 조건으로 사용하는 방법은 이미 제안되었다[5,6]. 본 연구는 중의적·비격식 사용자 발화에서 예측 목적을 세 축 추정과 응답 생성에 함께 추가했을 때 Direct 경로 대비 나타나는 증분 효과에 초점을 둔다.</p>
+<p>Mehri와 Eskenazi[7]는 대화 품질을 턴과 전체 대화 수준의 세부 특성으로 평가하였다. 이를 참조하여 의미 해석과 후속 연결을 구분하되, 본 연구의 인간 평가 기준은 별도로 정의한다. 주관적 주석의 관점을 명시해야 한다는 논의[8]와 LLM 제안이 인간 주석에 영향을 줄 수 있다는 연구[9]에 따라, 본 연구는 인간 라벨러가 응답 생성 전에 목적·축·의미·태도 및 응답 채점 기준을 LLM 제안 없이 직접 작성하도록 절차를 설계했다. 또한 CheckList[10]의 행동적 평가 관점에 따라 전체 평균뿐 아니라 실패 유형별 결과(목적 오분류가 응답 오류로 이어지는 경로 등)를 함께 살핀다.</p>
+
+<table>
+<caption>표 1. 관련 접근 비교</caption>
+<thead><tr><th style="width:16%">접근</th><th style="width:20%">대표 연구</th><th style="width:26%">초점</th><th>본 연구와의 차이</th></tr></thead>
+<tbody>
+<tr><td>슬랭 탐지·해석</td><td>Pei et al.[1], Sun et al.[2,3]</td><td>표현 단위의 의미 판별</td><td>의미 판별을 넘어 응답 생성·후속 대화 양립성까지 확장</td></tr>
+<tr><td>대화행위 모델링</td><td>Stolcke et al.[4]</td><td>발화의 기능 태깅</td><td>6종 목적 범주를 응답 생성 조건으로 직접 사용</td></tr>
+<tr><td>정책/계획 기반 응답 생성</td><td>Hedayatnia et al.[5], Ramirez et al.[6]</td><td>대화행위·계획을 생성 조건화</td><td>동일 축 예측을 공유한 상태에서 목적 유무만 격리(ablation)</td></tr>
+<tr><td>대화 품질 평가</td><td>Mehri &amp; Eskenazi[7]</td><td>턴/전체 수준 자동 평가</td><td>인간 4인의 사전 정의 rubric 기반 블라인드 평가</td></tr>
+<tr><td>주관적 주석 방법론</td><td>Röttger et al.[8], Schroeder et al.[9]</td><td>주석자 편향·LLM 개입 문제</td><td>라벨 생성 단계에서 LLM 제안 완전 배제</td></tr>
+<tr><td>행동적 평가</td><td>Ribeiro et al.[10]</td><td>실패 유형별 세분 평가</td><td>슬라이스별 결과 분리 보고, 목적 오분류·생성기 반영 실패 원인 분리(RQ2)</td></tr>
+</tbody>
+</table>
+
+<h2>3. Pally 모델 설명</h2>
+<p>Pally는 사용자 발화의 스타일 정보를 응답에 활용하는 대화 시스템이다. 본 연구의 실험 경로는 음성 입출력과 장기 대화 이력에서 분리하고, 최소 이전 문맥 0–1턴과 현재 턴을 입력으로 사용한다. <b>Formality</b>는 구어적 존중·체면 고려·격식성, <b>Humor</b>는 지각되는 유희성, <b>Curiosity</b>는 명시적인 정보·설명 요구 강도로 조작화한다. 각 축은 0–100점이며 5점 단위로 반올림한다. Energy와 Intimacy는 음성 및 장기 관계 이력이 없어 이번 실험 범위에서 평가하지 않는다.</p>
+<p>Direct 조건(A)은 입력에서 세 축을 직접 예측하여 응답을 생성한다. Purpose-aware 조건(B)은 A와 동일한 공통 축 회귀기가 산출한 동일한 세 축 예측값을 그대로 쓰되, 목적 분류기가 예측한 목적을 응답 생성 단계에만 추가로 결합해 생성기에 제공한다(§4.2). 즉 목적 예측은 축 추정에 관여하지 않는다. 목적은 정보 제공(answer_inform), 설명·탐색(explain_explore), 행동 요청(act_request), 확인·수정(confirm_repair), 인정·공감(acknowledge_empathize), 사회적 화답(social_reciprocate)의 6종이다. 유머는 순환 판단(circular reasoning)을 막기 위해 목적 범주에 넣지 않는다. 두 조건의 생성기와 기본 응답 지침은 같으며 B에만 예측 목적을 추가한다.</p>
+
+<figure class="figure">
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="Malgun Gothic, 맑은 고딕, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#565b68"/>
+    </marker>
+  </defs>
+  <!-- input -->
+  <rect x="20" y="120" width="140" height="60" rx="6" fill="#eef1fa" stroke="#2a3b6b" stroke-width="1.2"/>
+  <text x="90" y="145" text-anchor="middle" font-size="11" fill="#1c1f26">문맥(0–1턴)</text>
+  <text x="90" y="162" text-anchor="middle" font-size="11" fill="#1c1f26">+ 현재 사용자 턴</text>
+
+  <line x1="160" y1="150" x2="230" y2="90" stroke="#565b68" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="160" y1="150" x2="230" y2="210" stroke="#565b68" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- axis regressor -->
+  <rect x="232" y="55" width="170" height="66" rx="6" fill="#e7f4ef" stroke="#2f8f72" stroke-width="1.2"/>
+  <text x="317" y="82" text-anchor="middle" font-size="11" fill="#1c1f26">공통 3축 회귀기</text>
+  <text x="317" y="99" text-anchor="middle" font-size="9.5" fill="#565b68">Formality · Humor · Curiosity</text>
+  <text x="317" y="114" text-anchor="middle" font-size="9" fill="#565b68">(Ridge, A/B 공유)</text>
+
+  <!-- purpose classifier -->
+  <rect x="232" y="178" width="170" height="66" rx="6" fill="#fbebe2" stroke="#b0562d" stroke-width="1.2"/>
+  <text x="317" y="203" text-anchor="middle" font-size="11" fill="#1c1f26">목적 분류기</text>
+  <text x="317" y="220" text-anchor="middle" font-size="9.5" fill="#565b68">6종 (B/Oracle에서만 사용)</text>
+  <text x="317" y="235" text-anchor="middle" font-size="9" fill="#565b68">(Logistic Regression)</text>
+
+  <!-- to A -->
+  <line x1="402" y1="88" x2="470" y2="60" stroke="#565b68" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="472" y="30" width="120" height="54" rx="6" fill="#fff" stroke="#1c1f26" stroke-width="1.1"/>
+  <text x="532" y="52" text-anchor="middle" font-size="10.5" fill="#1c1f26">조건 A: Direct</text>
+  <text x="532" y="68" text-anchor="middle" font-size="9" fill="#565b68">(3축만 제공)</text>
+
+  <!-- to B -->
+  <line x1="402" y1="100" x2="470" y2="128" stroke="#565b68" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="402" y1="200" x2="470" y2="140" stroke="#565b68" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <rect x="472" y="106" width="120" height="54" rx="6" fill="#fff" stroke="#1c1f26" stroke-width="1.1"/>
+  <text x="532" y="128" text-anchor="middle" font-size="10.5" fill="#1c1f26">조건 B: Purpose-aware</text>
+  <text x="532" y="144" text-anchor="middle" font-size="9" fill="#565b68">(3축+예측 목적)</text>
+
+  <!-- to Oracle (dashed) -->
+  <line x1="402" y1="212" x2="470" y2="218" stroke="#a13a3a" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <line x1="402" y1="110" x2="470" y2="230" stroke="#a13a3a" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <rect x="472" y="196" width="120" height="54" rx="6" fill="#fff" stroke="#a13a3a" stroke-width="1.1" stroke-dasharray="3 2"/>
+  <text x="532" y="216" text-anchor="middle" font-size="10.5" fill="#a13a3a">Oracle 진단</text>
+  <text x="532" y="232" text-anchor="middle" font-size="9" fill="#a13a3a">(정답 목적 직접 주입)</text>
+
+  <!-- responses to eval -->
+  <line x1="592" y1="57" x2="655" y2="130" stroke="#565b68" stroke-width="1.1" marker-end="url(#arrow)"/>
+  <line x1="592" y1="133" x2="655" y2="140" stroke="#565b68" stroke-width="1.1" marker-end="url(#arrow)"/>
+  <line x1="592" y1="223" x2="655" y2="150" stroke="#a13a3a" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+
+  <rect x="657" y="95" width="95" height="100" rx="6" fill="#eef1fa" stroke="#2a3b6b" stroke-width="1.2"/>
+  <text x="704" y="130" text-anchor="middle" font-size="10" fill="#1c1f26">연구자 4인</text>
+  <text x="704" y="146" text-anchor="middle" font-size="10" fill="#1c1f26">블라인드</text>
+  <text x="704" y="162" text-anchor="middle" font-size="10" fill="#1c1f26">평가</text>
+  <text x="704" y="180" text-anchor="middle" font-size="8.5" fill="#565b68">(A/B만 채점 대상)</text>
+</svg>
+<figcaption><b>그림 1.</b> 조건 A/B 파이프라인과 오라클 진단 경로. A/B는 동일한 3축 예측값을 공유하며, B에만 예측 목적이 추가로 주입된다. 붉은 점선은 §4.5·§5.2의 진단에서만 쓰인 세 번째 경로로, 분류기 예측 대신 정답 목적을 직접 주입해 같은 생성기로 응답을 만들며 블라인드 평가 대상에는 포함되지 않는다.</figcaption>
+</figure>
+
+<h2>4. 실험설계</h2>
+
+<h3>4.1 실험환경과 자료</h3>
+<p>최종 코퍼스는 AMI Meeting Corpus(CC BY 4.0)[13]와 ICSI Meeting Corpus(CC BY 4.0)[14], Santa Barbara Corpus of Spoken American English(CC BY-ND 3.0)[15]이며, 2026년 9월에 구성했다. 구현 환경은 Python 3.12, scikit-learn 1.9.1, numpy 2.5.3, scipy 1.18.1이다. 생성기는 Gemini 2.5 Flash Lite이다. 입력·출력 언어는 영어, 최대 응답 길이는 약 10–20단어의 한 문장으로 고정했다. 온도는 0으로 설정했다. A/B에는 동일 입력을 제공하며 평가용 후속 발화(continuation probe)는 전달하지 않는다.</p>
+<p>자료는 명확한 발화(clear) 30개, 중의적·비격식 발화(ambiguous-informal) 40개, 표면 단서에 따른 오판을 점검하는 발화(surface-shortcut) 30개로 구성했다. clear와 surface-shortcut은 AMI/ICSI에서, ambiguous-informal은 Santa Barbara Corpus에서 추출했다. 학습 80개와 시험 20개를 한 번 분리했으며 시험 슬라이스는 각각 6·8·6개이다. 같은 표현군(lexical family)은 두 분할에 겹치지 않게 했고, family당 최대 2개로 제한했다. 문맥이 부족해 의미를 판단할 수 없는 항목은 전수 감사를 거쳐 학습 전 교체했다 — 의미 없는 backchannel만 있던 <code>context_before</code> 49건 중 38건을 실제 의미 판단이 가능한 문맥으로 교체했고, 11건은 설계 규정대로 <code>null</code> 처리했다.</p>
+
+<figure class="figure">
+<svg viewBox="0 0 700 150" xmlns="http://www.w3.org/2000/svg" font-family="Malgun Gothic, 맑은 고딕, sans-serif">
+  <text x="0" y="16" font-size="10.5" fill="#1c1f26" font-weight="bold">슬라이스 구성 (전체 100)</text>
+  <rect x="0" y="24" width="180" height="26" fill="#4c6fff"/>
+  <rect x="180" y="24" width="240" height="26" fill="#ff9f40"/>
+  <rect x="420" y="24" width="180" height="26" fill="#34b27b"/>
+  <text x="90" y="41" text-anchor="middle" font-size="10" fill="#fff">clear 30</text>
+  <text x="300" y="41" text-anchor="middle" font-size="10" fill="#fff">ambiguous-informal 40</text>
+  <text x="510" y="41" text-anchor="middle" font-size="10" fill="#fff">surface-shortcut 30</text>
+
+  <text x="0" y="82" font-size="10.5" fill="#1c1f26" font-weight="bold">학습/시험 분할 (전체 100)</text>
+  <rect x="0" y="90" width="480" height="26" fill="#2a3b6b"/>
+  <rect x="480" y="90" width="120" height="26" fill="#b0562d"/>
+  <text x="240" y="107" text-anchor="middle" font-size="10" fill="#fff">학습(train) 80</text>
+  <text x="540" y="107" text-anchor="middle" font-size="10" fill="#fff">시험 20</text>
+
+  <text x="0" y="138" font-size="9" fill="#565b68">clear 24/6 · ambiguous-informal 32/8 · surface-shortcut 24/6 (학습/시험, family당 최대 2개, 두 분할 간 중복 없음)</text>
+</svg>
+<figcaption><b>그림 2.</b> 데이터셋 슬라이스 구성과 학습/시험 분할.</figcaption>
+</figure>
+
+<table>
+<caption>표 2. 데이터셋 구성</caption>
+<thead><tr><th>슬라이스</th><th>코퍼스</th><th class="num">전체</th><th class="num">학습</th><th class="num">시험</th></tr></thead>
+<tbody>
+<tr><td>clear</td><td>AMI/ICSI</td><td class="num">30</td><td class="num">24</td><td class="num">6</td></tr>
+<tr><td>ambiguous-informal</td><td>Santa Barbara</td><td class="num">40</td><td class="num">32</td><td class="num">8</td></tr>
+<tr><td>surface-shortcut</td><td>AMI/ICSI</td><td class="num">30</td><td class="num">24</td><td class="num">6</td></tr>
+<tr><td><b>합계</b></td><td></td><td class="num"><b>100</b></td><td class="num"><b>80</b></td><td class="num"><b>20</b></td></tr>
+</tbody>
+</table>
+
+<p>연구자 4인은 LLM 제안 없이 목적·축·의미·태도와 응답의 필수 속성 및 후속 맥락 기준을 작성했다. 목적은 3인 이상 일치 시 확정하고, 나머지는 워크북 결과와 연구 책임자의 판단을 바탕으로 합의 라벨을 생성하되 원시 판단은 보존했다. 축 정답은 4인 중앙값을 5점 단위로 반올림했다. 각 항목은 §7의 부록 표 A1에 정리한 전체 스키마(식별·입력·의미·목적·축·응답명세·근거·출처 8개 범주)를 따른다.</p>
+
+<table>
+<caption>표 3. 라벨 신뢰도</caption>
+<thead><tr><th>대상</th><th>지표</th><th class="num">값</th></tr></thead>
+<tbody>
+<tr><td>목적(6종)</td><td>Fleiss' kappa</td><td class="num">0.311</td></tr>
+<tr><td>목적(6종)</td><td>평균 쌍별 일치율</td><td class="num">62.5%</td></tr>
+<tr><td>목적(6종)</td><td>3인 이상 다수결 확정 비율</td><td class="num">77/100</td></tr>
+<tr><td>Formality</td><td>ICC(1,k)</td><td class="num">0.474</td></tr>
+<tr><td>Humor</td><td>ICC(1,k)</td><td class="num">0.686</td></tr>
+<tr><td>Curiosity</td><td>ICC(1,k)</td><td class="num">0.835</td></tr>
+</tbody>
+</table>
+
+<h3>4.2 모델</h3>
+<p>특징은 단어 TF-IDF 1–2gram과 문자 TF-IDF 3–5gram이다. 목적 분류에는 Logistic Regression(<code>C=1</code>, <code>class_weight=balanced</code>, <code>max_iter=2000</code>), 축별 추정에는 Ridge Regression(<code>alpha=1</code>)을 사용한다. 어휘와 IDF는 학습 80개에서만 적합한다. 현 설계에서 조건 B의 응답 생성은 학습 시 인간 목적, 시험 시 예측 목적을 사용하며, 이 입력 차이로 인한 오류 가능성은 분석상의 제약으로 별도 구분한다.</p>
+
+<h3>4.3 연구 질문</h3>
+<p><b>RQ1</b>은 조건 B(Purpose-aware)가 조건 A(Direct)보다 적합한 응답을 더 많이 생성하는지 묻는다. <b>RQ2</b>는 조건 B의 실패가 (a) 목적 분류기의 오분류 때문인지 (b) 응답 생성기가 올바른 목적 신호조차 반영하지 않기 때문인지를 분리해 묻는다. 슬라이스별 개선 폭 비교는 탐색적으로 해석한다.</p>
+
+<h3>4.4 응답 평가와 분석 절차</h3>
+<p>시험 항목마다 A/B 응답을 하나씩 생성하여 총 20쌍을 평가한다. 연구자 4인에게 조건과 중간 예측(목적·축)을 숨긴 X/Y 응답을 평가자·항목별로 무작위화한 순서로 제시하고 채점한다.</p>
+
+<table>
+<caption>표 3-1. 블라인드 채점 rubric (5개 차원, 1–5점)</caption>
+<thead><tr><th>차원</th><th>측정 내용</th><th class="num">통과 최소 기준</th></tr></thead>
+<tbody>
+<tr><td>의미·태도 보존</td><td>화자의 의미·태도를 왜곡 없이 반영하는지</td><td class="num">4점 이상</td></tr>
+<tr><td>목적 충족</td><td>화자의 의도(목적)에 부합하는 응답인지</td><td class="num">3점 이상</td></tr>
+<tr><td>스타일 적절성</td><td>Formality/Humor/Curiosity 톤에 맞는지</td><td class="num">3점 이상</td></tr>
+<tr><td>대화 연속성</td><td>이후 대화가 자연스럽게 이어질 수 있는지</td><td class="num">3점 이상</td></tr>
+<tr><td>관련성·자연스러움</td><td>문법·어색함 없이 자연스러운지</td><td class="num">3점 이상</td></tr>
+</tbody>
+</table>
+
+<p>중대한 의미 오류(critical error)가 없고 위 다섯 기준을 모두 충족하면 "좋은 응답"으로 판정한다. 한쪽만 통과하면 해당 조건의 승리, 모두 실패하면 '둘 다 부적합'으로 판정한다. 둘 다 통과하면 총점 차이 3점 이상인 조건이 승리하며 그 외는 동률이다. 3인 이상 일치한 판정을 항목 결과로 삼고 나머지는 판정 불일치로 보존한다. 최종 20개 항목은 연구자 4인이 서로의 판정을 보지 않은 상태에서 각자 독립적으로 채점했고, 그 결과를 사후에 취합해 항목별 최종 판정을 확정했다.</p>
+<p>통계 단위는 평가자 수를 곱한 80개가 아니라 시험 항목 20개이다[11]. 승패가 결정된 항목에는 exact sign test와 조건부 B 승률의 Wilson 95% 신뢰구간을 적용하고, 전체 20개의 승패·동률·둘 다 부적합·불일치 분포를 보고한다. 목적 macro-F1, 축별 MAE·Spearman 상관 및 합의 전 평가자 일치도를 함께 보고한다.</p>
+
+<h3>4.5 목적 오라클 진단 (RQ2)</h3>
+<p>RQ2에 답하기 위해 세 번째 응답 생성 경로를 추가했다(그림 1의 점선 경로). 시험 20개 각각에 대해, 분류기의 예측 목적 대신 정답(인간 라벨) 목적을 그대로 주입해 조건 B와 동일한 생성기·프롬프트 틀·온도(0)로 응답을 생성한다("오라클" 응답). 분류기가 틀린 항목에 한해 오라클 응답과 조건 B 응답을 정확히 문자열 비교한다. 온도가 0이므로, 두 응답이 완전히 동일하다면 정답 목적을 줘도 생성기가 그 신호를 응답에 전혀 반영하지 않았다는 직접적 증거가 된다. 반대로 응답이 다르다면 목적 신호가 생성 결과에 실제로 영향을 미쳤다는 뜻이다. 이 비교는 목적 신호의 생성 영향 여부만을 판단하며, 어느 쪽 응답이 더 우수한지는 판단하지 않는다.</p>
+
+<h2>5. 실험결과</h2>
+
+<h3>5.1 목적 분류기·축 회귀기</h3>
+<p>학습 80개로 적합한 목적 분류기를 시험 20개에 held-out 평가한 정확도는 <b>45%</b>로, 다수 클래스만 예측하는 기준선(55%)보다 낮았다. Confusion matrix상 다수 클래스(acknowledge_empathize) 외 5개 목적은 전혀 맞히지 못했다.</p>
+
+<table>
+<caption>표 4. 목적 범주별 분포 (전체 100개, 학습 80개 fit에 그대로 반영됨)</caption>
+<thead><tr><th>목적</th><th class="num">전체 100개 중 개수</th></tr></thead>
+<tbody>
+<tr><td>acknowledge_empathize</td><td class="num">50</td></tr>
+<tr><td>confirm_repair</td><td class="num">16</td></tr>
+<tr><td>social_reciprocate</td><td class="num">15</td></tr>
+<tr><td>explain_explore</td><td class="num">10</td></tr>
+<tr><td>act_request</td><td class="num">6</td></tr>
+<tr><td>answer_inform</td><td class="num">3</td></tr>
+</tbody>
+</table>
+
+<p>원인을 분리하기 위해 Leave-One-Out 교차검증으로 4개 모델(Logistic Regression, Multinomial Naive Bayes, kNN k=1/k=3)을 비교했다.</p>
+
+<table>
+<caption>표 5. Leave-One-Out 교차검증 비교 (학습 80개)</caption>
+<thead><tr><th>모델</th><th class="num">정확도</th><th class="num">macro-F1</th></tr></thead>
+<tbody>
+<tr><td>Logistic Regression (본 설계)</td><td class="num">45.0%</td><td class="num">0.190</td></tr>
+<tr><td>Multinomial Naive Bayes</td><td class="num">48.8%</td><td class="num">0.109</td></tr>
+<tr><td>kNN (k=1, cosine)</td><td class="num">37.5%</td><td class="num">0.239</td></tr>
+<tr><td>kNN (k=3, cosine)</td><td class="num">47.5%</td><td class="num">0.232</td></tr>
+<tr><td>기준선(다수 클래스만 예측)</td><td class="num">48.8%</td><td class="num">–</td></tr>
+</tbody>
+</table>
+
+<p>네 모델 모두 기준선 근처이거나 이하였다. 이는 모델 선택의 문제라기보다, 6종 목적으로 분할했을 때 일부 범주(특히 answer_inform 3개)의 학습 표본이 근본적으로 부족한 데서 기인한 것으로 판단한다. 목적 라벨 자체의 평가자 간 신뢰도(Fleiss' kappa 0.311, 표 3)도 분류기 정확도의 상한을 제약하는 요인으로 함께 작용했을 수 있다.</p>
+
+<div class="callout warn">
+<b>라벨러 민감도 분석.</b> 위 45%는 4인 합의 라벨을 정답으로 삼은 수치다. 별도로, 연구자 1인이 100개 전체를 처음부터 끝까지 혼자 라벨링한 내부적으로 일관된 라벨셋을 대안 정답으로 삼아 같은(이미 배포된) 분류기를 재평가했더니 시험 20개 중 13개(65%)를 맞혀 기준선(55%)을 상회했다. 두 수치의 차이는 분류기 자체가 바뀐 것이 아니라 정답으로 쓰인 라벨셋이 다르기 때문이며, 목적 라벨의 평가자 간 신뢰도가 충분히 확보되지 않은 상태에서는 "정확도"라는 단일 수치 자체가 어떤 라벨셋을 기준으로 삼느냐에 따라 민감하게 달라질 수 있음을 보여준다. 두 수치 모두 투명하게 병기하며, 어느 한쪽만을 대표값으로 취하지 않는다.
+</div>
+
+<figure class="figure">
+<svg viewBox="0 0 500 180" xmlns="http://www.w3.org/2000/svg" font-family="Malgun Gothic, 맑은 고딕, sans-serif">
+  <line x1="60" y1="150" x2="470" y2="150" stroke="#1c1f26" stroke-width="1"/>
+  <!-- gridlines at 25/50/75 -->
+  <line x1="60" y1="112.5" x2="470" y2="112.5" stroke="#e5e7ee" stroke-width="0.8"/>
+  <line x1="60" y1="75" x2="470" y2="75" stroke="#e5e7ee" stroke-width="0.8"/>
+  <line x1="60" y1="37.5" x2="470" y2="37.5" stroke="#e5e7ee" stroke-width="0.8"/>
+  <text x="52" y="153" text-anchor="end" font-size="8.5" fill="#565b68">0%</text>
+  <text x="52" y="115.5" text-anchor="end" font-size="8.5" fill="#565b68">25%</text>
+  <text x="52" y="78" text-anchor="end" font-size="8.5" fill="#565b68">50%</text>
+  <text x="52" y="40.5" text-anchor="end" font-size="8.5" fill="#565b68">75%</text>
+
+  <rect x="100" y="83" width="70" height="67" fill="#a13a3a"/>
+  <text x="135" y="76" text-anchor="middle" font-size="10.5" fill="#1c1f26" font-weight="bold">45%</text>
+  <text x="135" y="166" text-anchor="middle" font-size="9" fill="#565b68">공식 합의 라벨</text>
+
+  <rect x="230" y="67.5" width="70" height="82.5" fill="#565b68"/>
+  <text x="265" y="60.5" text-anchor="middle" font-size="10.5" fill="#1c1f26" font-weight="bold">55%</text>
+  <text x="265" y="166" text-anchor="middle" font-size="9" fill="#565b68">기준선(다수클래스)</text>
+
+  <rect x="360" y="52.5" width="70" height="97.5" fill="#2f8f72"/>
+  <text x="395" y="45.5" text-anchor="middle" font-size="10.5" fill="#1c1f26" font-weight="bold">65%</text>
+  <text x="395" y="166" text-anchor="middle" font-size="9" fill="#565b68">라벨러 민감도 분석</text>
+</svg>
+<figcaption><b>그림 3.</b> 목적 분류기 정확도 — 정답 라벨셋에 따른 민감도. 같은 배포된 분류기를 평가했으나, 공식 4인 합의 라벨 기준으로는 기준선 미달(45%&lt;55%), 단일 라벨러의 내부 일관 라벨셋 기준으로는 기준선 상회(65%&gt;55%)로 나타난다.</figcaption>
+</figure>
+
+<p>이 결과에 따라 본 연구는 목적 분류기의 판별 성능 자체를 주된 기여로 주장하지 않으며, 현재 구현된 목적 예측 파이프라인을 고정한 상태에서 그것이 최종 응답 품질에 주는 영향(RQ1)과, 그 실패가 분류기와 생성기 중 어디에서 비롯되는지(RQ2, §5.2)를 별도로 검증하는 방향으로 결과 해석 범위를 좁힌다.</p>
+
+<h3>5.2 RQ2 — 분류기 오분류 vs 생성기의 목적 미반영</h3>
+<p>§4.5의 오라클 진단을 §5.1의 라벨러 민감도 분석에서 쓴 대안 정답 라벨셋 기준으로 적용했다. 이 진단이 보여주는 것은 <b>목적 신호가 생성 결과에 인과적으로 영향을 미치는지 여부</b>이며, 어느 쪽 응답이 더 낫다는 품질 판단은 아니다 — 응답 품질 자체에 대한 판단은 §5.4의 블라인드 평가로만 내린다. 시험 20개를 세 갈래로 나눈 결과는 다음과 같다.</p>
+
+<table>
+<caption>표 6. RQ2 진단 결과 (시험 20개) — 목적 신호의 생성 영향 여부</caption>
+<thead><tr><th>분류</th><th class="num">개수</th><th class="num">비율</th><th>의미</th></tr></thead>
+<tbody>
+<tr><td>분류기 정답</td><td class="num">13</td><td class="num">65%</td><td>예측 목적이 정답과 일치. 응답 품질이 실제로 좋다는 뜻은 아니며, 목적 외 요인에 의한 품질 저하는 이 진단으로 확인되지 않음</td></tr>
+<tr><td>분류기 오분류, 오라클 대체 시 텍스트 변화</td><td class="num">6</td><td class="num">30%</td><td>예측 목적은 틀렸고, 정답 목적으로 바꿔 넣자 생성 텍스트가 실제로 달라짐 — 목적 신호의 생성 영향 증거</td></tr>
+<tr><td>분류기 오분류, 오라클 대체해도 텍스트 동일</td><td class="num">1</td><td class="num">5%</td><td>예측 목적은 틀렸지만, 정답 목적을 줘도 응답이 문자 그대로 동일함(온도 0) — 이 항목에서는 목적 신호가 생성에 영향 없음</td></tr>
+</tbody>
+</table>
+
+<figure class="figure">
+<svg viewBox="0 0 620 90" xmlns="http://www.w3.org/2000/svg" font-family="Malgun Gothic, 맑은 고딕, sans-serif">
+  <rect x="10" y="20" width="390" height="34" fill="#2f8f72"/>
+  <rect x="400" y="20" width="180" height="34" fill="#b0562d"/>
+  <rect x="580" y="20" width="30" height="34" fill="#a13a3a"/>
+  <text x="205" y="42" text-anchor="middle" font-size="10.5" fill="#fff">분류기 정답 65% (13)</text>
+  <text x="490" y="42" text-anchor="middle" font-size="10" fill="#fff">분류기 오분류 30% (6)</text>
+  <text x="595" y="70" text-anchor="middle" font-size="8.5" fill="#a13a3a">생성기 미반영 5% (1)</text>
+  <line x1="595" y1="54" x2="595" y2="60" stroke="#a13a3a" stroke-width="1"/>
+</svg>
+<figcaption><b>그림 4.</b> RQ2 진단 결과 비율 — 목적 신호의 생성 영향 여부(품질 판단 아님). 분류기가 틀린 7개 중 6개(30%)는 정답 목적으로 바꿔 넣자 응답 텍스트가 실제로 달라져, 목적 신호가 생성에 영향을 미친다는 것을 보여준다. 텍스트가 동일했던 경우는 1개(5%)뿐이다.</figcaption>
+</figure>
+
+<p>분류기가 틀린 7개 항목 중 6개는 정답 목적으로 바꿔 넣었을 때 생성 텍스트가 달라졌다 — 목적 신호 자체는 생성기 출력에 실제로 영향을 미친다는 뜻이다. 다만 텍스트가 달라졌다는 사실이 그 대체 응답이 더 우수하다는 것을 의미하지는 않으며, 나머지가 모두 "분류기 문제"라고 단정할 수도 없다 — 분류기가 맞힌 13개 항목 중에도 목적과 무관한 이유로 품질이 낮은 응답이 있을 수 있고, 이는 이 진단의 범위 밖이다. 정성적 사례로, 행동 요청 성격의 발화에 대해 조건 B는 "다들 편하게 얘기해줘서 좋다"는 식의 승인성 논평으로 응답했으나(목적 오분류), 정답 목적(행동 요청)을 준 오라클 응답은 실제로 요청된 행동을 수행하는 응답("네, 저에 대해 조금 더 얘기해드릴게요")을 생성했다 — 목적 정보가 정확히 주어졌을 때 생성기가 이를 응답 형식에 반영한 사례다. 이 사례가 나머지 5개에도 일반화된다고 주장하지는 않는다.</p>
+
+<h3>5.3 축 회귀기</h3>
+<p>Formality·Humor·Curiosity 3축의 평가자 간 신뢰도는 표 3과 같다. Curiosity(ICC=0.835)는 비교적 안정적으로 채점된 반면 Formality(ICC=0.474)는 편차가 가장 컸다.</p>
+
+<h3>5.4 블라인드 A/B 평가 (RQ1)</h3>
+<p>최종시험 20쌍에 대한 조건 A/B 블라인드 평가를 §4.4의 절차대로 연구자 4인이 진행했다. 평가자에게는 조건과 중간 예측을 숨긴 X/Y 형태로 응답을 제시했으며, 어느 라벨이 어느 조건에 대응하는지는 연구자 본인 외에는 채점 시점에 공개되지 않았다. 20개 항목 전원에 대해 최종 판정이 결정됐다(동률·판정 불일치 없음).</p>
+
+<table>
+<caption>표 7. 항목별 최종 판정 (20개, 전원 결정)</caption>
+<thead><tr><th class="mono-id">항목 ID</th><th class="num">승자</th><th class="mono-id">항목 ID</th><th class="num">승자</th></tr></thead>
+<tbody>
+<tr><td class="mono-id">pally100_034</td><td class="num">B</td><td class="mono-id">pally100_090</td><td class="num">B</td></tr>
+<tr><td class="mono-id">pally100_081</td><td class="num">B</td><td class="mono-id">pally100_091</td><td class="num">A</td></tr>
+<tr><td class="mono-id">pally100_082</td><td class="num">B</td><td class="mono-id">pally100_092</td><td class="num">B</td></tr>
+<tr><td class="mono-id">pally100_083</td><td class="num">B</td><td class="mono-id">pally100_093</td><td class="num">B</td></tr>
+<tr><td class="mono-id">pally100_084</td><td class="num">B</td><td class="mono-id">pally100_094</td><td class="num">B</td></tr>
+<tr><td class="mono-id">pally100_085</td><td class="num">B</td><td class="mono-id">pally100_095</td><td class="num">A</td></tr>
+<tr><td class="mono-id">pally100_086</td><td class="num">A</td><td class="mono-id">pally100_096</td><td class="num">B</td></tr>
+<tr><td class="mono-id">pally100_087</td><td class="num">B</td><td class="mono-id">pally100_097</td><td class="num">A</td></tr>
+<tr><td class="mono-id">pally100_089</td><td class="num">B</td><td class="mono-id">pally100_098</td><td class="num">B</td></tr>
+<tr><td class="mono-id">pally100_100</td><td class="num">B</td><td class="mono-id">pally100_099</td><td class="num">A</td></tr>
+</tbody>
+</table>
+
+<figure class="figure">
+<svg viewBox="0 0 460 190" xmlns="http://www.w3.org/2000/svg" font-family="Malgun Gothic, 맑은 고딕, sans-serif">
+  <line x1="70" y1="150" x2="420" y2="150" stroke="#1c1f26" stroke-width="1"/>
+  <line x1="70" y1="150" x2="70" y2="20" stroke="#1c1f26" stroke-width="1"/>
+  <line x1="70" y1="90" x2="420" y2="90" stroke="#d8dbe3" stroke-width="0.8" stroke-dasharray="2 2"/>
+  <text x="64" y="93" text-anchor="end" font-size="8" fill="#565b68">10</text>
+  <text x="64" y="153" text-anchor="end" font-size="8" fill="#565b68">0</text>
+  <text x="64" y="27" text-anchor="end" font-size="8" fill="#565b68">20</text>
+
+  <rect x="140" y="120" width="80" height="30" fill="#565b68"/>
+  <text x="180" y="113" text-anchor="middle" font-size="11" fill="#1c1f26" font-weight="bold">5</text>
+  <text x="180" y="166" text-anchor="middle" font-size="10" fill="#1c1f26">A 승</text>
+
+  <rect x="260" y="30" width="80" height="120" fill="#2a3b6b"/>
+  <text x="300" y="23" text-anchor="middle" font-size="11" fill="#1c1f26" font-weight="bold">15</text>
+  <text x="300" y="166" text-anchor="middle" font-size="10" fill="#1c1f26">B 승</text>
+
+  <text x="245" y="185" text-anchor="middle" font-size="9" fill="#565b68">n=20, 전원 결정 · B 조건부 승률 75.0%, Wilson 95% CI [53.1%, 88.8%] · exact binomial p=0.0414</text>
+</svg>
+<figcaption><b>그림 5.</b> H1 — 블라인드 A/B 최종 판정 분포 및 통계 요약.</figcaption>
+</figure>
+
+<table>
+<caption>표 8. H1 — exact sign test 및 Wilson CI</caption>
+<thead><tr><th>지표</th><th class="num">값</th></tr></thead>
+<tbody>
+<tr><td>승패 결정 항목 수(n_decided)</td><td class="num">20/20</td></tr>
+<tr><td>B 승</td><td class="num">15</td></tr>
+<tr><td>A 승</td><td class="num">5</td></tr>
+<tr><td>B 조건부 승률</td><td class="num">75.0% (15/20)</td></tr>
+<tr><td>Wilson 95% 신뢰구간</td><td class="num">[53.1%, 88.8%]</td></tr>
+<tr><td>exact two-sided binomial p-value</td><td class="num">0.0414</td></tr>
+<tr><td>판정</td><td class="num"><b>α=0.05 기준 통계적으로 유의함</b></td></tr>
+</tbody>
+</table>
+
+<p>이번 파일럿에서 조건 B(Purpose-aware)는 조건 A(Direct)보다 통계적으로 유의하게 선호됐다(p=0.0414&lt;0.05). Wilson 95% CI [53.1%, 88.8%]는 0.5를 포함하지 않는다. §5.1–5.2의 진단 결과와 함께 읽으면, 목적 분류기의 정확도가 기준선 수준(45–65%, 라벨셋에 따라 다름)에 머무르는 상태에서도 목적 정보를 응답 생성에 추가하는 것 자체가 사람이 지각하는 응답 적합성을 유의하게 끌어올린다는 뜻으로 해석할 수 있다.</p>
+
+<h2 class="pagebreak">6. 결론 및 기여</h2>
+<p>본 연구는 슬랭 해석의 평가 범위를 의미 선택에서 적절한 응답과 후속 맥락의 유지까지 확장하고, Pally에서 명시적 목적을 추가한 결합 경로의 증분 효과를 평가하는 절차를 제시한다. 목적 오분류·응답 오류를 연결하여 원인을 분리하는 진단적 분석도 연구 범위에 포함한다.</p>
+<p>100개 규모의 파일럿 표본에서 6종 목적 분류기는 공식 합의 라벨 기준 다수 클래스 기준선을 넘지 못했으나(45% vs 55%, §5.1), 대안 라벨셋 기준으로는 기준선을 상회했다(65%). 이 구조적 한계에도 불구하고, 블라인드 A/B 평가(§5.4)에서 조건 B(Purpose-aware)는 조건 A(Direct)보다 통계적으로 유의하게 선호됐다(15/20, 75.0%, Wilson 95% CI [53.1%, 88.8%], exact binomial p=0.0414). 즉 목적 분류기의 정확도 자체는 개선 여지가 크지만, 현재 정확도 수준에서도 목적 정보를 응답 생성 경로에 추가하는 것은 사람이 체감하는 응답 적합성을 유의하게 높였다.</p>
+<p>RQ2 진단(§5.2)은 목적 신호가 생성 결과에 실제로 영향을 미치는지를 보여준다. 분류기가 틀린 항목의 대다수(6/7)에서 정답 목적으로 바꿔 넣자 응답 텍스트가 실제로 달라졌고, 생성기가 정답 목적을 줘도 텍스트가 전혀 바뀌지 않은 경우는 1개(전체의 5%)뿐이었다. 이는 목적 신호 자체가 생성기에 무시되지 않고 실제로 작동한다는 근거이며, 분류기 정확도를 높이는 것이 조건 B의 유력한 개선 경로 중 하나임을 시사한다 — 다만 이 진단만으로 응답 품질 저하의 원인을 전부 규명했다고 주장하지는 않는다. 특히 학습 표본이 3개에 불과한 answer_inform과 같은 소수 범주의 데이터 확충이 우선순위가 높다.</p>
+
+<div class="callout">
+<b>기여 요약</b><br>
+(1) <b>실증적 기여</b> — 100개 규모의 통제된 파일럿에서도 명시적 목적 결합이 응답 선호도에 통계적으로 유의한 차이를 만든다는 증거를 제시했다.<br>
+(2) <b>진단적 기여</b> — 목적 오라클 치환이라는 절차로 목적 신호가 생성 결과에 실제로 영향을 미치는지를 항목별로 검증했고, 분류기가 틀린 항목 대부분(6/7)에서 목적 신호가 응답을 실제로 바꾼다는 것을 확인했다 — 응답 품질 저하의 전체 원인을 규명한 것은 아니며, 목적 신호가 생성기에서 무시되지 않는다는 것을 보여주는 진단이다.<br>
+(3) <b>방법론적 기여</b> — 목적 예측을 응답 생성에 결합하는 조건화 파이프라인, 이를 격리해 비교하는 블라인드 평가 절차, 그리고 라벨셋 선택이 분류기 정확도 수치에 미치는 민감도를 투명하게 기록하는 보고 방식을 검증 가능한 형태로 구축했다.
+</div>
+
+<p>한계도 분명하다. 시험 20개와 내부 연구자 평가에 따른 일반화 제약이 있으며, 목적의 학습·시험 입력 불일치(학습 시 인간 목적, 시험 시 예측 목적, §4.2)도 남는다. 목적 라벨 자체의 평가자 간 신뢰도가 아직 충분하지 않다(Fleiss' kappa 0.311, §4.1 표 3). 단계별 제거 실험이 없어 축 추정과 생성 단계의 개별 기여를 완전히 분리할 수는 없다. 후속 연구에서는 소수 목적 범주의 표본을 확충해 분류기 정확도를 개선하고, 외부 평가자·더 큰 표본·새 시험 자료·실제 다중 턴 대화로 재검증할 필요가 있다. 본 평가만으로 사용자 만족도나 대화 지속 시간의 향상을 주장하지 않는다.</p>
+
+<h2>참고문헌</h2>
+<div class="refs">
+<p>[1] Z. Pei, Z. Sun, and Y. Xu. "Slang Detection and Identification." CoNLL, pp. 881–889, 2019.</p>
+<p>[2] Z. Sun, R. Zemel, and Y. Xu. "Semantically Informed Slang Interpretation." NAACL, pp. 5213–5231, 2022.</p>
+<p>[3] Z. Sun, Q. Hu, R. Gupta, R. Zemel, and Y. Xu. "Toward Informal Language Processing: Knowledge of Slang in Large Language Models." NAACL, pp. 1683–1701, 2024.</p>
+<p>[4] A. Stolcke et al. "Dialogue Act Modeling for Automatic Tagging and Recognition of Conversational Speech." Computational Linguistics, 26(3), pp. 339–374, 2000.</p>
+<p>[5] B. Hedayatnia et al. "Policy-Driven Neural Response Generation for Knowledge-Grounded Dialog Systems." INLG, pp. 412–421, 2020.</p>
+<p>[6] A. Ramirez et al. "Controllable Generation of Dialogue Acts for Dialogue Systems via Few-Shot Response Generation and Ranking." SIGDIAL, pp. 355–369, 2023.</p>
+<p>[7] S. Mehri and M. Eskenazi. "Unsupervised Evaluation of Interactive Dialog with DialoGPT." SIGDIAL, pp. 225–235, 2020.</p>
+<p>[8] P. Röttger et al. "Two Contrasting Data Annotation Paradigms for Subjective NLP Tasks." NAACL, pp. 175–190, 2022.</p>
+<p>[9] H. Schroeder, D. Roy, and J. Kabbara. "Just Put a Human in the Loop? Investigating LLM-Assisted Annotation for Subjective Tasks." Findings of ACL, pp. 25771–25795, 2025.</p>
+<p>[10] M. T. Ribeiro et al. "Beyond Accuracy: Behavioral Testing of NLP Models with CheckList." ACL, pp. 4902–4912, 2020.</p>
+<p>[11] R. Dror et al. "The Hitchhiker's Guide to Testing Statistical Significance in Natural Language Processing." ACL, pp. 1383–1392, 2018.</p>
+<p>[12] (회화 학습 챗봇 관련 인용 — 원 초안의 출처 확인 필요, 서지정보 보완 요망)</p>
+</div>
+
+<h2>참고 데이터셋</h2>
+<p>본 연구가 100개 항목을 구성하는 데 사용한 원천 코퍼스는 다음과 같다. 세 코퍼스 모두 대화 turn 후보를 추출하는 원천으로만 사용했으며, 코퍼스 자체를 그대로 배포하거나 재가공물을 공개하지 않는다(§4.1, 표 2).</p>
+
+<table>
+<caption>표 9. 사용 코퍼스</caption>
+<thead><tr><th>코퍼스</th><th>인용</th><th>라이선스</th><th>접근 방식</th><th>본 연구에서의 용도</th></tr></thead>
+<tbody>
+<tr><td>AMI Meeting Corpus</td><td>[13]</td><td>CC BY 4.0</td><td>공개 다운로드</td><td>clear·surface-shortcut 슬라이스 후보 추출</td></tr>
+<tr><td>ICSI Meeting Corpus</td><td>[14]</td><td>CC BY 4.0</td><td>공개 다운로드</td><td>clear·surface-shortcut 슬라이스 후보 추출</td></tr>
+<tr><td>Santa Barbara Corpus of Spoken American English</td><td>[15]</td><td>CC BY-ND 3.0</td><td>공개 다운로드(가입 불필요)</td><td>ambiguous-informal 슬라이스 후보 추출</td></tr>
+</tbody>
+</table>
+
+<div class="refs">
+<p>[13] J. Carletta et al. "The AMI Meeting Corpus: A Pre-announcement." Proc. MLMI, pp. 28–39, 2005. (CC BY 4.0)</p>
+<p>[14] A. Janin et al. "The ICSI Meeting Corpus." Proc. ICASSP, pp. 364–367, 2003. (CC BY 4.0)</p>
+<p>[15] J. W. Du Bois, W. L. Chafe, C. Meyer, S. A. Thompson, R. Englebretson, and N. Martey. "Santa Barbara Corpus of Spoken American English." Linguistic Data Consortium, Philadelphia, 2000–2005. (CC BY-ND 3.0)</p>
+</div>
+
+<h2 class="pagebreak">7. 부록</h2>
+<span class="appendix-tag">APPENDIX A</span>
+<h4>A.1 데이터 항목 스키마</h4>
+<p>100개 항목 각각은 다음 8개 범주의 필드로 구성된다. 목적·축 필드는 §4.1의 라벨링 절차로 채워지며, 응답명세 필드는 §4.4 블라인드 채점에서 참고용 정답 기준으로 쓰인다(연속성 프로브는 평가자에게만 공개, 생성기에는 비공개).</p>
+
+<table>
+<caption>표 A1. 항목 스키마 개요</caption>
+<thead><tr><th style="width:20%">범주</th><th>필드</th></tr></thead>
+<tbody>
+<tr><td>식별</td><td><code>item_id</code>, <code>lexical_family_id</code>, <code>source_id</code></td></tr>
+<tr><td>입력</td><td><code>context_before</code>(0–1턴), <code>target_turn</code>, <code>language_form</code></td></tr>
+<tr><td>의미</td><td><code>intended_slang_sense</code>, <code>literal_or_nonliteral</code>, <code>speaker_stance</code></td></tr>
+<tr><td>목적</td><td><code>purpose_primary</code>, <code>purpose_secondary</code>, <code>purpose_ambiguous</code></td></tr>
+<tr><td>축</td><td><code>formality</code>, <code>humor</code>, <code>curiosity</code> (0–100, 5점 단위)</td></tr>
+<tr><td>상태</td><td><code>case_type</code>(clear/boundary/context_insufficient), <code>score_status</code>, <code>confidence</code></td></tr>
+<tr><td>응답명세</td><td><code>reference_response</code>, <code>required_properties</code>, <code>forbidden_errors</code>, <code>continuation_anchors</code>, <code>continuation_probe</code></td></tr>
+<tr><td>출처·분할</td><td><code>label_source</code>, <code>annotator_id</code>, <code>split</code>(train/final_test)</td></tr>
+</tbody>
+</table>
+
+<h4>A.2 실험 로드맵</h4>
+<figure class="figure">
+<svg viewBox="0 0 720 210" xmlns="http://www.w3.org/2000/svg" font-family="Malgun Gothic, 맑은 고딕, sans-serif">
+  <!-- axis -->
+  <line x1="170" y1="10" x2="170" y2="190" stroke="#d8dbe3" stroke-width="0.8"/>
+  <line x1="720" y1="0" x2="0" y2="0" stroke="none"/>
+  <text x="170" y="8" text-anchor="middle" font-size="8" fill="#565b68">9/20</text>
+  <line x1="720" y1="10" x2="720" y2="190" stroke="#d8dbe3" stroke-width="0.8" transform="translate(-50,0)"/>
+
+  <!-- rows -->
+  <!-- scale: 10 days from 9/20 to 9/30 mapped to x=170..670 (50px/day) -->
+  <text x="10" y="24" font-size="9.5" fill="#1c1f26">Phase 0 데이터셋</text>
+  <rect x="170" y="14" width="200" height="16" rx="3" fill="#2f8f72"/>
+  <text x="30" y="52" font-size="9.5" fill="#1c1f26">Phase 1 라벨링·모델</text>
+  <rect x="420" y="42" width="150" height="16" rx="3" fill="#2f8f72"/>
+  <rect x="570" y="42" width="50" height="16" rx="3" fill="#2f8f72"/>
+  <text x="30" y="80" font-size="9.5" fill="#1c1f26">Phase 2 응답 생성</text>
+  <rect x="570" y="70" width="50" height="16" rx="3" fill="#2f8f72"/>
+  <rect x="620" y="70" width="30" height="16" rx="3" fill="#2f8f72"/>
+  <text x="30" y="108" font-size="9.5" fill="#1c1f26">Phase 3 블라인드 평가</text>
+  <rect x="570" y="98" width="50" height="16" rx="3" fill="#2f8f72"/>
+  <rect x="620" y="98" width="80" height="16" rx="3" fill="#2f8f72"/>
+  <text x="30" y="136" font-size="9.5" fill="#1c1f26">Phase 4 통계·논문</text>
+  <rect x="650" y="126" width="50" height="16" rx="3" fill="#2a3b6b"/>
+  <rect x="600" y="126" width="50" height="16" rx="3" fill="#2f8f72"/>
+  <rect x="650" y="150" width="50" height="16" rx="3" fill="#b0562d"/>
+
+  <text x="170" y="180" font-size="8" fill="#565b68">9/20</text>
+  <text x="420" y="180" font-size="8" fill="#565b68">9/25</text>
+  <text x="570" y="180" font-size="8" fill="#565b68">9/28</text>
+  <text x="650" y="180" font-size="8" fill="#565b68">9/30</text>
+  <line x1="170" y1="170" x2="700" y2="170" stroke="#1c1f26" stroke-width="1"/>
+
+  <rect x="30" y="192" width="10" height="10" fill="#2f8f72"/><text x="45" y="200" font-size="8.5" fill="#565b68">완료</text>
+  <rect x="90" y="192" width="10" height="10" fill="#2a3b6b"/><text x="105" y="200" font-size="8.5" fill="#565b68">통계분석</text>
+  <rect x="170" y="192" width="10" height="10" fill="#b0562d"/><text x="185" y="200" font-size="8.5" fill="#565b68">논문 작성(진행중)</text>
+</svg>
+<figcaption><b>그림 6.</b> 실험 로드맵 (2026-09-20 ~ 2026-09-30). 100개 데이터셋 구축(9/20–9/24) → 4인 라벨링·분류기/회귀기 학습(9/25–9/29) → A/B·오라클 응답 생성(9/28–9/29) → 블라인드 평가 도구 구축 및 20/20 채점 완료(9/28–9/30) → H1 통계분석·RQ2 진단·논문 작성(9/29–9/30).</figcaption>
+</figure>
+
+</body>
+</html>
