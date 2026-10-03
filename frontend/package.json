@@ -10,7 +10,9 @@
     "check:conversation-order": "tsx scripts/check-conversation-order.ts",
     "check:mock-api": "tsx scripts/check-mock-api.ts",
     "check:query-cache": "tsx scripts/check-query-cache.ts",
-    "check:supabase": "tsx scripts/check-supabase.ts"
+    "check:supabase": "tsx scripts/check-supabase.ts",
+    "test:e2e": "e2e run tests/public-pages.e2e.ts",
+    "test:e2e:member": "e2e run tests/member-navigation.e2e.ts --headed"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
@@ -23,11 +25,16 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@ai-sdk/openai": "^4.0.83",
+    "@e2e-dev/web": "^0.11.2",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "ai": "^7.0.0",
+    "e2e": "^0.16.0",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
+    "playwright": "^1.63.0",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.22.3",

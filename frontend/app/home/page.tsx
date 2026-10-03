@@ -14,6 +14,7 @@ import { Toast } from "@/components/ui/Toast";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { Subscription, UsageResponse } from "@/lib/api";
 import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
+import { requestPallyOpener } from "@/lib/api/opener";
 import { markTitlePending } from "@/lib/api/pending-titles";
 import {
   invalidateConversationData,
@@ -31,6 +32,7 @@ import { usePally } from "@/lib/hooks/usePally";
 import { initialState, reducer } from "@/lib/state/conversation";
 import type { Message } from "@/lib/types/message";
 import { supabase } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import { UsageSummary } from "@/components/usage/UsageSummary";
 
 const CONVERSATION_KEY = "pally:conversationId";
@@ -46,6 +48,7 @@ export default function HomePage() {
   const speakingTimerRef = useRef<number | null>(null);
   const pendingTurnRef = useRef<Promise<void> | null>(null);
   const closingRef = useRef(false);
+  const openerRequestRef = useRef(0);
   const conversationIdRef = useRef<string | null>(null);
   const firstUserTranscriptRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
@@ -349,7 +352,7 @@ export default function HomePage() {
 
       const pendingTurn = (async () => {
         try {
-          if (!blob) throw new Error("녹음된 오디오를 찾을 수 없어요. 다시 시도해 주세요.");
+          if (!blob) throw new Error("목소리가 잘 들리지 않았어요. 조금 더 길게 말해 주세요.");
           const wavBlob = await blobToMonoWav(blob);
           await handleProcessed(wavBlob);
         } catch (error) {
@@ -385,6 +388,7 @@ export default function HomePage() {
   const handleSessionEnd = useCallback(async () => {
     if (closingRef.current) return;
     closingRef.current = true;
+    openerRequestRef.current += 1;
     setIsClosing(true);
     setWarning(null);
     recorder.cancel();
@@ -434,9 +438,8 @@ export default function HomePage() {
     void recorder.start();
   }, [hasRestoredPally, isRestoring, quotaExhausted, recorder]);
 
-  const handlePressStop = useCallback(() => {
-    if (closingRef.current) return;
-    dispatch({ type: "rec/stop" });
+  // Must run inside a user gesture so mobile browsers allow TTS playback afterwards.
+  const unlockAudio = useCallback(() => {
     try {
       if (!audioContextRef.current) {
         const AudioContextConstructor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -446,8 +449,55 @@ export default function HomePage() {
     } catch (error) {
       console.warn("AudioContext is unavailable.", error);
     }
+  }, []);
+
+  const handlePressStop = useCallback(() => {
+    if (closingRef.current) return;
+    dispatch({ type: "rec/stop" });
+    unlockAudio();
     recorder.stop();
-  }, [recorder]);
+  }, [recorder, unlockAudio]);
+
+  const handleStartConversation = useCallback(async () => {
+    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
+    unlockAudio();
+    const requestId = openerRequestRef.current + 1;
+    openerRequestRef.current = requestId;
+    dispatch({ type: "opener/request" });
+
+    try {
+      const opener = await requestPallyOpener();
+      if (openerRequestRef.current !== requestId || closingRef.current) return;
+      dispatch({
+        type: "opener/received",
+        pallyMsg: {
+          id: `m-${Date.now()}-opener`,
+          // No backend conversation exists until the user's first turn.
+          sessionId: conversationIdRef.current ?? "pending",
+          role: "pally",
+          transcript: opener.text,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      if (opener.audio) {
+        await playTts(opener.audio);
+      } else {
+        stopPlayback();
+        speakingTimerRef.current = window.setTimeout(() => {
+          speakingTimerRef.current = null;
+          if (!closingRef.current) dispatch({ type: "rec/speakingDone" });
+        }, 3000);
+      }
+    } catch (error) {
+      console.error("Pally opener request failed.", error);
+      if (openerRequestRef.current !== requestId || closingRef.current) return;
+      dispatch({
+        type: "rec/error",
+        reason: "generic",
+        message: error instanceof Error ? error.message : "Pally가 말을 걸지 못했어요. 다시 시도해 주세요.",
+      });
+    }
+  }, [hasRestoredPally, isRestoring, playTts, quotaExhausted, stopPlayback, unlockAudio]);
 
   const handleToggleHistory = useCallback(() => {
     if (!state.historyOpen) {
@@ -470,17 +520,19 @@ export default function HomePage() {
   const errorVisible = state.rec.kind === "error";
   const showChatBubble = (state.messages.length > 0 || isRecording || isProcessing) && !errorVisible;
   const historyCoversScreen = state.historyOpen && !isIdle;
+  // Pally speaks first: until the opener arrives there is nothing to reply to, so hide the mic.
+  const showStartScreen = state.messages.length === 0 && (isIdle || errorVisible);
 
   if (isRestoring) {
     return (
-      <MobileShell>
+      <MobileShell minHeight={640}>
         <PageLoader />
       </MobileShell>
     );
   }
 
   return (
-    <MobileShell>
+    <MobileShell minHeight={showChatBubble ? 800 : 640}>
       <div className="absolute right-4 top-5 z-40">
         <UsageSummary subscription={subscription} usage={usage} />
       </div>
@@ -506,9 +558,14 @@ export default function HomePage() {
 
       {!historyCoversScreen ? (
         <>
-          <div className={`absolute left-1/2 -translate-x-1/2 ${showChatBubble ? "top-[382px]" : "top-[369px]"}`}>
+          <div
+            className={cn(
+              "absolute left-1/2 -translate-x-1/2 transition-[top,transform] duration-500 ease-out",
+              showStartScreen ? "top-[calc(308px_+_min(0px,_100%_-_874px))] scale-75" : showChatBubble ? "top-[382px]" : "top-[calc(369px_+_min(0px,_100%_-_874px))]",
+            )}
+          >
             {hasRestoredPally ? (
-              <PallyCanvas axes={axes} size={308} />
+              <PallyCanvas axes={axes} gaze={isProcessing ? "up-right" : "center"} size={308} />
             ) : (
               <div className="flex size-[308px] flex-col items-center justify-center gap-3 text-caption-1 text-primary" role="status">
                 Pally를 불러오지 못했어요.
@@ -518,13 +575,40 @@ export default function HomePage() {
               </div>
             )}
           </div>
-          <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${showChatBubble ? "top-[690px]" : "top-[649px]"}`}>
-            <TalkButton disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
-          </div>
+          {showStartScreen ? (
+            <div className="absolute inset-x-0 top-[calc(578px_+_min(0px,_100%_-_874px))] z-20 flex flex-col items-center px-4 text-center">
+              <h2 className="text-title-1 text-text">Pally가 할 말이 있대요</h2>
+              <p className="mt-1 text-body text-text-tertiary">소리를 켜고 시작해 주세요 <span aria-hidden="true">🔊</span></p>
+              <button
+                className="mt-4 h-20 w-[304px] max-w-full rounded-full bg-primary-soft p-2 transition-transform duration-150 active:scale-95 disabled:opacity-50"
+                disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted}
+                onClick={() => { void handleStartConversation(); }}
+                type="button"
+              >
+                <span className="grid size-full place-items-center rounded-full bg-primary text-button-1 text-white shadow-[0_4px_8px_rgba(0,0,0,0.12)]">
+                  대화 시작하기
+                </span>
+              </button>
+            </div>
+          ) : (
+            <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${showChatBubble ? "top-[690px]" : "top-[calc(649px_+_min(0px,_100%_-_874px))]"}`}>
+              <TalkButton disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
+            </div>
+          )}
         </>
       ) : null}
 
-      <div className="absolute bottom-[100px] inset-x-0 z-40 px-4">
+      <div
+        className={cn(
+          "absolute inset-x-0 z-40 px-4",
+          // Toasts float 12px above the main action: start block (578px), talk button (649px), or chat-mode talk button (690px). Idle layouts shift up on short screens.
+          showStartScreen
+            ? "bottom-[calc(100%_-_566px_-_min(0px,_100%_-_874px))]"
+            : showChatBubble
+              ? "bottom-[calc(100%_-_678px)]"
+              : "bottom-[calc(100%_-_637px_-_min(0px,_100%_-_874px))]",
+        )}
+      >
         <Toast message={state.rec.kind === "error" ? state.rec.message : ""} onDismiss={() => dispatch({ type: "rec/dismissError" })} visible={errorVisible} />
         <Toast message={warning ?? ""} onDismiss={() => setWarning(null)} visible={warning !== null} />
       </div>

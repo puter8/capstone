@@ -27,6 +27,7 @@ import {
   profileResponseSchema,
   profileAvatarResponseSchema,
   recordedEventResponseSchema,
+  speechResponseSchema,
   subscriptionResponseSchema,
   turnResponseSchema,
   usageResponseSchema,
@@ -147,6 +148,13 @@ export const httpPallyApi: PallyApi = {
       body: formData,
     });
   },
+
+  synthesizeSpeech: (text: string) => apiRequest("/api/tts", {
+    schema: speechResponseSchema,
+    method: "POST",
+    contentType: "application/json",
+    body: JSON.stringify({ text }),
+  }),
 
   completeConversation: (conversationId: string) => apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}/complete`, {
     schema: conversationCompleteResponseSchema,

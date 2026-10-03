@@ -80,7 +80,7 @@ export default function OnboardingPage() {
   };
 
   return (
-    <MobileShell>
+    <MobileShell minHeight={820}>
       {isSaving ? <PageLoader message="설정을 저장하고 있어요" /> : null}
       {step === 1 ? (
         <>
@@ -159,7 +159,7 @@ export default function OnboardingPage() {
         </>
       ) : null}
 
-      <div className={`absolute left-[59px] ${step === 1 ? "top-[693px]" : "top-[720px]"}`}>
+      <div className={`absolute left-[59px] ${step === 1 ? "bottom-[174px]" : "bottom-[147px]"}`}>
         <OnboardingProgress className="w-[272px] px-[112px]" step={step} />
       </div>
       {error ? <p className="absolute bottom-[102px] left-5 right-5 text-center text-body-2 text-red-600" role="alert">{error}</p> : null}

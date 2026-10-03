@@ -157,7 +157,7 @@ export function schedulePrimaryRoutePrefetch(userId: string): () => void {
 
   const run = () => {
     void Promise.allSettled([
-      prefetchRouteData("/history/note", userId),
+      prefetchRouteData("/history", userId),
       prefetchRouteData("/ranking", userId),
       prefetchRouteData("/my", userId),
     ]).then((results) => {

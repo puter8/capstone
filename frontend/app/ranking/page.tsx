@@ -49,14 +49,14 @@ export default function RankingPage() {
 
   if (isLoading) {
     return (
-      <MobileShell>
+      <MobileShell minHeight={770}>
         <PageLoader />
       </MobileShell>
     );
   }
 
   return (
-    <MobileShell>
+    <MobileShell minHeight={770}>
       <h1 className="absolute left-5 top-[62px] text-display text-primary">Achievements</h1>
 
       <div className="absolute left-4 right-6 top-[140px] h-[104px]">

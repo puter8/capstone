@@ -82,7 +82,7 @@ export default function LevelSettingsPage() {
   };
 
   return (
-    <MobileShell>
+    <MobileShell minHeight={740}>
       {isLoading ? <PageLoader delayMs={200} message="영어 레벨을 불러오고 있어요" /> : null}
       <PageHeader backHref="/my" className="absolute left-0 top-[60px]" description="영어 레벨을 변경할 수 있어요." title="영어 레벨 변경" variant="back" />
       <fieldset aria-label="영어 레벨" className="absolute left-5 right-5 top-[220px] flex flex-col gap-3" disabled={isLoading || isSaving || savedLevel === null}>
