@@ -46,7 +46,7 @@ export interface FeedbackItem {
   explanation_ko: string;
 }
 
-export type ApiWarningCode = "tts_failed" | "feedback_failed";
+export type ApiWarningCode = "tts_failed" | "feedback_failed" | "traits_update_failed";
 
 export interface ApiWarning {
   code: ApiWarningCode;
@@ -91,6 +91,10 @@ export interface ConversationResponse {
 
 export interface ConversationMutationResponse {
   conversation: Pick<Conversation, "id" | "status"> & Partial<Conversation>;
+}
+
+export interface ConversationCompleteResponse extends ConversationMutationResponse {
+  warnings: ApiWarning[];
 }
 
 export interface ConversationListResponse {
@@ -291,7 +295,7 @@ export interface PallyApi {
   updateProfile(input: UpdateProfileInput): Promise<ProfileResponse>;
   createConversation(idempotencyKey: string): Promise<ConversationResponse>;
   createTurn(conversationId: string, input: TurnInput): Promise<TurnResponse>;
-  completeConversation(conversationId: string): Promise<ConversationMutationResponse>;
+  completeConversation(conversationId: string): Promise<ConversationCompleteResponse>;
   reopenConversation(conversationId: string): Promise<ConversationMutationResponse>;
   listConversations(input?: ListConversationsInput): Promise<ConversationListResponse>;
   getConversation(conversationId: string, input?: GetConversationInput): Promise<ConversationDetailResponse>;

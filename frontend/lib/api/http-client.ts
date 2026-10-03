@@ -20,6 +20,7 @@ import {
   checkoutResponseSchema,
   conversationDetailResponseSchema,
   conversationListResponseSchema,
+  conversationCompleteResponseSchema,
   conversationMutationResponseSchema,
   conversationResponseSchema,
   errorResponseSchema,
@@ -148,7 +149,7 @@ export const httpPallyApi: PallyApi = {
   },
 
   completeConversation: (conversationId: string) => apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}/complete`, {
-    schema: conversationMutationResponseSchema,
+    schema: conversationCompleteResponseSchema,
     method: "POST",
     idempotencyKey: createIdempotencyKey(),
   }),

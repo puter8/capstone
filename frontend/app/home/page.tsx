@@ -14,8 +14,10 @@ import { Toast } from "@/components/ui/Toast";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { Subscription, UsageResponse } from "@/lib/api";
 import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
+import { markTitlePending } from "@/lib/api/pending-titles";
 import {
   invalidateConversationData,
+  invalidateProfile,
   invalidateUsage,
   loadConversationPage,
   loadLatestCompletedConversation,
@@ -45,6 +47,7 @@ export default function HomePage() {
   const pendingTurnRef = useRef<Promise<void> | null>(null);
   const closingRef = useRef(false);
   const conversationIdRef = useRef<string | null>(null);
+  const firstUserTranscriptRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
   const [limitDialogOpen, setLimitDialogOpen] = useState(false);
   const [quotaExhausted, setQuotaExhausted] = useState(false);
@@ -121,6 +124,7 @@ export default function HomePage() {
       const messages = conversationTurnsToMessages(conversationId, detail.turns);
       if (!active) return;
       conversationIdRef.current = conversationId;
+      firstUserTranscriptRef.current = messages.find((message) => message.role === "user")?.transcript ?? null;
       window.localStorage.setItem(CONVERSATION_KEY, conversationId);
       dispatch({ type: "session/load", id: conversationId, messages });
     };
@@ -275,6 +279,7 @@ export default function HomePage() {
           createdAt: response.created_at ?? new Date().toISOString(),
         };
         setPendingUserTranscript(null);
+        if (firstUserTranscriptRef.current === null) firstUserTranscriptRef.current = response.user.transcript;
         dispatch({ type: "rec/processed", userMsg: userMessage, pallyMsg: pallyMessage });
         updateFromChatResponse({ axes: response.axes });
         const userId = userIdRef.current;
@@ -394,12 +399,22 @@ export default function HomePage() {
 
     try {
       const conversationId = conversationIdRef.current;
-      if (conversationId) await pallyApi.completeConversation(conversationId);
+      const completed = conversationId ? await pallyApi.completeConversation(conversationId) : null;
       const userId = userIdRef.current;
-      if (userId) invalidateConversationData(userId, conversationId ?? undefined);
+      if (userId) {
+        invalidateConversationData(userId, conversationId ?? undefined);
+        // Ending a conversation recomputes profile traits on the backend.
+        invalidateProfile(userId);
+      }
+      const firstUserTranscript = firstUserTranscriptRef.current;
+      if (conversationId && firstUserTranscript) markTitlePending(conversationId, firstUserTranscript);
+      if (completed && completed.warnings.length > 0) {
+        setWarning(completed.warnings.map((item) => item.message).join(" "));
+      }
       revealAxes();
       setPendingUserTranscript(null);
       conversationIdRef.current = null;
+      firstUserTranscriptRef.current = null;
       window.localStorage.removeItem(CONVERSATION_KEY);
       dispatch({ type: "session/end" });
     } catch (caught) {

@@ -351,7 +351,7 @@ export const mockPallyApi: PallyApi = {
         completed_at: new Date().toISOString(),
       };
     }
-    return { conversation: clone(record.conversation) };
+    return { conversation: clone(record.conversation), warnings: [] };
   },
 
   async reopenConversation(conversationId: string) {

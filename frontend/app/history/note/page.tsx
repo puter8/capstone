@@ -9,7 +9,10 @@ import { BottomNav } from "@/components/nav/BottomNav";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { PallyApiError } from "@/lib/api";
 import type { ConversationListItem } from "@/lib/api";
-import { getCurrentUserId, loadHistoryPage } from "@/lib/api/route-data";
+import { isTitlePending } from "@/lib/api/pending-titles";
+import { getCurrentUserId, loadHistoryPage, reloadHistoryFirstPage } from "@/lib/api/route-data";
+
+const TITLE_POLL_INTERVAL_MS = 1_500;
 
 export default function FeedbackNotePage() {
   const router = useRouter();
@@ -80,6 +83,34 @@ export default function FeedbackNotePage() {
     }
   }, [nextCursor, router]);
 
+  const now = Date.now();
+  const pendingTitleIds = new Set(items.filter((item) => isTitlePending(item.id, item.title, now)).map((item) => item.id));
+  const hasPendingTitle = pendingTitleIds.size > 0;
+
+  // Poll the first page until background-generated titles arrive (or the wait expires).
+  useEffect(() => {
+    const userId = userIdRef.current;
+    if (!hasPendingTitle || !userId) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void reloadHistoryFirstPage(userId)
+        .then((response) => {
+          if (!active) return;
+          const refreshed = new Map(response.items.map((item) => [item.id, item]));
+          setItems((current) => current.map((item) => refreshed.get(item.id) ?? item));
+        })
+        .catch((caught: unknown) => {
+          console.error("Conversation title refresh failed", caught);
+          // Re-render so expired pending titles fall back instead of spinning forever.
+          if (active) setItems((current) => [...current]);
+        });
+    }, TITLE_POLL_INTERVAL_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [hasPendingTitle, items]);
+
   useEffect(() => {
     if (isLoading) return;
     const root = listRef.current;
@@ -122,6 +153,7 @@ export default function FeedbackNotePage() {
             feedbackHref={`/history?conversation_id=${encodeURIComponent(item.id)}`}
             key={item.id}
             title={item.title ?? item.preview ?? "Pally와 나눈 대화"}
+            titlePending={pendingTitleIds.has(item.id)}
           />
         ))}
         <div aria-hidden="true" className="h-px shrink-0" ref={sentinelRef} />
