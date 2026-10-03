@@ -62,6 +62,12 @@ export const conversationMutationResponseSchema = z.object({
   conversation: conversationSchema.partial().required({ id: true, status: true }),
 });
 
+export const speechResponseSchema = z.object({
+  audio_b64: z.string().min(1),
+  voice: z.string(),
+  encoding: z.literal("MP3"),
+});
+
 export const conversationCompleteResponseSchema = conversationMutationResponseSchema.extend({
   warnings: z.array(warningSchema),
 });

@@ -3,11 +3,18 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Axes, DEFAULT_AXES } from '@/lib/types/character';
 
+export type PallyGaze = 'center' | 'up-right';
+
 interface PallyCanvasProps {
   axes?: Axes;
   size?: number;
   className?: string;
+  /** Where the pupils look. 'up-right' is used while Pally is thinking. */
+  gaze?: PallyGaze;
 }
+
+// Per-frame easing toward the target gaze so the pupils glide instead of jumping.
+const GAZE_EASING = 0.15;
 
 function tier(v: number): 0 | 1 | 2 {
   if (v <= 33) return 0;
@@ -84,13 +91,17 @@ export default function PallyCanvas({
   axes = DEFAULT_AXES,
   size = 280,
   className = '',
+  gaze = 'center',
 }: PallyCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef    = useRef<number>(0);
   const t0Ref     = useRef<number>(0);
   const axesRef   = useRef(axes);
+  const gazeTargetRef = useRef(gaze === 'up-right' ? 1 : 0);
+  const gazeRef   = useRef(gazeTargetRef.current);
 
   useEffect(() => { axesRef.current = axes; }, [axes]);
+  useEffect(() => { gazeTargetRef.current = gaze === 'up-right' ? 1 : 0; }, [gaze]);
 
   const draw = useCallback((ctx: CanvasRenderingContext2D, t: number) => {
     const ax  = axesRef.current;
@@ -147,6 +158,9 @@ export default function PallyCanvas({
     const eyeBaseY = sT > 0 ? bs * 0.08 : -bs * 0.04;
     const blink    = Math.sin(t * 0.4) > 0.98;
     const scaleY   = blink ? 0.08 : 1;
+    // 0 = center, 1 = fully up-right
+    gazeRef.current += (gazeTargetRef.current - gazeRef.current) * GAZE_EASING;
+    const gz       = gazeRef.current;
 
     for (const ex of [-eyeSpcX, eyeSpcX]) {
       ctx.save();
@@ -156,7 +170,7 @@ export default function PallyCanvas({
       if (eT === 0) {
         // eye1: 작은 검정 점
         ctx.beginPath();
-        ctx.arc(0, 0, bs * 0.08, 0, Math.PI * 2);
+        ctx.arc(gz * bs * 0.09, -gz * bs * 0.07, bs * 0.08, 0, Math.PI * 2);
         ctx.fillStyle = '#1a1a1a';
         ctx.fill();
 
@@ -165,12 +179,14 @@ export default function PallyCanvas({
         const er       = bs * 0.17;
         const pupilR   = er * 0.72;
         const pupilOff = er * 0.18;
+        const px       = gz * er * 0.16;
+        const py       = -pupilOff - gz * er * 0.04;
         ctx.beginPath();
         ctx.arc(0, 0, er, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(0, -pupilOff, pupilR, 0, Math.PI * 2);
+        ctx.arc(px, py, pupilR, 0, Math.PI * 2);
         ctx.fillStyle = '#1a1a1a';
         ctx.fill();
 
@@ -179,6 +195,8 @@ export default function PallyCanvas({
         const er       = bs * 0.17;
         const pupilR   = er * 0.72;
         const pupilOff = er * 0.18;
+        const px       = gz * er * 0.16;
+        const py       = -pupilOff - gz * er * 0.04;
 
         // 흰 원
         ctx.beginPath();
@@ -188,13 +206,13 @@ export default function PallyCanvas({
 
         // 검정 원 (위쪽 편심)
         ctx.beginPath();
-        ctx.arc(0, -pupilOff, pupilR, 0, Math.PI * 2);
+        ctx.arc(px, py, pupilR, 0, Math.PI * 2);
         ctx.fillStyle = '#1a1a1a';
         ctx.fill();
 
         // 노란 마름모 (검정 원 안 중앙)
-        const mx = 0;
-        const my = -pupilOff;
+        const mx = px;
+        const my = py;
         const hw = pupilR * 0.40; // 가로 반폭
         const hh = pupilR * 0.55; // 세로 반폭 (세로로 약간 길게)
         ctx.beginPath();

@@ -93,6 +93,12 @@ export interface ConversationMutationResponse {
   conversation: Pick<Conversation, "id" | "status"> & Partial<Conversation>;
 }
 
+export interface SpeechResponse {
+  audio_b64: string;
+  voice: string;
+  encoding: "MP3";
+}
+
 export interface ConversationCompleteResponse extends ConversationMutationResponse {
   warnings: ApiWarning[];
 }
@@ -295,6 +301,7 @@ export interface PallyApi {
   updateProfile(input: UpdateProfileInput): Promise<ProfileResponse>;
   createConversation(idempotencyKey: string): Promise<ConversationResponse>;
   createTurn(conversationId: string, input: TurnInput): Promise<TurnResponse>;
+  synthesizeSpeech(text: string): Promise<SpeechResponse>;
   completeConversation(conversationId: string): Promise<ConversationCompleteResponse>;
   reopenConversation(conversationId: string): Promise<ConversationMutationResponse>;
   listConversations(input?: ListConversationsInput): Promise<ConversationListResponse>;
