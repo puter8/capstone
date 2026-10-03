@@ -11,9 +11,10 @@ type ConversationNoteCardProps = {
   conversationId: string;
   feedbackHref: string;
   title: string;
+  titlePending?: boolean;
 };
 
-export function ConversationNoteCard({ conversationId, feedbackHref, title }: ConversationNoteCardProps) {
+export function ConversationNoteCard({ conversationId, feedbackHref, title, titlePending = false }: ConversationNoteCardProps) {
   const router = useRouter();
   const [isReopening, setIsReopening] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +42,14 @@ export function ConversationNoteCard({ conversationId, feedbackHref, title }: Co
       <span className="absolute left-2 top-0 grid size-[30px] place-items-center" aria-hidden="true">
         <img alt="" className="size-[21.17px] rotate-[35.03deg]" src="/icons/history-star.svg" />
       </span>
-      <h2 className="absolute left-[23px] top-10 flex h-[30px] w-[209px] items-center truncate text-body-sb text-surface">{title}</h2>
+      {titlePending ? (
+        <div aria-busy="true" className="absolute left-[23px] top-10 flex h-[30px] w-[209px] items-center" role="status">
+          <span className="sr-only">대화 제목을 만들고 있어요</span>
+          <span aria-hidden="true" className="h-[18px] w-[150px] animate-pulse rounded-full bg-surface/50" />
+        </div>
+      ) : (
+        <h2 className="absolute left-[23px] top-10 flex h-[30px] w-[209px] items-center truncate text-body-sb text-surface">{title}</h2>
+      )}
       <img
         alt=""
         aria-hidden="true"

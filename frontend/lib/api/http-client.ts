@@ -20,12 +20,14 @@ import {
   checkoutResponseSchema,
   conversationDetailResponseSchema,
   conversationListResponseSchema,
+  conversationCompleteResponseSchema,
   conversationMutationResponseSchema,
   conversationResponseSchema,
   errorResponseSchema,
   profileResponseSchema,
   profileAvatarResponseSchema,
   recordedEventResponseSchema,
+  speechResponseSchema,
   subscriptionResponseSchema,
   turnResponseSchema,
   usageResponseSchema,
@@ -147,8 +149,15 @@ export const httpPallyApi: PallyApi = {
     });
   },
 
+  synthesizeSpeech: (text: string) => apiRequest("/api/tts", {
+    schema: speechResponseSchema,
+    method: "POST",
+    contentType: "application/json",
+    body: JSON.stringify({ text }),
+  }),
+
   completeConversation: (conversationId: string) => apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}/complete`, {
-    schema: conversationMutationResponseSchema,
+    schema: conversationCompleteResponseSchema,
     method: "POST",
     idempotencyKey: createIdempotencyKey(),
   }),

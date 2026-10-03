@@ -32,7 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
-      <body className={`${notoSansKr.variable} min-h-screen bg-surface font-sans text-text antialiased`}>
+      <body className={`${notoSansKr.variable} min-h-dvh bg-surface font-sans text-text antialiased`}>
         {children}
       </body>
     </html>

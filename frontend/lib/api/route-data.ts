@@ -62,6 +62,11 @@ export function loadHistoryPage(userId: string, cursor?: string): Promise<Conver
   ));
 }
 
+export function reloadHistoryFirstPage(userId: string): Promise<ConversationListResponse> {
+  invalidate(userId, `${CACHE_KEYS.history}first`);
+  return loadHistoryPage(userId);
+}
+
 export function loadLatestCompletedConversation(userId: string): Promise<ConversationListResponse> {
   const history = peek<ConversationListResponse>(userId, `${CACHE_KEYS.history}first`);
   if (history) return Promise.resolve(history);
@@ -152,7 +157,7 @@ export function schedulePrimaryRoutePrefetch(userId: string): () => void {
 
   const run = () => {
     void Promise.allSettled([
-      prefetchRouteData("/history/note", userId),
+      prefetchRouteData("/history", userId),
       prefetchRouteData("/ranking", userId),
       prefetchRouteData("/my", userId),
     ]).then((results) => {

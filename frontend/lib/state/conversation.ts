@@ -7,6 +7,7 @@
  *        idle → recording → processing → speaking → idle
  *        idle → error (permission-denied | generic) → (next tap) → idle
  *   3. History sheet visibility (CHAT-01 chevron toggle)
+ *   4. Pally-first opener: idle (no messages) → processing → speaking → idle
  *
  * All states are discriminated unions so TS exhaustiveness catches missing
  * transitions at compile time.
@@ -34,6 +35,8 @@ export type Action =
   | { type: 'rec/start' }
   | { type: 'rec/stop' }
   | { type: 'rec/processed'; userMsg: Message; pallyMsg: Message }
+  | { type: 'opener/request' }
+  | { type: 'opener/received'; pallyMsg: Message }
   | { type: 'rec/speakingDone' }
   | { type: 'rec/error'; reason: 'permission-denied' | 'generic'; message: string }
   | { type: 'rec/dismissError' }
@@ -61,6 +64,14 @@ export function reducer(state: ConversationState, action: Action): ConversationS
       return {
         ...state,
         messages: [...state.messages, action.userMsg, action.pallyMsg],
+        rec: { kind: 'speaking' },
+      };
+    case 'opener/request':
+      return { ...state, rec: { kind: 'processing' } };
+    case 'opener/received':
+      return {
+        ...state,
+        messages: [...state.messages, action.pallyMsg],
         rec: { kind: 'speaking' },
       };
     case 'rec/speakingDone':

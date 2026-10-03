@@ -22,7 +22,7 @@ const feedbackSchema = z.object({
 });
 
 const warningSchema = z.object({
-  code: z.enum(["tts_failed", "feedback_failed"]),
+  code: z.enum(["tts_failed", "feedback_failed", "traits_update_failed"]),
   message: z.string(),
 });
 
@@ -60,6 +60,16 @@ export const conversationResponseSchema = z.object({ conversation: conversationS
 
 export const conversationMutationResponseSchema = z.object({
   conversation: conversationSchema.partial().required({ id: true, status: true }),
+});
+
+export const speechResponseSchema = z.object({
+  audio_b64: z.string().min(1),
+  voice: z.string(),
+  encoding: z.literal("MP3"),
+});
+
+export const conversationCompleteResponseSchema = conversationMutationResponseSchema.extend({
+  warnings: z.array(warningSchema),
 });
 
 export const conversationListResponseSchema = z.object({

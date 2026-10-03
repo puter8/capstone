@@ -134,14 +134,14 @@ export default function MyPage() {
 
   if (isLoading) {
     return (
-      <MobileShell>
+      <MobileShell minHeight={810}>
         <PageLoader delayMs={200} />
       </MobileShell>
     );
   }
 
   return (
-    <MobileShell>
+    <MobileShell minHeight={810}>
       <h1 className="absolute left-5 top-[62px] text-display text-primary">My Pally</h1>
       {profile ? (
         <div className="absolute left-5 right-5 top-[172px] h-[228px]">
@@ -158,7 +158,7 @@ export default function MyPage() {
         <button className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black" onClick={() => setDialog("delete")} type="button">데이터 삭제</button>
       </section>
 
-      <div className="absolute left-0 right-0 top-[722px] z-20 text-center text-button-2 text-text-tertiary">
+      <div className="absolute bottom-[111px] left-0 right-0 z-20 text-center text-button-2 text-text-tertiary">
         <button className="hover:text-text" onClick={() => setDialog("logout")} type="button">로그아웃</button>
         <span aria-hidden="true"> | </span>
         <button

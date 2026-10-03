@@ -340,6 +340,11 @@ export const mockPallyApi: PallyApi = {
     });
   },
 
+  async synthesizeSpeech() {
+    await delay();
+    return { audio_b64: MOCK_SILENT_AUDIO_URL.split(",", 2)[1], voice: "mock", encoding: "MP3" as const };
+  },
+
   async completeConversation(conversationId: string) {
     await delay();
     ensureActiveAccount();
@@ -351,7 +356,7 @@ export const mockPallyApi: PallyApi = {
         completed_at: new Date().toISOString(),
       };
     }
-    return { conversation: clone(record.conversation) };
+    return { conversation: clone(record.conversation), warnings: [] };
   },
 
   async reopenConversation(conversationId: string) {

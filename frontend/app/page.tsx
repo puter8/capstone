@@ -30,7 +30,7 @@ export default function LoginPage() {
   };
 
   return (
-    <MobileShell>
+    <MobileShell minHeight={780}>
       {isLoading ? <PageLoader message={`${isLoading === "google" ? "Google" : "카카오"} 로그인으로 연결하고 있어요`} /> : null}
       <div className="absolute left-1/2 top-[-152px] size-[450px] -translate-x-1/2 rounded-full bg-[#08bdca]" />
       <div className="absolute left-3 top-[216px] size-[138px] rounded-full bg-[#ffb84a]" />
@@ -51,8 +51,9 @@ export default function LoginPage() {
           type="button"
         >
           <span aria-hidden="true" className="absolute inset-0 rounded-xl border border-[#d9d9d9]" />
-          <span className="pointer-events-none absolute left-[72.81px] top-[6.22px] h-[44.59px] w-[211.25px] overflow-hidden rounded-xl">
-            <img alt="" className="absolute left-[-0.84%] top-[-6.37%] h-[112.73%] w-[101.73%] max-w-none" src="/auth/google-sign-up.png" />
+          <span className="pointer-events-none relative flex h-full items-center justify-center gap-3">
+            <img alt="" className="size-6" src="/auth/google-logo.png" />
+            <span className="text-button-2 font-medium text-[#1f1f1f]">Google로 시작하기</span>
           </span>
         </button>
         <button
