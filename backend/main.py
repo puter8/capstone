@@ -36,10 +36,11 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from ai.analyzer import analyze_utterance
+from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
 from ai.matrix_engine import apply_ema, compute_character, describe_character
 from ai.opener import persona_prompt
 from ai.reply_shaping import shape_reply
-from lib import billing, kakaopay
+from lib import billing, kakaopay, session_feedback
 
 
 class BillingAccessFilter(logging.Filter):
@@ -61,8 +62,8 @@ except Exception:
     _SUPABASE_ENABLED = False
     _get_supabase_raw = None  # type: ignore
 
-# AI 담당 제공: generate_feedback(utterance, pally_reply, level) -> (items, failed).
-# 없으면 None → turn 의 feedback 은 [] (실패 아님, 미구현).
+# Legacy single-turn extraction helper. Conversation turns do not call it;
+# completed sessions use session_feedback and the batched AI extraction API.
 try:
     from ai.generate_feedback import generate_feedback
 except Exception:
@@ -105,9 +106,15 @@ async def lifespan(application: FastAPI):
         application.state.http_client = client
         stop = asyncio.Event()
         task = None
+        feedback_task = None
         try:
             if os.getenv("BILLING_PROVIDER") == "kakaopay" and os.getenv("BILLING_WORKER_ENABLED") == "true":
                 task = asyncio.create_task(billing.worker(get_supabase, stop))
+            if (os.getenv("PALLY_SESSION_FEEDBACK_WORKER_ENABLED", "true").lower() != "false"
+                    and os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")):
+                feedback_task = asyncio.create_task(
+                    session_feedback.worker(get_supabase, stop, _conversation_turns),
+                )
             yield
         finally:
             stop.set()
@@ -115,7 +122,11 @@ async def lifespan(application: FastAPI):
                 if task is not None:
                     await task
             finally:
-                application.state.http_client = None
+                try:
+                    if feedback_task is not None:
+                        await feedback_task
+                finally:
+                    application.state.http_client = None
 
 
 app = FastAPI(title="Pally Backend API", version="1.0.0", lifespan=lifespan)
@@ -827,25 +838,26 @@ You are {character_name}, the user's English conversation friend.
 Your personality right now (show it in every reply; the level and length rules win if they conflict):
 {persona_prompt(axes)}
 {level_guide}
-Keep your reply to ONE short sentence (about 10-15 words). Never write two sentences.
+Keep the entire reply within 90 characters, using at most two short sentences.
 
 ## Grammar correction rules
 When the user makes grammar or vocabulary mistakes, do not list or explain the mistakes.
 Instead, naturally recast the user's idea with the key corrected expression inside your reply.
 If two errors are tightly connected in one phrase, you may fix both without explaining them.
 
-Use this pattern:
-1. React emotionally or empathetically first.
-2. Rephrase the user's idea with the corrected expression.
-3. Ask one short follow-up question.
+Recast the key mistaken expression naturally, then ask one short follow-up.
+Add a brief empathetic reaction only if it fits. Keep the corrected expression
+when shortening the reply; never replace it with only a reaction.
 
-Keep the spoken reply compact, usually 1-2 short sentences.
+Keep the spoken reply compact and friendly.
 Keep the user's casual style when it is natural, such as "bestie", "hang out", "dying laughing", or "no way".
 Do not over-correct slang or casual expressions unless they are actually wrong.
 
 Example:
 User: "My bestie and I watch it yesterday and we was dying laughing."
-Pally: "Oh! You and your bestie watched it yesterday, and you were dying laughing? What was so funny?"
+Pally: "You watched it yesterday and were dying laughing? What was so funny?"
+
+{CONVERSATION_CORRECTION_RULES}
 
 Stay in character as {character_name} at all times. Never break the fourth wall."""
 
@@ -1684,7 +1696,7 @@ async def create_turn(
 
     # 1. conversation 소유권 (타인 소유는 존재 숨김 → 404)
     try:
-        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at").eq("id", conversation_id).execute()
+        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count").eq("id", conversation_id).execute()
     except Exception as e:
         logging.error(f"turn session read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read conversation")
@@ -1769,48 +1781,33 @@ async def create_turn(
     # 답변 길이 정형화: 이후 TTS·저장·응답이 모두 shaped 버전을 써서 화면/음성 불일치 방지.
     reply = shape_reply(reply)
 
-    # 8. TTS + feedback 병렬 (둘 다 reply 만 있으면 됨 → asyncio.gather).
-    #    feedback 은 AI 담당(동기 함수)이라 to_thread 로 offload 해 이벤트 루프를 막지 않는다.
-    #    TTS 가 보통 long pole 이라, feedback 을 병렬로 붙여도 turn latency 는 거의 안 늘어난다.
-    timings: Dict[str, int] = {}
-
-    async def _timed_tts():
-        t0 = time.perf_counter()
-        try:
-            return await _call_google_tts(_strip_emoji(reply))
-        finally:
-            timings["tts_ms"] = round((time.perf_counter() - t0) * 1000)
-
-    async def _timed_feedback():
-        t0 = time.perf_counter()
-        try:
-            return await _gen_feedback(transcript, reply, session["level"])
-        finally:
-            timings["feedback_ms"] = round((time.perf_counter() - t0) * 1000)
-
-    tts_result, fb_result = await asyncio.gather(
-        _timed_tts(), _timed_feedback(), return_exceptions=True,
-    )
-    tts_ms = timings.get("tts_ms", 0)
-    feedback_ms = timings.get("feedback_ms", 0)
-
-    # TTS: 실패해도 turn 은 완료, audio 만 null.
+    # Spoken corrections are already in reply. Screen feedback is extracted
+    # from the saved pair only after /complete, outside the turn response.
+    tts_t0 = time.perf_counter()
     tts_audio: Optional[str] = None
-    if isinstance(tts_result, Exception):
-        logging.warning(f"turn TTS failed (non-fatal): {tts_result}")
-    else:
-        tts_audio = tts_result
+    try:
+        tts_audio = await _call_google_tts(_strip_emoji(reply))
+    except Exception as exc:
+        logging.warning("turn TTS failed (non-fatal): %s", type(exc).__name__)
+    tts_ms = round((time.perf_counter() - tts_t0) * 1000)
 
-    # feedback: 성공(list) / 실패(Exception → partial+warning) / 미구현(None 반환 → [])
-    feedback_items: list = []
-    feedback_failed = False
-    if isinstance(fb_result, Exception):
-        feedback_failed = True
-        logging.warning(f"turn feedback failed (non-fatal): {fb_result}")
-    elif fb_result:
-        feedback_items = fb_result
-    # 저장은 실패/무교정을 구분: 실패 → null(History 재생성 대상), 성공 → list([] 는 "교정 없음").
-    feedback_to_store = None if feedback_failed else feedback_items
+    # Guard a close/reopen that happened while speech providers were running.
+    # The frontend also waits for its in-flight turn before sending /complete.
+    try:
+        latest = (sb.table("sessions").select("id, user_id, ended_at, reopen_count")
+                  .eq("id", conversation_id).execute())
+    except Exception as exc:
+        _release_turn(sb, user_id)
+        logging.error("turn session recheck failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to verify conversation before saving")
+    if not latest.data or latest.data[0].get("user_id") != user_id:
+        _release_turn(sb, user_id)
+        raise AppError(404, "not_found", "Conversation not found")
+    current_session = latest.data[0]
+    if (current_session.get("ended_at")
+            or (current_session.get("reopen_count") or 0) != (session.get("reopen_count") or 0)):
+        _release_turn(sb, user_id)
+        raise AppError(409, "conversation_closed", "Conversation changed while processing the turn")
 
     # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단) — latency 측정
     save_t0 = time.perf_counter()
@@ -1823,7 +1820,7 @@ async def create_turn(
                 "axes": smoothed,
                 "character": character,
                 "idempotency_key": idem_key,
-                "feedback": feedback_to_store,
+                "feedback": None,
             },
             {
                 "session_id": conversation_id,
@@ -1834,6 +1831,9 @@ async def create_turn(
             },
         ]).execute()
     except Exception as e:
+        if "conversation_closed" in str(e):
+            _release_turn(sb, user_id)
+            raise AppError(409, "conversation_closed", "Conversation closed before the turn was saved")
         if _is_unique_violation(e):
             # 동시 중복 요청의 진 쪽: 이긴 요청이 이미 저장함 → 내 예약분 환불 후 저장된 turn 재반환.
             # (503 을 주던 기존 동작 대신 replayed 로 정상 결과 반환)
@@ -1855,7 +1855,7 @@ async def create_turn(
     turn_id = user_row["id"] if user_row else None
     turn_created = user_row["created_at"] if user_row else None
 
-    # TTS·feedback 부가 실패는 partial + warnings (계약 §4.6). 대화 텍스트는 정상.
+    # Deferred screen feedback is expected, not a failed or partial turn.
     status = "completed"
     warnings: list = []
     if tts_audio is None:
@@ -1863,12 +1863,6 @@ async def create_turn(
         warnings.append({
             "code": "tts_failed",
             "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
-        })
-    if feedback_failed:
-        status = "partial"
-        warnings.append({
-            "code": "feedback_failed",
-            "message": "피드백 생성에 실패했어요. 대화는 계속할 수 있어요.",
         })
 
     # 관측성: 단계별 latency 를 링버퍼에 저장 + 구조화 로그로 emit.
@@ -1880,7 +1874,7 @@ async def create_turn(
         "stt_ms": stt_ms,
         "gemini_ms": gemini_ms,
         "tts_ms": tts_ms,
-        "feedback_ms": feedback_ms,
+        "feedback_ms": 0,
         "save_ms": save_ms,
         "total_ms": round((time.perf_counter() - turn_t0) * 1000),
         "status": status,
@@ -1898,8 +1892,8 @@ async def create_turn(
         "pally": {"text": reply, "audio": tts_audio},  # audio = base64 inline (signed URL 미구현)
         "axes": smoothed,
         "character": character,
-        "feedback": feedback_items,
-        "feedback_pending": feedback_failed,
+        "feedback": [],
+        "feedback_pending": True,
         "warnings": warnings,
         "quota": {
             "used_turns": quota_used,
@@ -2251,23 +2245,43 @@ async def complete_conversation(
 ):
     """대화 종료. 재호출해도 같은 결과(멱등).
 
-    제목이 아직 없으면 응답을 보낸 뒤 백그라운드에서 생성한다(1~2초가 걸려도
-    Pally 공개가 늦어지지 않게). 이미 제목이 있으면 재개·재종료해도 바꾸지 않는다.
+    화면용 피드백과 제목은 응답을 보낸 뒤 생성한다. 종료 시 DB가 표시한
+    발화만 재처리 대상이 되며, 이미 생성한 피드백은 보존한다.
     """
     sb = get_supabase()
     session = _owned_session(sb, conversation_id, user_id)
     warnings: list = []
 
-    if not session.get("ended_at"):
-        try:
-            res = sb.table("sessions").update({"ended_at": _now_iso()}).eq("id", conversation_id).eq("user_id", user_id).execute()
-        except Exception as e:
-            logging.error(f"complete_conversation failed: {e}")
-            raise AppError(503, "persistence_failed", "Failed to complete conversation")
-        session = res.data[0] if res.data else session
+    was_active = not session.get("ended_at")
+    try:
+        res = sb.rpc("complete_conversation_with_feedback", {
+            "p_conversation_id": conversation_id,
+            "p_user_id": user_id,
+            "p_expected_reopen_count": session.get("reopen_count") or 0,
+        }).execute()
+        if (not isinstance(res.data, dict) or res.data.get("id") != conversation_id
+                or not res.data.get("ended_at")):
+            raise ValueError("Session completion RPC returned an invalid session")
+        session = res.data
+    except Exception as exc:
+        if "conversation_changed" in str(exc):
+            raise AppError(409, "conversation_already_active", "Conversation was reopened while completing")
+        if "conversation_not_found" in str(exc):
+            raise AppError(404, "not_found", "Conversation not found")
+        logging.error("complete_conversation failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to complete conversation")
+    if was_active:
         if not _refresh_profile_traits(sb, user_id, conversation_id):
             warnings.append({"code": "traits_update_failed",
                              "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
+
+    # The RPC marks exact saved user IDs atomically with session closure.
+    # The synchronous task runs in Starlette's thread pool after the response;
+    # the worker can rediscover these marks even after a restart or reopening.
+    background_tasks.add_task(
+        session_feedback.process_session, get_supabase, conversation_id,
+        _conversation_turns,
+    )
 
     if not session.get("title"):
         background_tasks.add_task(_assign_conversation_title, conversation_id)
