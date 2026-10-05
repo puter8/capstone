@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import sys
-import threading
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import hashlib
@@ -18,8 +17,6 @@ from datetime import datetime, time as dtime, timedelta, timezone
 
 import httpx
 from dotenv import load_dotenv
-from google.oauth2 import service_account as gcp_service_account
-import google.auth.transport.requests as gcp_auth_transport
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -92,15 +89,9 @@ def _analyze_axes(text: str) -> Dict[str, int]:
 
 
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")    # Gemini (AI Studio)
-GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # TTS (Cloud Console)
+GOOGLE_CLOUD_API_KEY = os.getenv("GOOGLE_CLOUD_API_KEY", "")  # STT / TTS (Cloud Console)
 
 DEFAULT_TTS_VOICE = os.getenv("PALLY_TTS_VOICE", "").strip() or "en-US-Chirp3-HD-Leda"
-
-# STT — Chirp 2 (v2 API) needs a service account, not an API key. v1's older
-# acoustic models mis-hear non-native English (e.g. "latte" -> "luggage" in
-# production logs); Chirp 2 is Google's current model for accented speech.
-GOOGLE_STT_SA_JSON = os.getenv("GOOGLE_STT_SA_JSON", "")
-GOOGLE_STT_REGION = os.getenv("GOOGLE_STT_REGION", "").strip() or "us-central1"
 
 
 @asynccontextmanager
@@ -452,122 +443,133 @@ if _DEBUG_ENDPOINTS_ENABLED:
         return {
             "GOOGLE_AI_API_KEY": mask(GOOGLE_AI_API_KEY),
             "GOOGLE_CLOUD_API_KEY": mask(GOOGLE_CLOUD_API_KEY),
-            "GOOGLE_STT_SA_JSON": "configured" if GOOGLE_STT_SA_JSON else "(비어있음)",
         }
 
 
 # ── STT — Google Cloud Speech-to-Text ────────────────────────────────────────
 
 
-_stt_credentials: gcp_service_account.Credentials | None = None
-_stt_project_id: str | None = None
-_stt_credentials_lock = threading.Lock()
-_STT_TOKEN_REFRESH_TIMEOUT = 10.0
+def _detect_encoding(content_type: str) -> str:
+    ct = (content_type or "").lower()
+    if "webm" in ct or "opus" in ct:
+        return "WEBM_OPUS"
+    if "mp3" in ct or "mpeg" in ct:
+        return "MP3"
+    if "mp4" in ct or "m4a" in ct or "aac" in ct:
+        return "MP3"  # iOS Safari MediaRecorder: audio/mp4 (AAC) → closest STT v1 encoding
+    if "wav" in ct:
+        return "LINEAR16"
+    if "flac" in ct:
+        return "FLAC"
+    return "WEBM_OPUS"  # browser MediaRecorder 기본값 (Chrome/Firefox)
 
 
-class _TimedAuthRequest(gcp_auth_transport.Request):
-    """google-auth's Request defaults to a 120s timeout, well past the 30s
-    budget the STT call itself is given. Credentials.refresh() never passes
-    a timeout through, so the only way to bound it is to override the default
-    here."""
-    def __call__(self, *args, **kwargs):
-        kwargs.setdefault("timeout", _STT_TOKEN_REFRESH_TIMEOUT)
-        return super().__call__(*args, **kwargs)
-
-
-def _load_stt_credentials() -> tuple[gcp_service_account.Credentials, str]:
-    """Parse the service-account JSON once and cache it (module-level, like a
-    normal client singleton). The project id lives inside the key file, so
-    there is no separate project-id env var to keep in sync.
-
-    Double-checked locking: concurrent turns all call this via asyncio.to_thread
-    (real worker threads, not coroutines), so an unguarded check-then-create
-    would race. The lock only matters for the first call; every call after
-    that returns from the fast path without blocking on it.
+def _parse_wav(audio_bytes: bytes) -> tuple[bytes, int, int] | None:
     """
-    global _stt_credentials, _stt_project_id
-    if _stt_credentials is None:
-        with _stt_credentials_lock:
-            if _stt_credentials is None:
-                info = json.loads(GOOGLE_STT_SA_JSON)
-                creds = gcp_service_account.Credentials.from_service_account_info(
-                    info, scopes=["https://www.googleapis.com/auth/cloud-platform"],
-                )
-                _stt_project_id = info["project_id"]
-                _stt_credentials = creds
-    return _stt_credentials, _stt_project_id
+    WAV 파일 감지 및 파싱. RIFF 매직 바이트로 판별.
+    반환: (raw_pcm_bytes, sample_rate, num_channels) 또는 None (WAV 아닌 경우)
 
-
-def _stt_access_token() -> str:
-    """Blocking (network call on first use / after ~1h expiry) — always run via asyncio.to_thread.
-
-    Same double-checked locking as _load_stt_credentials: without the lock,
-    N concurrent turns hitting an expired token each independently call
-    refresh() (reproduced: 8 concurrent calls -> 8 refreshes instead of 1).
+    LINEAR16 인코딩은 raw PCM만 받음 — WAV 헤더를 포함해 보내면 헤더 바이트가
+    오디오 데이터로 해석돼 빈 결과가 반환됨. 헤더를 파싱해 제거 후 전달해야 함.
     """
-    creds, _ = _load_stt_credentials()
-    if not creds.valid:
-        with _stt_credentials_lock:
-            if not creds.valid:
-                creds.refresh(_TimedAuthRequest())
-    return creds.token
-
-
-async def _call_google_stt(audio_bytes: bytes) -> tuple[str, float]:
-    """Google Cloud Speech-to-Text v2 (Chirp 2) → (transcript, confidence).
-
-    autoDecodingConfig reads the container format (WAV/FLAC/OGG/...) from the
-    file itself, so unlike v1 there is no manual WAV-header parsing or
-    content-type-to-encoding guessing needed.
-    """
-    if not GOOGLE_STT_SA_JSON:
-        raise RuntimeError("GOOGLE_STT_SA_JSON not configured")
-    token = await asyncio.to_thread(_stt_access_token)
-    _, project_id = _load_stt_credentials()
-    url = (
-        f"https://{GOOGLE_STT_REGION}-speech.googleapis.com/v2/projects/"
-        f"{project_id}/locations/{GOOGLE_STT_REGION}/recognizers/_:recognize"
-    )
-    resp = await app.state.http_client.post(
-        url,
-        headers={"Authorization": f"Bearer {token}"},
-        json={
-            "config": {
-                "autoDecodingConfig": {},
-                "languageCodes": ["en-US"],
-                "model": "chirp_2",
-            },
-            "content": base64.b64encode(audio_bytes).decode(),
-        },
-        timeout=30.0,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Google STT error {resp.status_code}: {resp.text[:300]}")
-    results = resp.json().get("results", [])
-    if not results:
-        return "", 0.0
-    alt = results[0]["alternatives"][0]
-    return alt.get("transcript", "").strip(), alt.get("confidence", 1.0)
+    if len(audio_bytes) < 44:
+        return None
+    if audio_bytes[:4] != b"RIFF" or audio_bytes[8:12] != b"WAVE":
+        return None
+    num_channels = int.from_bytes(audio_bytes[22:24], "little")
+    sample_rate = int.from_bytes(audio_bytes[24:28], "little")
+    # Walk RIFF chunks to find 'data'
+    offset = 12
+    while offset + 8 <= len(audio_bytes):
+        chunk_id = audio_bytes[offset : offset + 4]
+        chunk_size = int.from_bytes(audio_bytes[offset + 4 : offset + 8], "little")
+        if chunk_id == b"data":
+            return audio_bytes[offset + 8 : offset + 8 + chunk_size], sample_rate, num_channels
+        offset += 8 + chunk_size
+    # Fallback: assume standard 44-byte header
+    return audio_bytes[44:], sample_rate, num_channels
 
 
 @app.post("/api/stt")
 async def stt(audio: UploadFile = File(...)):
     """
-    오디오 파일 → 텍스트 변환 (Google Cloud Speech-to-Text v2, Chirp 2)
+    오디오 파일 → 텍스트 변환 (Google Cloud Speech-to-Text v1)
 
     - FE: MediaRecorder로 녹음한 webm/opus 파일을 multipart/form-data로 전송
     - 응답: { transcript, confidence }
     - 제한: 동기 인식은 최대 60초. 그 이상은 longrunningrecognize 사용 필요.
     """
+    if not GOOGLE_CLOUD_API_KEY:
+        raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
+
     audio_bytes = await audio.read()
+
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="Empty audio file")
-    try:
-        transcript, confidence = await _call_google_stt(audio_bytes)
-    except Exception as e:
-        logging.error(f"Google STT failed: size={len(audio_bytes)}, error={e}")
-        raise HTTPException(status_code=502, detail=f"Google STT error: {e}")
-    return {"transcript": transcript, "confidence": confidence}
+
+    # WAV 감지: RIFF 매직 바이트로 판별 (Content-Type보다 신뢰도 높음)
+    wav_parsed = _parse_wav(audio_bytes)
+    if wav_parsed:
+        pcm_bytes, sample_rate, num_channels = wav_parsed
+        encoding = "LINEAR16"
+        audio_bytes = pcm_bytes  # WAV 헤더 제거 — raw PCM만 Google STT에 전달
+        logging.info(
+            f"STT WAV detected: sample_rate={sample_rate}, channels={num_channels}, "
+            f"pcm_size={len(audio_bytes)} bytes"
+        )
+    else:
+        encoding = _detect_encoding(audio.content_type or "")
+        sample_rate = None
+        num_channels = None
+        logging.info(
+            f"STT request: content_type={audio.content_type!r}, "
+            f"size={len(audio_bytes)} bytes, encoding={encoding}"
+        )
+
+    # latest_short is optimized for <2s voice commands and returns empty for longer speech.
+    # Use latest_long for WAV/LINEAR16 (browser recordings are typically 3-30s).
+    model = "latest_long" if encoding == "LINEAR16" else "latest_short"
+    config: dict = {
+        "encoding": encoding,
+        "languageCode": "en-US",
+        "model": model,
+        "enableAutomaticPunctuation": False,
+    }
+    if encoding == "LINEAR16" and sample_rate:
+        config["sampleRateHertz"] = sample_rate
+    if encoding == "WEBM_OPUS":
+        config["sampleRateHertz"] = 48000
+    if num_channels and num_channels > 1:
+        config["audioChannelCount"] = num_channels
+
+    payload = {
+        "config": config,
+        "audio": {"content": base64.b64encode(audio_bytes).decode()},
+    }
+
+    resp = await app.state.http_client.post(
+        f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_CLOUD_API_KEY}",
+        json=payload,
+        timeout=30.0,
+    )
+
+    if resp.status_code != 200:
+        logging.error(
+            f"Google STT failed: status={resp.status_code}, "
+            f"content_type={audio.content_type!r}, size={len(audio_bytes)}, "
+            f"encoding={encoding}, google_response={resp.text[:500]}"
+        )
+        raise HTTPException(status_code=502, detail=f"Google STT error: {resp.text}")
+
+    results = resp.json().get("results", [])
+    if not results:
+        return {"transcript": "", "confidence": 0.0}
+
+    alt = results[0].get("alternatives", [{}])[0]
+    return {
+        "transcript": alt.get("transcript", "").strip(),
+        "confidence": alt.get("confidence", 1.0),
+    }
 
 
 # ── TTS — Google Cloud Text-to-Speech ────────────────────────────────────────
@@ -1344,10 +1346,54 @@ async def update_profile(
 # ── Conversations & Turns — 3주차 음성 대화 (sessions/messages 재사용) ────────
 #
 # 경계: STT/Gemini/TTS 파이프라인 자체는 AI 영역. 여기서는 그 어댑터를 "호출"만 하고
-# (_call_gemini_chat / _call_google_tts / _call_google_stt),
+# (기존 _call_gemini_chat / _call_google_tts, 신규 _stt_from_bytes),
 # 백엔드는 conversation/turn 저장 + 소유권 + 실패/완료 구분 + 중복방지(dedup)만 담당한다.
 
 
+async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, float]:
+    """
+    오디오 bytes → (transcript, confidence). turn 처리 전용 STT 어댑터 호출부.
+    무음/인식실패 → ("", 0.0). Google API 비-200 → RuntimeError.
+    (기존 /api/stt 는 건드리지 않고, turn 용으로 동일 파이프라인을 별도 호출한다.)
+    """
+    wav_parsed = _parse_wav(audio_bytes)
+    if wav_parsed:
+        pcm_bytes, sample_rate, num_channels = wav_parsed
+        encoding = "LINEAR16"
+        audio_bytes = pcm_bytes
+    else:
+        encoding = _detect_encoding(content_type or "")
+        sample_rate = None
+        num_channels = None
+
+    model = "latest_long" if encoding == "LINEAR16" else "latest_short"
+    config: dict = {
+        "encoding": encoding,
+        "languageCode": "en-US",
+        "model": model,
+        "enableAutomaticPunctuation": False,
+    }
+    if encoding == "LINEAR16" and sample_rate:
+        config["sampleRateHertz"] = sample_rate
+    if encoding == "WEBM_OPUS":
+        config["sampleRateHertz"] = 48000
+    if num_channels and num_channels > 1:
+        config["audioChannelCount"] = num_channels
+
+    payload = {"config": config, "audio": {"content": base64.b64encode(audio_bytes).decode()}}
+    resp = await app.state.http_client.post(
+        f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_CLOUD_API_KEY}",
+        json=payload,
+        timeout=30.0,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Google STT error {resp.status_code}: {resp.text[:300]}")
+
+    results = resp.json().get("results", [])
+    if not results:
+        return "", 0.0
+    alt = results[0].get("alternatives", [{}])[0]
+    return alt.get("transcript", "").strip(), alt.get("confidence", 1.0)
 
 
 _INITIAL_AXES = {"Formality": 50, "Energy": 50, "Intimacy": 50, "Humor": 50, "Curiosity": 50}
@@ -1629,7 +1675,7 @@ async def create_turn(
     - 중복방지: 같은 conversation·같은 Idempotency-Key 재시도는 외부 재호출 없이 저장된 turn 재반환.
     - 관측성: STT/Gemini/TTS/save 단계별 latency 를 측정해 로그 + /api/metrics 에 노출.
     """
-    if not GOOGLE_STT_SA_JSON or not GOOGLE_CLOUD_API_KEY or not GOOGLE_AI_API_KEY:
+    if not GOOGLE_CLOUD_API_KEY or not GOOGLE_AI_API_KEY:
         raise AppError(503, "service_unavailable", "Speech/AI provider not configured")
 
     turn_t0 = time.perf_counter()
@@ -1673,7 +1719,7 @@ async def create_turn(
     # 4. STT (실패는 저장하지 않고 명시적 에러 + quota 롤백) — latency 측정
     stt_t0 = time.perf_counter()
     try:
-        transcript, _conf = await _call_google_stt(audio_bytes)
+        transcript, _conf = await _stt_from_bytes(audio_bytes, audio.content_type or "")
     except Exception as e:
         logging.warning(f"turn STT failed: {e}")
         _release_turn(sb, user_id)
