@@ -37,6 +37,7 @@ if BACKEND_DIR not in sys.path:
 
 from ai.analyzer import analyze_utterance
 from ai.matrix_engine import apply_ema, compute_character, describe_character
+from ai.opener import persona_prompt
 from ai.reply_shaping import shape_reply
 from lib import billing, kakaopay
 
@@ -819,10 +820,12 @@ _LEVEL_GUIDE = {
 }
 
 
-def _build_chat_system_prompt(character_name: str, level: str) -> str:
+def _build_chat_system_prompt(character_name: str, level: str, axes: Dict[str, int]) -> str:
     level_guide = _LEVEL_GUIDE.get(level, _LEVEL_GUIDE["B1"])
     return f"""\
-You are {character_name}, a warm and playful English conversation friend.
+You are {character_name}, the user's English conversation friend.
+Your personality right now (show it in every reply; the level and length rules win if they conflict):
+{persona_prompt(axes)}
 {level_guide}
 Keep your reply to ONE short sentence (about 10-15 words). Never write two sentences.
 
@@ -852,9 +855,10 @@ async def _call_gemini_chat(
     history: list,
     character_name: str,
     level: str,
+    axes: Dict[str, int],
 ) -> str:
-    """Gemini 2.5 Flash로 Pally 대화 응답 생성"""
-    system_prompt = _build_chat_system_prompt(character_name, level)
+    """Gemini 2.5 Flash로 Pally 대화 응답 생성 (axes = 이번 턴 EMA 축 → 성격 반영)"""
+    system_prompt = _build_chat_system_prompt(character_name, level, axes)
 
     contents = []
     for msg in (history or [])[-10:]:
@@ -1008,7 +1012,7 @@ async def chat(req: ChatRequest):
 
     # 5. Gemini 대화 응답
     try:
-        reply = await _call_gemini_chat(req.utterance, history, character_name, level)
+        reply = await _call_gemini_chat(req.utterance, history, character_name, level, smoothed_axes)
     except Exception as e:
         logging.warning(f"Gemini chat fallback: {e}")
         reply = "I see! Tell me more."
@@ -1756,7 +1760,7 @@ async def create_turn(
     # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패) — latency 측정
     gemini_t0 = time.perf_counter()
     try:
-        reply = await _call_gemini_chat(transcript, history, session["character_name"], session["level"])
+        reply = await _call_gemini_chat(transcript, history, session["character_name"], session["level"], smoothed)
     except Exception as e:
         logging.warning(f"turn Gemini failed: {e}")
         _release_turn(sb, user_id)
