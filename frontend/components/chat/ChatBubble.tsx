@@ -33,7 +33,6 @@ export interface ChatBubbleProps {
   expanded: boolean;
   thinking?: boolean;
   listening?: boolean;
-  pendingUserTranscript?: string | null;
   onToggleExpand: () => void;
 }
 
@@ -84,18 +83,16 @@ export function ChatBubble({
   expanded,
   thinking = false,
   listening = false,
-  pendingUserTranscript = null,
   onToggleExpand,
 }: ChatBubbleProps) {
   if (expanded) {
-    return <LongBubble messages={messages} onCollapse={onToggleExpand} pendingUserTranscript={pendingUserTranscript} thinking={thinking} />;
+    return <LongBubble messages={messages} onCollapse={onToggleExpand} thinking={thinking} />;
   }
   return (
     <ShortBubble
       messages={messages}
       thinking={thinking}
       listening={listening}
-      pendingUserTranscript={pendingUserTranscript}
       onExpand={onToggleExpand}
     />
   );
@@ -105,13 +102,11 @@ function ShortBubble({
   messages,
   thinking,
   listening,
-  pendingUserTranscript,
   onExpand,
 }: {
   messages: readonly Message[];
   thinking: boolean;
   listening: boolean;
-  pendingUserTranscript: string | null;
   onExpand: () => void;
 }) {
   const lastPally = messages.findLast?.((m) => m.role === 'pally');
@@ -159,11 +154,8 @@ function ShortBubble({
             <MessageRow speaker="pally" transcript="" state="listening" />
           </>
         ) : thinking ? (
-          // Show only the current recording preview so a previous utterance cannot flash here.
-          <>
-            {pendingUserTranscript && <MessageRow speaker="you" transcript={pendingUserTranscript} compact />}
-            <MessageRow speaker="pally" transcript="" state="thinking" />
-          </>
+          // Show only the thinking row so a previous utterance cannot flash here.
+          <MessageRow speaker="pally" transcript="" state="thinking" />
         ) : (
           // 대화중 / idle: 마지막 유저 + 마지막 Pally
           <>
@@ -190,12 +182,10 @@ function ShortBubble({
 function LongBubble({
   messages,
   thinking,
-  pendingUserTranscript,
   onCollapse,
 }: {
   messages: readonly Message[];
   thinking: boolean;
-  pendingUserTranscript: string | null;
   onCollapse: () => void;
 }) {
   const dateSource = messages.length > 0 ? messages[0].createdAt : new Date().toISOString();
@@ -225,13 +215,7 @@ function LongBubble({
             transcript={m.transcript}
           />
         ))}
-        {/* Append the current utterance preview before the pending response. */}
-        {thinking && (
-          <>
-            {pendingUserTranscript && <MessageRow speaker="you" transcript={pendingUserTranscript} />}
-            <MessageRow speaker="pally" transcript="" state="thinking" />
-          </>
-        )}
+        {thinking && <MessageRow speaker="pally" transcript="" state="thinking" />}
       </div>
 
       {/* Chevron expand-up at right=22, top=651 */}
