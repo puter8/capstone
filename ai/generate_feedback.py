@@ -26,9 +26,38 @@ import json
 import logging
 import os
 import re
-from typing import Dict, List, Tuple
+import threading
+from typing import Dict, List, Optional, Tuple
 
 import httpx
+
+# 매 호출마다 httpx.Client 를 새로 만들면 턴마다 TCP+TLS 핸드셰이크를 다시 한다.
+# 실측(각 6회, 같은 발화): 새 연결 1589ms vs 연결 재사용 919ms — 턴당 약 0.65초 손해.
+# backend 의 STT/Gemini 는 이미 공용 클라이언트를 재사용하므로 피드백도 맞춘다.
+# generate_feedback 은 백엔드에서 asyncio.to_thread 로 호출되어 여러 스레드가
+# 함께 쓰므로, 스레드 안전한 httpx.Client 하나를 모듈 수준에서 공유한다.
+_CLIENT_TIMEOUT = 10.0
+_client: Optional[httpx.Client] = None
+_client_lock = threading.Lock()
+
+
+def _get_client() -> httpx.Client:
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = httpx.Client(timeout=_CLIENT_TIMEOUT)
+    return _client
+
+
+def _reset_client() -> None:
+    """끊긴 연결을 물고 있는 클라이언트를 버린다. 다음 호출에서 새로 만든다."""
+    global _client
+    with _client_lock:
+        stale, _client = _client, None
+    if stale is not None:
+        stale.close()
+
 
 _FEEDBACK_SYSTEM_PROMPT = '''\
 You are Pally, a friendly English conversation tutor.
@@ -131,8 +160,13 @@ def _call_gemini_feedback(utterance: str, pally_reply: str) -> List[Dict]:
         "gemini-2.5-flash-lite:generateContent?key=" + api_key
     )
 
-    with httpx.Client(timeout=10.0) as client:
-        resp = client.post(url, json=payload)
+    try:
+        resp = _get_client().post(url, json=payload)
+    except httpx.TransportError:
+        # 재사용하던 연결이 끊긴 경우(서버의 HTTP/2 GOAWAY 등). 요청이 전송되지 않았고
+        # 생성 호출이라 부작용도 없으므로, 클라이언트를 버리고 한 번만 다시 보낸다.
+        _reset_client()
+        resp = _get_client().post(url, json=payload)
     if resp.status_code != 200:
         raise RuntimeError(f'Gemini error {resp.status_code}: {resp.text}')
 
