@@ -21,11 +21,23 @@ def test_review_records_correction_actually_spoken(monkeypatch):
     ("she want", "he wants", "Oh, she wants cookies?"),
 ])
 def test_ungrounded_correction_is_not_saved(monkeypatch, original, corrected, reply):
+    # Dropped, not treated as a failure: the model ran fine, it just proposed
+    # something Pally didn't actually say. That is a normal "nothing to show".
     monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(feedback_module, "_call_gemini_feedback", lambda *args: [_item(original, corrected)])
     items, failed = generate_feedback("she want cookies", reply, "B1")
     assert items == []
-    assert failed is True
+    assert failed is False
+
+
+def test_one_ungrounded_item_does_not_discard_a_grounded_one(monkeypatch):
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-key")
+    good = _item("she want", "she wants")
+    bad = _item("he want", "she wants")  # "he want" never appears in the utterance
+    monkeypatch.setattr(feedback_module, "_call_gemini_feedback", lambda *args: [bad, good])
+    items, failed = generate_feedback("she want cookies", "Oh, she wants cookies? What kind?", "B1")
+    assert items == [good]
+    assert failed is False
 
 
 def test_punctuation_only_change_is_not_a_review_item(monkeypatch):
