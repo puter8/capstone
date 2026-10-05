@@ -215,17 +215,27 @@ def _contains_span(source: list[str], span: list[str]) -> bool:
 
 
 def _ground_feedback(items: List[Dict], utterance: str, reply: str) -> List[Dict]:
+    """Keep only items that are actually grounded; drop the rest.
+
+    One hallucinated/malformed item used to discard the whole batch (raise ->
+    caller marks the turn failed=True), throwing away other items that were
+    genuinely grounded. Skipping bad items individually matches the module's
+    documented contract: an empty result after filtering is a normal "nothing
+    to correct", not a failure.
+    """
     user_tokens = _feedback_tokens(utterance)
     reply_tokens = _feedback_tokens(reply)
     grounded = []
     for item in items:
         if not all(isinstance(item.get(key), str) and item[key].strip()
                    for key in ("original", "corrected", "explanation_ko")):
-            raise ValueError("Feedback contains invalid fields")
+            logging.warning("Feedback item skipped: missing/invalid fields")
+            continue
         original = _feedback_tokens(item["original"])
         corrected = _feedback_tokens(item["corrected"])
         if not _contains_span(user_tokens, original) or not _contains_span(reply_tokens, corrected):
-            raise ValueError("Feedback correction is not grounded in the conversation")
+            logging.warning("Feedback item skipped: not grounded in the conversation")
+            continue
         if original != corrected:
             grounded.append(item)
     return grounded
