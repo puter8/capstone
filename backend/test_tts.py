@@ -149,9 +149,8 @@ def test_turn_waits_for_feedback_and_saves_the_same_card_for_history(monkeypatch
     monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
-    monkeypatch.setattr(main, "GOOGLE_STT_SA_JSON", '{"project_id": "test-project"}')
     monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Chirp3-HD-Leda")
-    monkeypatch.setattr(main, "_call_google_stt", AsyncMock(return_value=("she want cookies", 1.0)))
+    monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("she want cookies", 1.0)))
     monkeypatch.setattr(main, "_call_gemini_chat", AsyncMock(return_value=reply))
 
     async def scenario():
