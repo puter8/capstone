@@ -1,5 +1,7 @@
 """STT v2 (Chirp 2) contract, auth caching, and error-handling regression tests."""
+import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -9,12 +11,15 @@ import main
 
 
 class _FakeCredentials:
-    def __init__(self):
+    def __init__(self, refresh_delay=0.0):
         self.valid = False
         self.token = None
         self.refresh_calls = 0
+        self._refresh_delay = refresh_delay
 
     def refresh(self, _request):
+        if self._refresh_delay:
+            time.sleep(self._refresh_delay)
         self.refresh_calls += 1
         self.valid = True
         self.token = f"fake-token-{self.refresh_calls}"
@@ -29,8 +34,8 @@ def _reset_stt_singleton(monkeypatch):
     monkeypatch.setattr(main, "GOOGLE_STT_REGION", "us-central1")
 
 
-def _install_fake_credentials(monkeypatch):
-    fake = _FakeCredentials()
+def _install_fake_credentials(monkeypatch, refresh_delay=0.0):
+    fake = _FakeCredentials(refresh_delay=refresh_delay)
     monkeypatch.setattr(
         main.gcp_service_account.Credentials,
         "from_service_account_info",
@@ -96,6 +101,36 @@ def test_token_is_cached_across_calls_until_invalid(monkeypatch):
 
     # valid stays True after the first refresh, so the second call must not refresh again.
     assert fake.refresh_calls == 1
+
+
+def test_concurrent_calls_refresh_the_token_once(monkeypatch):
+    # Without the lock, N concurrent turns hitting an expired token each see
+    # creds.valid == False and independently call refresh(). The delay opens
+    # the race window; real network latency does the same thing in production.
+    fake = _install_fake_credentials(monkeypatch, refresh_delay=0.05)
+
+    async def run():
+        return await asyncio.gather(*(asyncio.to_thread(main._stt_access_token) for _ in range(8)))
+
+    tokens = asyncio.run(run())
+
+    assert fake.refresh_calls == 1
+    assert len(set(tokens)) == 1
+
+
+def test_timed_auth_request_bounds_the_refresh_timeout(monkeypatch):
+    captured = {}
+
+    def fake_call(self, *args, **kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(main.gcp_auth_transport.Request, "__call__", fake_call)
+
+    result = main._TimedAuthRequest()("https://example.com/token")
+
+    assert result == "ok"
+    assert captured["timeout"] == main._STT_TOKEN_REFRESH_TIMEOUT
 
 
 def test_empty_results_returns_empty_transcript(monkeypatch):
