@@ -199,6 +199,58 @@ def test_assign_conversation_title_skips_conversations_without_user_turns(monkey
     generate.assert_not_called()
 
 
+def test_delete_conversation_history_resets_pally_but_keeps_usage(monkeypatch):
+    """대화 기록 삭제는 Pally 를 초기화하되 사용량·연속 학습일·업적은 남긴다.
+
+    usage_daily 를 함께 지우면 기록 삭제로 무료 한도를 초기화할 수 있어 삭제 대상이 아니다.
+    """
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    touched = []
+
+    def table(name):
+        touched.append(name)
+        query = Mock()
+        for method in ("delete", "update", "eq"):
+            getattr(query, method).return_value = query
+        query.execute.return_value = SimpleNamespace(data=[{"id": "conversation-1"}])
+        tables[name] = query
+        return query
+
+    tables = {}
+    sb = Mock()
+    sb.table.side_effect = table
+    sb.auth.get_user.return_value = SimpleNamespace(user=SimpleNamespace(id="caller-id"))
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_SUPABASE_ENABLED", True)
+
+    response = TestClient(main.app).delete("/api/conversations", headers={"Authorization": "Bearer test"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "deleted_conversations": 1}
+    assert set(touched) == {"sessions", "profiles"}
+    for kept in ("usage_daily", "streak_days", "activity_events", "daily_task_snapshots", "subscriptions"):
+        assert kept not in touched
+    tables["sessions"].delete.assert_called_once_with()
+    tables["profiles"].update.assert_called_once()
+    assert tables["profiles"].update.call_args[0][0]["traits"] == main._DEFAULT_TRAITS
+
+
+def test_delete_conversation_history_requires_authentication():
+    from fastapi.testclient import TestClient
+
+    assert TestClient(main.app).delete("/api/conversations").status_code == 401
+
+
+def test_default_traits_constant_matches_migration_default():
+    """코드의 복원값과 DB 기본값(마이그레이션)이 같아야 한다."""
+    frontend_default_axes = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+
+    assert main._DEFAULT_TRAITS == main._axes_to_traits(frontend_default_axes)
+
+
 def test_app_imports():
     assert main.app is not None
 

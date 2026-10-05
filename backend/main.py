@@ -2030,6 +2030,12 @@ _TRAIT_TIERS = (
 )
 
 
+# 신규 가입자 기본 태그이자 데이터 삭제 후 되돌릴 값. 프론트가 신규 사용자에게
+# 보여주는 기본 Pally(DEFAULT_AXES)에 위 구간 규칙을 적용한 결과와 같아야 한다
+# (supabase/migrations/20260922000000_profiles_default_traits.sql 의 기본값).
+_DEFAULT_TRAITS = ["acquaint", "serious", "calm", "indifferent", "casual"]
+
+
 def _axis_tier(value: float) -> int:
     if value <= 33:
         return 0
@@ -2068,6 +2074,26 @@ def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
         if session_id in latest_by_session:
             return latest_by_session[session_id]
     return None
+
+
+@app.delete("/api/conversations")
+async def delete_conversation_history(user_id: str = Depends(get_current_user_id)):
+    """본인 대화 기록 전체 삭제 + Pally 초기화 (마이페이지 '데이터 삭제').
+
+    되돌릴 수 없다. 확인 절차는 클라이언트가 담당한다.
+    - 지움: sessions (messages 는 FK ON DELETE CASCADE 로 함께 삭제), 성향 태그는 기본값 복원.
+      대화가 사라지면 홈 Pally 도 복원할 대화가 없어 기본 모습으로 돌아간다.
+    - 유지: usage_daily, streak_days, activity_events, daily_task_snapshots, subscriptions.
+      특히 usage_daily 를 지우면 대화 기록 삭제로 무료 한도를 초기화할 수 있어 지우지 않는다.
+    """
+    sb = get_supabase()
+    try:
+        deleted = (sb.table("sessions").delete().eq("user_id", user_id).execute()).data or []
+        sb.table("profiles").update({"traits": _DEFAULT_TRAITS, "updated_at": _now_iso()}).eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"delete_conversation_history failed: {e}")
+        raise AppError(503, "persistence_failed", "대화 기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.")
+    return {"status": "deleted", "deleted_conversations": len(deleted)}
 
 
 @app.get("/api/conversations")
