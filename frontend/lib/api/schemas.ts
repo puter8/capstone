@@ -19,6 +19,7 @@ const feedbackSchema = z.object({
   original: z.string(),
   corrected: z.string(),
   explanation_ko: z.string(),
+  replacement: z.string().optional(),
 });
 
 const warningSchema = z.object({

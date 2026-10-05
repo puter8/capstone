@@ -96,6 +96,9 @@ class FeedbackItem(BaseModel):
     original: str = Field(min_length=1)
     corrected: str = Field(min_length=1)
     explanation_ko: str = Field(min_length=1)
+    # `original` rewritten in the user's own words so it can replace `original`
+    # inside the user's sentence. Absent when it could not be grounded.
+    replacement: str | None = None
 
     @field_validator("original", "corrected", "explanation_ko")
     @classmethod

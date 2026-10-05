@@ -47,6 +47,8 @@ export interface FeedbackItem {
   original: string;
   corrected: string;
   explanation_ko: string;
+  /** original rewritten in the user's own words; absent on older or ungrounded items. */
+  replacement?: string;
 }
 
 export type ApiWarningCode = "tts_failed" | "feedback_failed" | "traits_update_failed";
