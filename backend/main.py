@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+import threading
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import hashlib
@@ -460,27 +461,55 @@ if _DEBUG_ENDPOINTS_ENABLED:
 
 _stt_credentials: gcp_service_account.Credentials | None = None
 _stt_project_id: str | None = None
+_stt_credentials_lock = threading.Lock()
+_STT_TOKEN_REFRESH_TIMEOUT = 10.0
+
+
+class _TimedAuthRequest(gcp_auth_transport.Request):
+    """google-auth's Request defaults to a 120s timeout, well past the 30s
+    budget the STT call itself is given. Credentials.refresh() never passes
+    a timeout through, so the only way to bound it is to override the default
+    here."""
+    def __call__(self, *args, **kwargs):
+        kwargs.setdefault("timeout", _STT_TOKEN_REFRESH_TIMEOUT)
+        return super().__call__(*args, **kwargs)
 
 
 def _load_stt_credentials() -> tuple[gcp_service_account.Credentials, str]:
     """Parse the service-account JSON once and cache it (module-level, like a
     normal client singleton). The project id lives inside the key file, so
-    there is no separate project-id env var to keep in sync."""
+    there is no separate project-id env var to keep in sync.
+
+    Double-checked locking: concurrent turns all call this via asyncio.to_thread
+    (real worker threads, not coroutines), so an unguarded check-then-create
+    would race. The lock only matters for the first call; every call after
+    that returns from the fast path without blocking on it.
+    """
     global _stt_credentials, _stt_project_id
     if _stt_credentials is None:
-        info = json.loads(GOOGLE_STT_SA_JSON)
-        _stt_credentials = gcp_service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
-        _stt_project_id = info["project_id"]
+        with _stt_credentials_lock:
+            if _stt_credentials is None:
+                info = json.loads(GOOGLE_STT_SA_JSON)
+                creds = gcp_service_account.Credentials.from_service_account_info(
+                    info, scopes=["https://www.googleapis.com/auth/cloud-platform"],
+                )
+                _stt_project_id = info["project_id"]
+                _stt_credentials = creds
     return _stt_credentials, _stt_project_id
 
 
 def _stt_access_token() -> str:
-    """Blocking (network call on first use / after ~1h expiry) — always run via asyncio.to_thread."""
+    """Blocking (network call on first use / after ~1h expiry) — always run via asyncio.to_thread.
+
+    Same double-checked locking as _load_stt_credentials: without the lock,
+    N concurrent turns hitting an expired token each independently call
+    refresh() (reproduced: 8 concurrent calls -> 8 refreshes instead of 1).
+    """
     creds, _ = _load_stt_credentials()
     if not creds.valid:
-        creds.refresh(gcp_auth_transport.Request())
+        with _stt_credentials_lock:
+            if not creds.valid:
+                creds.refresh(_TimedAuthRequest())
     return creds.token
 
 
