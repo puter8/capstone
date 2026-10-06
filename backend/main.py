@@ -38,7 +38,7 @@ if BACKEND_DIR not in sys.path:
 from ai.analyzer import analyze_utterance
 from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
 from ai.matrix_engine import apply_ema, compute_character, describe_character
-from ai.opener import persona_prompt
+from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai.reply_shaping import shape_reply
 from lib import billing, kakaopay, session_feedback
 
@@ -1456,6 +1456,135 @@ async def create_conversation(
         raise AppError(503, "persistence_failed", "Failed to create conversation")
 
     return {"conversation": _conversation_to_response(res.data[0])}
+
+
+# ── Opener — Pally 가 먼저 거는 말 ────────────────────────────────────────────
+
+# ai.opener 의 httpx timeout 은 단계별(connect/read)이라 전체 상한이 아니다.
+# 실호출 측정: 성공 1회 p50 1.7s / max 3.3s (매 호출 TLS 새로 맺음) → 전체 상한을
+# 따로 걸고, 모델이 규칙을 깨는 경우가 있어 1회만 재시도한다.
+_OPENER_CALL_TIMEOUT_S = 2.5
+_OPENER_TOTAL_TIMEOUT_S = 5.0
+_OPENER_RECENT_SESSIONS = 5
+_OPENER_RECENT_TEXTS = 30
+
+
+def _recent_session_texts(sb, user_id: str, exclude_id: str) -> list:
+    """오프너가 피할 "최근에 한 얘기"의 근거. 최근 대화 텍스트, 최신순.
+
+    Gemini 로는 보내지 않는다 (ai.opener 안에서 키워드 매칭에만 쓴다).
+    """
+    try:
+        sessions = (sb.table("sessions").select("id").eq("user_id", user_id)
+                    .neq("id", exclude_id).order("created_at", desc=True)
+                    .limit(_OPENER_RECENT_SESSIONS).execute())
+        ids = [row["id"] for row in (sessions.data or [])]
+        if not ids:
+            return []
+        msgs = (sb.table("messages").select("transcript").in_("session_id", ids)
+                .order("created_at", desc=True).limit(_OPENER_RECENT_TEXTS).execute())
+    except Exception as e:
+        logging.error(f"opener recent texts read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read recent conversations")
+    return [m["transcript"] for m in (msgs.data or []) if m.get("transcript")]
+
+
+async def _generate_opener_text(axes: Dict[str, int], level: str, recent_texts: list) -> str:
+    """ai.opener 호출. 동기 함수라 to_thread 로 offload, 실패 시 1회 재시도.
+
+    폴백 문구는 두지 않는다 (§6 #3). 두 번 다 실패하면 503 — Pally 가 아무 말도
+    하지 않은 채 대화가 시작되는 것보다 FE 가 재시도하게 하는 쪽이 맞다.
+    로그에는 reason 과 예외 타입만 남긴다: httpx 에러 텍스트에는 키가 담긴 URL 이
+    섞일 수 있다.
+    """
+    last: Optional[BaseException] = None
+    for attempt in (1, 2):
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    generate_opener, axes, level, recent_texts, _OPENER_CALL_TIMEOUT_S
+                ),
+                timeout=_OPENER_TOTAL_TIMEOUT_S,
+            )
+        except OpenerRejected as exc:
+            last = exc
+            logging.warning("opener attempt %d rejected: %s", attempt, exc.reason)
+        except Exception as exc:
+            last = exc
+            logging.warning("opener attempt %d failed: %s", attempt, type(exc).__name__)
+    raise AppError(
+        503, "opener_failed", "Pally가 먼저 말을 걸지 못했어요. 다시 시도해 주세요."
+    ) from last
+
+
+@app.post("/api/conversations/{conversation_id}/opener", status_code=201)
+async def create_conversation_opener(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """대화의 첫 메시지로 오프너를 만들어 저장하고 음성까지 돌려준다.
+
+    - 5축 출발점은 턴과 같다: _carried_over_axes (마지막으로 끝낸 대화의 최종 5축).
+      완료한 대화가 없으면 첫 Pally 와 같은 _INITIAL_AXES.
+    - 다시 호출하면 저장된 오프너를 그대로 쓴다 (모델을 다시 부르지 않는다).
+      이미 사용자 발화가 있으면 오프너를 뒤늦게 끼워 넣지 않고 409.
+    - 사용량(quota)은 차감하지 않는다. 사용자 턴이 아니다.
+    - TTS 실패는 턴과 같게 다룬다: audio=null + tts_failed 경고 (텍스트로 진행 가능).
+    """
+    sb = get_supabase()
+    session = _owned_session(sb, conversation_id, user_id)
+    if session.get("ended_at"):
+        raise AppError(409, "conversation_closed", "Conversation is already closed")
+
+    # 멱등 재호출은 "아직 아무도 말하지 않은 대화"에서만 허용한다. 발화가 시작된
+    # 뒤의 호출은 FE 실수이고, 그때 저장된 오프너를 다시 읽어주면 Pally 가 대화
+    # 중간에 첫인사를 반복한다 → 재생하지 않고 409 로 드러낸다.
+    try:
+        spoke = (sb.table("messages").select("id").eq("session_id", conversation_id)
+                 .eq("role", "user").limit(1).execute())
+        first = (sb.table("messages").select("role, transcript")
+                 .eq("session_id", conversation_id)
+                 .order("created_at").limit(1).execute())
+    except Exception as e:
+        logging.error(f"opener existing read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read conversation")
+    if spoke.data:
+        raise AppError(409, "conversation_started", "Conversation already has a user turn")
+    existing = (first.data or [None])[0]
+
+    if existing:
+        text = existing["transcript"]
+    else:
+        axes = _carried_over_axes(sb, user_id) or dict(_INITIAL_AXES)
+        text = await _generate_opener_text(
+            axes, session["level"], _recent_session_texts(sb, user_id, conversation_id)
+        )
+        try:
+            sb.table("messages").insert({
+                "session_id": conversation_id,
+                "role": "pally",
+                "transcript": text,
+                "axes": None,
+                "character": compute_character(axes),
+            }).execute()
+        except Exception as e:
+            logging.error(f"opener save failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to save the opener")
+
+    audio: Optional[str] = None
+    try:
+        audio = await _call_google_tts(_strip_emoji(text))
+    except Exception as exc:
+        logging.warning("opener TTS failed (non-fatal): %s", type(exc).__name__)
+
+    warnings: list = []
+    if audio is None:
+        warnings.append({
+            "code": "tts_failed",
+            "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
+        })
+    return {"text": text, "audio": audio, "warnings": warnings}
 
 
 def _paired_reply(sb, session_id: str, user_created_at: str) -> str:
