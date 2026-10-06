@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { clearUser, invalidate, peek, read, write } from "../lib/api/query-cache";
+import { clearUser, evict, invalidate, peek, peekStale, read, write } from "../lib/api/query-cache";
 
 async function main(): Promise<void> {
   write("peek-user", "history:first", 60_000, { items: [] });
@@ -11,6 +11,31 @@ async function main(): Promise<void> {
   invalidate("peek-user", "history:");
   assert.equal(peek("peek-user", "history:first"), undefined, "conversation changes must invalidate peeked history");
   clearUser("peek-user");
+
+  write("stale-user", "usage", 60_000, { remaining: 3 });
+  invalidate("stale-user", "usage");
+  assert.equal(peek("stale-user", "usage"), undefined, "invalidated values must not count as fresh");
+  assert.deepEqual(peekStale("stale-user", "usage"), { remaining: 3 }, "invalidated values stay readable as stale");
+  write("stale-user", "profile", 0, "expired");
+  assert.equal(peekStale("stale-user", "profile"), "expired", "expired values stay readable as stale");
+  assert.equal(peekStale("other-user", "usage"), undefined, "peekStale must stay scoped to the current user");
+  let resolveRefresh!: (value: string) => void;
+  write("stale-user", "refreshing", 60_000, "old");
+  invalidate("stale-user", "refreshing");
+  const refreshing = read("stale-user", "refreshing", 60_000, () => new Promise<string>((resolve) => {
+    resolveRefresh = resolve;
+  }));
+  assert.equal(peekStale("stale-user", "refreshing"), "old", "stale value stays readable while a refresh is in flight");
+  invalidate("stale-user", "refreshing");
+  resolveRefresh("late");
+  assert.equal(await refreshing, "late");
+  assert.equal(peek("stale-user", "refreshing"), undefined, "an invalidated refresh must not mark the cache fresh");
+  assert.equal(peekStale("stale-user", "refreshing"), "old", "an invalidated refresh must not overwrite the stale value");
+  write("stale-user", "subscription", 60_000, "pro");
+  evict("stale-user", "subscription");
+  assert.equal(peekStale("stale-user", "subscription"), undefined, "evict must drop the stale value too");
+  clearUser("stale-user");
+  assert.equal(peekStale("stale-user", "usage"), undefined, "clearUser must drop stale values too");
 
   let calls = 0;
   let resolveLoader: (value: string) => void = () => {

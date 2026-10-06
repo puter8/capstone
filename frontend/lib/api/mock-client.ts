@@ -16,6 +16,8 @@ import type {
   UsageQuota,
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
+import { DEFAULT_AXES } from "@/lib/types/character";
+import type { Axes } from "@/lib/types/character";
 import {
   MOCK_CONVERSATIONS,
   MOCK_PROFILE,
@@ -184,11 +186,24 @@ export function resetMockPallyApi(): void {
   }
 }
 
+// Same rule as the backend: the last user turn of the most recently completed
+// conversation the user actually spoke in. Opener-only conversations do not count.
+function currentPallyAxes(): Axes {
+  const spoken = mockState.records
+    .flatMap((record) => {
+      const completedAt = record.conversation.completed_at;
+      const lastAxes = record.turns.filter((turn) => turn.user_transcript !== null && turn.axes).at(-1)?.axes;
+      return completedAt && lastAxes ? [{ completedAt, axes: lastAxes }] : [];
+    })
+    .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+  return clone(spoken[0]?.axes ?? DEFAULT_AXES);
+}
+
 export const mockPallyApi: PallyApi = {
   async getProfile() {
     await delay();
     ensureActiveAccount();
-    return { profile: clone(mockState.profile) };
+    return { profile: { ...clone(mockState.profile), current_axes: currentPallyAxes() } };
   },
 
   async getProfileAvatar() {
@@ -216,7 +231,7 @@ export const mockPallyApi: PallyApi = {
       onboarding_completed: true,
       updated_at: new Date().toISOString(),
     };
-    return { profile: clone(mockState.profile) };
+    return { profile: { ...clone(mockState.profile), current_axes: currentPallyAxes() } };
   },
 
   async updateProfile(input: UpdateProfileInput) {
@@ -237,7 +252,7 @@ export const mockPallyApi: PallyApi = {
       ...(input.english_level === undefined ? {} : { english_level: input.english_level }),
       updated_at: new Date().toISOString(),
     };
-    return { profile: clone(mockState.profile) };
+    return { profile: { ...clone(mockState.profile), current_axes: currentPallyAxes() } };
   },
 
   async createConversation(idempotencyKey: string) {

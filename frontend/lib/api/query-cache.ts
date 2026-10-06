@@ -24,6 +24,12 @@ export function peek<T>(userId: string, key: string): T | undefined {
   return entry && entry.expiresAt > Date.now() ? entry.value : undefined;
 }
 
+// Last known value even after it expired or was invalidated. Only for painting a
+// screen immediately while a fresh read runs; never use it as the source of truth.
+export function peekStale<T>(userId: string, key: string): T | undefined {
+  return (entries.get(scopedKey(userId, key)) as CacheEntry<T> | undefined)?.value;
+}
+
 export async function read<T>(
   userId: string,
   key: string,
@@ -72,6 +78,14 @@ export async function prefetch<T>(
   await read(userId, key, ttlMs, loader);
 }
 
+// Store a value that is already expired: peekStale returns it, read still reloads.
+export function writeStale<T>(userId: string, key: string, value: T): void {
+  const keyWithScope = scopedKey(userId, key);
+  entries.delete(keyWithScope);
+  entries.set(keyWithScope, { expiresAt: 0, value });
+  enforceLimit();
+}
+
 export function write<T>(userId: string, key: string, ttlMs: number, value: T): void {
   const keyWithScope = scopedKey(userId, key);
   entries.delete(keyWithScope);
@@ -79,7 +93,21 @@ export function write<T>(userId: string, key: string, ttlMs: number, value: T): 
   enforceLimit();
 }
 
+// Expire matching entries but keep their last value for peekStale. Replacing the
+// entry object also makes an in-flight read lose its identity check, so a stale
+// response cannot repopulate the cache.
 export function invalidate(userId: string, keyPrefix: string): void {
+  const scopedPrefix = scopedKey(userId, keyPrefix);
+  entries.forEach((entry, key) => {
+    if (!key.startsWith(scopedPrefix)) return;
+    if (entry.value === undefined) entries.delete(key);
+    else entries.set(key, { expiresAt: 0, value: entry.value });
+  });
+}
+
+// Drop matching entries entirely, stale value included. For data a later screen must
+// never paint from memory, such as usage after a plan change.
+export function evict(userId: string, keyPrefix: string): void {
   const scopedPrefix = scopedKey(userId, keyPrefix);
   entries.forEach((_entry, key) => {
     if (key.startsWith(scopedPrefix)) entries.delete(key);

@@ -30,11 +30,11 @@ interface UsePallyReturn {
   resetAxes: () => void;
 }
 
-export function usePally(): UsePallyReturn {
-  const [axes, setAxes] = useState<Axes>(DEFAULT_AXES);
+export function usePally(initialAxes: Axes = DEFAULT_AXES): UsePallyReturn {
+  const [axes, setAxes] = useState<Axes>(initialAxes);
   const [isLoading, setIsLoading] = useState(false);
   // Accumulates per-turn axes without triggering re-renders
-  const pendingAxes = useRef<Axes>(DEFAULT_AXES);
+  const pendingAxes = useRef<Axes>(initialAxes);
 
   const updateFromChatResponse = useCallback((res: Pick<ChatApiResponse, 'axes'>) => {
     pendingAxes.current = res.axes;
