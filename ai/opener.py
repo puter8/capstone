@@ -12,8 +12,7 @@ Public API:
       Raises OpenerRejected (log-safe `reason` code) when Gemini fails or the
       output breaks the opener rules, httpx errors on transport failure, and
       pydantic.ValidationError on invalid `axes`. No fallback text here: the
-      caller decides what to do on failure. Log only `reason` or the
-      exception type: httpx error text can include the keyed request URL.
+      caller decides what to do on failure. The caller owns retries.
 
 `recent_texts`: texts from the user's recent sessions (openers + user
 turns), NEWEST FIRST. Only used locally for keyword topic detection; it is
@@ -24,6 +23,7 @@ from __future__ import annotations
 import os
 import random
 import re
+import threading
 
 import httpx
 
@@ -61,6 +61,25 @@ PROMPT_WORD_MARGIN = 4
 
 MODEL = "gemini-2.5-flash-lite"
 DEFAULT_TIMEOUT_S = 2.5  # per httpx phase; caller enforces any overall deadline
+_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+
+# One client per process. A fresh client per call rebuilt its SSL context
+# (~370ms locally) and redid the TLS handshake; reuse cut p50 from ~1.4s to
+# ~0.9s, still true with 30s gaps between calls (after idle connections
+# expire). httpx.Client is safe to share across the worker threads BE runs us
+# in. It is never reset: closing it could break another thread's request.
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def _get_client() -> httpx.Client:
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = httpx.Client(timeout=DEFAULT_TIMEOUT_S)
+    return _client
+
 
 _SYSTEM_PROMPT = """\
 You are Pally, the user's English speaking buddy (a friend, NOT an assistant or teacher).
@@ -182,9 +201,8 @@ def _call_gemini(system_prompt: str, timeout: float) -> str:
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={api_key}"
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=payload)
+    # Key in a header, not the URL, so httpx error text never carries it.
+    resp = _get_client().post(_URL, headers={"x-goog-api-key": api_key}, json=payload, timeout=timeout)
     if resp.status_code != 200:
         raise OpenerRejected(f"http_{resp.status_code}")
     return _extract_text(resp.json())

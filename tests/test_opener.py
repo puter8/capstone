@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 import random
+import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import ClassVar
 
+import httpx
 import pydantic
 import pytest
 
@@ -108,3 +112,80 @@ def test_extract_text_rejects_unusable_responses(resp, reason):
     with pytest.raises(OpenerRejected) as e:
         opener._extract_text(resp)
     assert e.value.reason == reason
+
+
+class _FakeResponse:
+    def __init__(self, status_code, text="Hey! What did you eat today?"):
+        self.status_code = status_code
+        self._text = text
+
+    def json(self):
+        return {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": self._text}]}}]}
+
+
+class _FakeClient:
+    instances: ClassVar[list["_FakeClient"]] = []
+
+    def __init__(self, **kwargs):
+        time.sleep(0.01)  # widen the init race for the concurrency test
+        self.posts = []
+        self.fail_next = None
+        self.status_code = 200
+        _FakeClient.instances.append(self)
+
+    def post(self, url, headers, json, timeout):
+        self.posts.append({"url": url, "headers": headers, "timeout": timeout})
+        if self.fail_next:
+            exc, self.fail_next = self.fail_next, None
+            raise exc
+        return _FakeResponse(self.status_code)
+
+
+@pytest.fixture
+def fake_client(monkeypatch):
+    _FakeClient.instances = []
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-key")
+    monkeypatch.setattr(opener, "_client", None)
+    monkeypatch.setattr(opener.httpx, "Client", _FakeClient)
+    return _FakeClient
+
+
+def test_client_is_built_once_and_reused(fake_client):
+    opener._call_gemini("p", 1.0)
+    opener._call_gemini("p", 2.0)
+    assert len(fake_client.instances) == 1
+    posts = fake_client.instances[0].posts
+    assert [p["timeout"] for p in posts] == [1.0, 2.0]  # timeout stays per request
+
+
+def test_concurrent_first_calls_build_one_client(fake_client):
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda _: opener._call_gemini("p", 1.0), range(8)))
+    assert len(fake_client.instances) == 1
+    assert len(fake_client.instances[0].posts) == 8
+
+
+def test_api_key_goes_in_header_not_url(fake_client):
+    opener._call_gemini("p", 1.0)
+    post = fake_client.instances[0].posts[0]
+    assert post["headers"] == {"x-goog-api-key": "test-key"}
+    assert "test-key" not in post["url"] and "key=" not in post["url"]
+
+
+def test_transport_error_propagates_without_retry_and_client_stays_usable(fake_client):
+    opener._call_gemini("p", 1.0)
+    client = fake_client.instances[0]
+    client.fail_next = httpx.ConnectError("boom")
+    with pytest.raises(httpx.ConnectError):
+        opener._call_gemini("p", 1.0)
+    assert len(client.posts) == 2  # exactly one POST for the failed call
+    assert opener._call_gemini("p", 1.0) == "Hey! What did you eat today?"
+    assert len(fake_client.instances) == 1
+
+
+def test_http_error_status_is_rejected(fake_client):
+    opener._call_gemini("p", 1.0)
+    fake_client.instances[0].status_code = 503
+    with pytest.raises(OpenerRejected) as e:
+        opener._call_gemini("p", 1.0)
+    assert e.value.reason == "http_503"
