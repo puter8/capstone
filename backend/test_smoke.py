@@ -899,3 +899,10 @@ def test_profile_carries_pallys_current_look(monkeypatch):
     # 완료한 대화가 없으면 홈의 첫 Pally 와 같은 값
     monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
     assert main._profile_payload(sb, row, user)["current_axes"] == main._INITIAL_AXES
+def test_stt_keeps_every_segment_split_at_pauses():
+    # latest_long splits "Hi Pally. (pause) Yesterday I went..." into two results.
+    results = [
+        {"alternatives": [{"transcript": "hi Pali", "confidence": 0.9}]},
+        {"alternatives": [{"transcript": " yesterday I went to the park", "confidence": 0.8}]},
+    ]
+    assert main._join_stt_results(results) == ("hi Pali yesterday I went to the park", 0.8)
