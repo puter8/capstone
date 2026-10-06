@@ -28,6 +28,7 @@ export function conversationTurnsToMessages(
           role: "pally",
           transcript: turn.pally_text,
           createdAt: turn.created_at,
+          feedback: { items: turn.feedback, pending: turn.feedback_pending },
         },
         sequence: turn.sequence,
       });

@@ -49,6 +49,8 @@ export default function HomePage() {
   const pendingTurnRef = useRef<Promise<void> | null>(null);
   const closingRef = useRef(false);
   const openerRequestRef = useRef(0);
+  const pendingOpenerRef = useRef<Promise<void> | null>(null);
+  const openerKeyRef = useRef<string | null>(null);
   const conversationIdRef = useRef<string | null>(null);
   const firstUserTranscriptRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
@@ -121,6 +123,7 @@ export default function HomePage() {
 
       if (detail.conversation.status !== "active") {
         window.localStorage.removeItem(CONVERSATION_KEY);
+        router.replace("/home");
         return;
       }
 
@@ -128,6 +131,9 @@ export default function HomePage() {
       if (!active) return;
       conversationIdRef.current = conversationId;
       firstUserTranscriptRef.current = messages.find((message) => message.role === "user")?.transcript ?? null;
+      if (detail.conversation.turn_count > 0 && detail.conversation.current_axes) {
+        updateFromChatResponse({ axes: detail.conversation.current_axes });
+      }
       window.localStorage.setItem(CONVERSATION_KEY, conversationId);
       dispatch({ type: "session/load", id: conversationId, messages });
     };
@@ -255,6 +261,15 @@ export default function HomePage() {
     });
   }, [stopPlayback]);
 
+  useEffect(() => {
+    closingRef.current = false;
+    return () => {
+      closingRef.current = true;
+      openerRequestRef.current += 1;
+      stopPlayback();
+    };
+  }, [stopPlayback]);
+
   const handleProcessed = useCallback(
     async (blob: Blob) => {
       try {
@@ -280,6 +295,7 @@ export default function HomePage() {
           role: "pally",
           transcript: response.pally.text,
           createdAt: response.created_at ?? new Date().toISOString(),
+          feedback: { items: response.feedback, pending: response.feedback_pending },
         };
         setPendingUserTranscript(null);
         if (firstUserTranscriptRef.current === null) firstUserTranscriptRef.current = response.user.transcript;
@@ -395,6 +411,9 @@ export default function HomePage() {
     stopPlayback();
 
     const pendingTurn = pendingTurnRef.current;
+    // Wait for opener persistence before completing the session.
+    const pendingOpener = pendingOpenerRef.current;
+    if (pendingOpener) await pendingOpener;
     if (pendingTurn) {
       await pendingTurn;
       if (pendingTurnRef.current === pendingTurn) pendingTurnRef.current = null;
@@ -415,12 +434,14 @@ export default function HomePage() {
       if (completed && completed.warnings.length > 0) {
         setWarning(completed.warnings.map((item) => item.message).join(" "));
       }
-      revealAxes();
+      if (firstUserTranscript) revealAxes();
       setPendingUserTranscript(null);
       conversationIdRef.current = null;
       firstUserTranscriptRef.current = null;
+      openerKeyRef.current = null;
       window.localStorage.removeItem(CONVERSATION_KEY);
       dispatch({ type: "session/end" });
+      router.replace("/home");
     } catch (caught) {
       dispatch({
         type: "rec/error",
@@ -431,7 +452,7 @@ export default function HomePage() {
       closingRef.current = false;
       setIsClosing(false);
     }
-  }, [recorder, revealAxes, stopPlayback]);
+  }, [recorder, revealAxes, router, stopPlayback]);
 
   const handlePressStart = useCallback(() => {
     if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
@@ -458,46 +479,91 @@ export default function HomePage() {
     recorder.stop();
   }, [recorder, unlockAudio]);
 
-  const handleStartConversation = useCallback(async () => {
-    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
+  const handleStartConversation = useCallback(() => {
+    if (pendingOpenerRef.current || closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally || state.messages.length > 0) return;
     unlockAudio();
     const requestId = openerRequestRef.current + 1;
     openerRequestRef.current = requestId;
+    setWarning(null);
     dispatch({ type: "opener/request" });
 
-    try {
-      const opener = await requestPallyOpener();
-      if (openerRequestRef.current !== requestId || closingRef.current) return;
-      dispatch({
-        type: "opener/received",
-        pallyMsg: {
-          id: `m-${Date.now()}-opener`,
-          // No backend conversation exists until the user's first turn.
-          sessionId: conversationIdRef.current ?? "pending",
-          role: "pally",
-          transcript: opener.text,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      if (opener.audio) {
-        await playTts(opener.audio);
-      } else {
-        stopPlayback();
-        speakingTimerRef.current = window.setTimeout(() => {
-          speakingTimerRef.current = null;
-          if (!closingRef.current) dispatch({ type: "rec/speakingDone" });
-        }, 3000);
+    const pending = (async () => {
+      try {
+        const conversationId = await ensureConversation();
+        if (openerRequestRef.current !== requestId || closingRef.current) return;
+        openerKeyRef.current ??= crypto.randomUUID();
+        const opener = await requestPallyOpener(conversationId, openerKeyRef.current);
+        const userId = userIdRef.current;
+        if (userId) invalidateConversationData(userId, conversationId);
+        if (openerRequestRef.current !== requestId || closingRef.current) return;
+        setWarning(opener.warnings.length ? opener.warnings.map((warning) => warning.message).join(" ") : null);
+        dispatch({
+          type: "opener/received",
+          pallyMsg: {
+            id: `m-${Date.now()}-opener`,
+            sessionId: conversationId,
+            role: "pally",
+            transcript: opener.text,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (opener.audio) {
+          await playTts(opener.audio);
+        } else {
+          stopPlayback();
+          speakingTimerRef.current = window.setTimeout(() => {
+            speakingTimerRef.current = null;
+            if (!closingRef.current) dispatch({ type: "rec/speakingDone" });
+          }, 3000);
+        }
+      } catch (error) {
+        console.error("Pally opener request failed.", error);
+        if (openerRequestRef.current !== requestId || closingRef.current) return;
+        if (error instanceof PallyApiError && error.code === "conversation_started") {
+          try {
+            const conversationId = conversationIdRef.current;
+            if (!conversationId) throw new Error("대화를 다시 불러와 주세요.");
+            const detail = await pallyApi.getConversation(conversationId, { limit: 50 });
+            if (openerRequestRef.current !== requestId || closingRef.current) return;
+            if (detail.conversation.status !== "active") throw new PallyApiError(409, "conversation_closed", "이미 종료된 대화예요.");
+            const messages = conversationTurnsToMessages(conversationId, detail.turns);
+            firstUserTranscriptRef.current = messages.find((message) => message.role === "user")?.transcript ?? null;
+            if (detail.conversation.current_axes) updateFromChatResponse({ axes: detail.conversation.current_axes });
+            dispatch({ type: "session/load", id: conversationId, messages });
+            dispatch({ type: "rec/speakingDone" });
+            setWarning("이미 시작된 대화를 불러왔어요. 이어서 말해 주세요.");
+            return;
+          } catch (restoreError) {
+            console.error("Started conversation recovery failed", restoreError);
+            error = restoreError;
+          }
+        }
+        if (error instanceof PallyApiError && (error.code === "conversation_closed" || error.code === "not_found")) {
+          const userId = userIdRef.current;
+          if (userId) invalidateConversationData(userId, conversationIdRef.current ?? undefined);
+          conversationIdRef.current = null;
+          firstUserTranscriptRef.current = null;
+          openerKeyRef.current = null;
+          window.localStorage.removeItem(CONVERSATION_KEY);
+          dispatch({ type: "session/end" });
+          router.replace("/home");
+        }
+        dispatch({
+          type: "rec/error",
+          reason: "generic",
+          message: error instanceof PallyApiError && error.code === "conversation_closed"
+            ? "이미 종료된 대화예요. 대화 시작하기를 눌러 새로 시작해 주세요."
+            : error instanceof PallyApiError && error.code === "opener_failed"
+              ? "Pally가 먼저 말을 걸지 못했어요. 대화 시작하기를 눌러 다시 시도해 주세요."
+              : error instanceof Error ? error.message : "Pally가 말을 걸지 못했어요. 다시 시도해 주세요.",
+        });
       }
-    } catch (error) {
-      console.error("Pally opener request failed.", error);
-      if (openerRequestRef.current !== requestId || closingRef.current) return;
-      dispatch({
-        type: "rec/error",
-        reason: "generic",
-        message: error instanceof Error ? error.message : "Pally가 말을 걸지 못했어요. 다시 시도해 주세요.",
-      });
-    }
-  }, [hasRestoredPally, isRestoring, playTts, quotaExhausted, stopPlayback, unlockAudio]);
+    })();
+    pendingOpenerRef.current = pending;
+    void pending.finally(() => {
+      if (pendingOpenerRef.current === pending) pendingOpenerRef.current = null;
+    });
+  }, [ensureConversation, hasRestoredPally, isRestoring, playTts, quotaExhausted, router, state.messages.length, stopPlayback, unlockAudio, updateFromChatResponse]);
 
   const handleToggleHistory = useCallback(() => {
     if (!state.historyOpen) {
@@ -519,7 +585,7 @@ export default function HomePage() {
   const isRecording = state.rec.kind === "recording";
   const errorVisible = state.rec.kind === "error";
   const showChatBubble = (state.messages.length > 0 || isRecording || isProcessing) && !errorVisible;
-  const historyCoversScreen = state.historyOpen && !isIdle;
+  const historyCoversScreen = state.historyOpen;
   // Pally speaks first: until the opener arrives there is nothing to reply to, so hide the mic.
   const showStartScreen = state.messages.length === 0 && (isIdle || errorVisible);
 

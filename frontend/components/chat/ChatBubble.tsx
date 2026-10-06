@@ -1,6 +1,8 @@
 'use client';
 
 import type { Message } from '@/lib/types/message';
+import { InlineFeedbackPanel } from '@/components/feedback/InlineFeedbackPanel';
+import { recordFeedbackItemOpened } from '@/lib/analytics/activity-events';
 import { cn } from '@/lib/utils';
 import { MessageRow } from './MessageRow';
 import { DateDivider } from './DateDivider';
@@ -149,7 +151,7 @@ function ShortBubble({
       />
 
       {/* 메시지 영역 */}
-      <div className="absolute top-[100px] left-[16px] right-[16px] bottom-[60px] flex flex-col gap-1 overflow-y-auto">
+      <div className="absolute top-[100px] left-[16px] right-[16px] bottom-[178px] flex flex-col gap-1 overflow-y-auto">
         {listening ? (
           // 첫 발화: Listening... 단독 / 2번째~: 마지막 Pally + Listening...
           <>
@@ -169,6 +171,7 @@ function ShortBubble({
           <>
             {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
             {lastPally && <MessageRow speaker="pally" transcript={lastPally.transcript} compact />}
+            {lastPally && <MessageFeedback key={lastPally.id} message={lastPally} />}
           </>
         )}
       </div>
@@ -216,14 +219,16 @@ function LongBubble({
       />
 
       {/* 메시지 리스트 — Figma 427:2804 spec: padding 24px / 16px, gap 12px */}
-      <div className="absolute top-[56px] left-[16px] right-[16px] bottom-[80px] flex flex-col gap-3 overflow-y-auto">
+      <div className="absolute top-[72px] left-[16px] right-[16px] bottom-[100px] flex flex-col gap-3 overflow-y-auto">
         <DateDivider kind="date" label={conversationDate} />
         {messages.map((m, idx) => (
-          <MessageRow
-            key={`${m.role}-${idx}`}
-            speaker={m.role === 'pally' ? 'pally' : 'you'}
-            transcript={m.transcript}
-          />
+          <div key={`${m.role}-${idx}`}>
+            <MessageRow
+              speaker={m.role === 'pally' ? 'pally' : 'you'}
+              transcript={m.transcript}
+            />
+            {m.role === 'pally' && <MessageFeedback message={m} />}
+          </div>
         ))}
         {/* Append the current utterance preview before the pending response. */}
         {thinking && (
@@ -245,5 +250,21 @@ function LongBubble({
         <Chevron direction="up" />
       </button>
     </section>
+  );
+}
+
+function MessageFeedback({ message }: { message: Message }) {
+  if (!message.feedback) return null;
+  return (
+    <InlineFeedbackPanel
+      className="mt-2 shrink-0"
+      feedback={message.feedback.items}
+      feedbackPending={message.feedback.pending}
+      onOpen={(item) => {
+        void recordFeedbackItemOpened(message.sessionId, item).catch((error: unknown) => {
+          console.error('Feedback activity event failed', error);
+        });
+      }}
+    />
   );
 }

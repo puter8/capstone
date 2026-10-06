@@ -32,6 +32,9 @@ export default function MyPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [accountDeleted, setAccountDeleted] = useState(false);
+  const [isDeletingHistory, setIsDeletingHistory] = useState(false);
+  const historyDeletionInFlight = useRef(false);
+  const historyDeletionUserId = useRef<string | null>(null);
   const deletionInFlight = useRef(false);
   const userIdRef = useRef<string | null>(null);
 
@@ -81,10 +84,36 @@ export default function MyPage() {
     }
   };
 
-  const showUnavailableDeletion = (message: string) => {
+  const deleteHistory = async () => {
+    const userId = historyDeletionUserId.current;
+    if (!userId || historyDeletionInFlight.current) return;
+    historyDeletionInFlight.current = true;
+    setIsDeletingHistory(true);
     setNotice(null);
-    setError(message);
-    setDialog(null);
+    setError(null);
+    try {
+      await pallyApi.deleteConversationHistory(userId);
+      clearUserRouteData(userId);
+      window.localStorage.removeItem("pally:conversationId");
+      setProfile(null);
+      setDialog(null);
+      setNotice("대화 기록을 삭제하고 Pally를 초기화했어요.");
+      try {
+        const response = await loadProfile(userId);
+        setProfile(response.profile);
+      } catch (caught) {
+        console.error("Profile reload after history deletion failed", caught);
+        setNotice(null);
+        setError("삭제는 완료됐지만 프로필을 불러오지 못했어요. 페이지를 새로고침해 주세요.");
+      }
+    } catch (caught) {
+      console.error("Conversation history deletion failed", caught);
+      setError(caught instanceof Error ? caught.message : "대화 기록을 삭제하지 못했어요. 다시 시도해 주세요.");
+      setDialog(null);
+    } finally {
+      historyDeletionInFlight.current = false;
+      setIsDeletingHistory(false);
+    }
   };
 
   const logout = async () => {
@@ -148,14 +177,14 @@ export default function MyPage() {
           <ProfileSummary avatarUrl={profile.avatar_url} name={profile.display_name} onEditName={() => setDialog("name")} traits={profile.traits} />
         </div>
       ) : null}
-      {error ? <p className="absolute left-5 right-5 top-[420px] text-center text-body-2 text-red-600" role="alert">{error}</p> : null}
-      {notice ? <p className="absolute left-5 right-5 top-[420px] text-center text-body-2 text-success" role="status">{notice}</p> : null}
+      {error ? <p className="absolute left-5 right-5 top-[408px] max-h-12 overflow-y-auto text-center text-caption-1 text-red-600" role="alert">{error}</p> : null}
+      {notice ? <p className="absolute left-5 right-5 top-[408px] max-h-12 overflow-y-auto text-center text-caption-1 text-success" role="status">{notice}</p> : null}
 
       <h2 className="absolute left-5 top-[460px] text-title-1 text-text">사용 설정</h2>
       <section aria-label="사용 설정" className="absolute left-0 right-0 top-[509px]">
         <Link className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black" href="/settings/plans">요금제 및 결제</Link>
         <Link className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black" href="/settings/level">영어 레벨 변경</Link>
-        <button className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black" onClick={() => setDialog("delete")} type="button">데이터 삭제</button>
+        <button className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black disabled:opacity-50" disabled={!profile || isDeletingHistory || isDeleting || accountDeleted} onClick={() => { historyDeletionUserId.current = userIdRef.current; setError(null); setNotice(null); setDialog("delete"); }} type="button">데이터 삭제</button>
       </section>
 
       <div className="absolute bottom-[111px] left-0 right-0 z-20 text-center text-button-2 text-text-tertiary">
@@ -173,7 +202,17 @@ export default function MyPage() {
       <BottomNav />
 
       {dialog === "name" && profile ? <NameEditDialog initialName={profile.display_name} onCancel={() => setDialog(null)} onConfirm={(nextName) => { void updateName(nextName); }} /> : null}
-      {dialog === "delete" ? <ConfirmDialog body="대화 기록 삭제 API가 아직 준비되지 않았어요." confirmLabel="확인" onCancel={() => setDialog(null)} onConfirm={() => showUnavailableDeletion("대화 기록 삭제는 백엔드 준비 후 사용할 수 있어요.")} title="데이터 삭제 준비 중" variant="compact" /> : null}
+      {dialog === "delete" ? (
+        <ConfirmDialog
+          body={"모든 대화 기록과 피드백이 삭제되고 Pally의 모습과 성향이 초기화돼요. 삭제한 기록은 복구할 수 없어요.\n\n계정, 요금제, 오늘의 사용량과 업적은 유지돼요."}
+          confirmLabel={isDeletingHistory ? "삭제 중…" : "모두 삭제"}
+          isPending={isDeletingHistory}
+          onCancel={() => { if (!historyDeletionInFlight.current) setDialog(null); }}
+          onConfirm={() => { void deleteHistory(); }}
+          title="대화 기록을 모두 삭제할까요?"
+          variant="compact"
+        />
+      ) : null}
       {dialog === "logout" ? <ConfirmDialog body="현재 계정에서 로그아웃할까요?" confirmLabel="로그아웃" onCancel={() => setDialog(null)} onConfirm={() => { void logout(); }} title="로그아웃할까요?" variant="compact" /> : null}
       {dialog === "withdrawal" ? (
         <AccountDeletionDialog

@@ -1,4 +1,4 @@
-import { rejects } from "node:assert/strict";
+import { deepEqual, rejects } from "node:assert/strict";
 
 import { mockPallyApi, resetMockPallyApi } from "../lib/api/mock-client";
 
@@ -39,16 +39,18 @@ async function main(): Promise<void> {
   });
   assert(turn.turn_id === repeatedTurn.turn_id, "Turn creation must be idempotent");
   assert(!turn.replayed && repeatedTurn.replayed, "An idempotent retry must be marked as replayed");
-  assert(!turn.feedback_pending, "A successful feedback result must not be pending");
+  assert(turn.feedback_pending && turn.feedback.length === 0, "Turn feedback waits until completion");
   assert(turn.quota?.remaining_turns === 4, "A successful turn must consume one quota unit");
   assert(repeatedTurn.quota?.remaining_turns === 4, "An idempotent replay must not consume quota again");
 
   const detail = await mockPallyApi.getConversation(created.conversation.id);
   assert(detail.turns.length === 1, "Conversation detail must include the created turn");
-  assert(detail.turns[0].feedback.length > 0, "Mock turn must expose inline feedback");
+  assert(detail.turns[0].feedback_pending, "Active turn feedback is pending");
 
   const completed = await mockPallyApi.completeConversation(created.conversation.id);
   assert(completed.conversation.status === "completed", "Conversation must become completed");
+  const reviewed = await mockPallyApi.getConversation(created.conversation.id);
+  assert(reviewed.turns[0].feedback.length > 0 && !reviewed.turns[0].feedback_pending, "Completion generates review feedback");
 
   const list = await mockPallyApi.listConversations({ status: "completed" });
   assert(list.items.some((item) => item.id === created.conversation.id), "Completed conversation must appear in history");
@@ -63,6 +65,19 @@ async function main(): Promise<void> {
     cancel_url: "https://example.com/settings/plans?checkout=cancel",
   }, initialProfile.profile.id);
   assert(checkout.checkout.product_id === products.products[0].id, "Checkout must preserve the selected product");
+
+  const usageBeforeDeletion = await mockPallyApi.getUsage();
+  const subscriptionBeforeDeletion = await mockPallyApi.getSubscription();
+  const historyDeletion = await mockPallyApi.deleteConversationHistory(initialProfile.profile.id);
+  assert(historyDeletion.deleted_conversations > 0, "History deletion reports removed conversations");
+  assert((await mockPallyApi.listConversations()).items.length === 0, "Deleted conversations disappear from history");
+  await rejects(() => mockPallyApi.getConversation(created.conversation.id), "Deleted conversation detail is inaccessible");
+  deepEqual(await mockPallyApi.getUsage(), usageBeforeDeletion, "History deletion does not replenish usage");
+  deepEqual(await mockPallyApi.getSubscription(), subscriptionBeforeDeletion, "History deletion preserves the subscription");
+  const profileAfterDeletion = (await mockPallyApi.getProfile()).profile;
+  assert(profileAfterDeletion.display_name === "Claire" && profileAfterDeletion.english_level === "C1", "History deletion preserves account settings");
+  deepEqual(profileAfterDeletion.traits, ["acquaint", "serious", "calm", "indifferent", "casual"], "History deletion resets traits");
+  assert((await mockPallyApi.deleteConversationHistory(initialProfile.profile.id)).deleted_conversations === 0, "Deleting empty history is safe");
 
   const deletion = await mockPallyApi.deleteAccount({ confirmation: "회원탈퇴" });
   assert(deletion.status === "deleted", "Account deletion must complete immediately");

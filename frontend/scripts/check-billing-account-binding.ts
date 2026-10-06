@@ -70,6 +70,7 @@ async function checkHttpBinding(): Promise<void> {
       },
       { name: "cancel", path: "/api/subscription/cancel", invoke: (userId: string) => httpPallyApi.cancelSubscription(userId), response: subscriptionResponse },
       { name: "refresh", path: "/api/subscription/refresh", invoke: (userId: string) => httpPallyApi.refreshSubscription(userId), response: subscriptionResponse },
+      { name: "history deletion", path: "/api/conversations", invoke: (userId: string) => httpPallyApi.deleteConversationHistory(userId), response: { status: "deleted", deleted_conversations: 3 } },
     ];
     try {
       for (const operation of operations) {
@@ -96,7 +97,7 @@ async function checkHttpBinding(): Promise<void> {
         await operation.invoke(userA);
         equal(calls.length, 1, `${operation.name}: the same user may submit exactly once`);
         equal(calls[0].path, operation.path);
-        equal(calls[0].method, "POST");
+        equal(calls[0].method, operation.name === "history deletion" ? "DELETE" : "POST");
         equal(calls[0].authorization, "Bearer fixture-user-a-refreshed", "The checked session supplies the actual bearer token");
         if (operation.name === "checkout") deepEqual(JSON.parse(String(calls[0].body)), checkoutInput, "Account binding does not alter the backend wire payload");
       }
@@ -121,6 +122,9 @@ async function checkMockBinding(): Promise<void> {
   await rejects(mockPallyApi.createCheckout(checkoutInput, anotherUser), isUnauthorized);
   await rejects(mockPallyApi.cancelSubscription(anotherUser), isUnauthorized);
   await rejects(mockPallyApi.refreshSubscription(anotherUser), isUnauthorized);
+  const historyBefore = await mockPallyApi.listConversations();
+  await rejects(mockPallyApi.deleteConversationHistory(anotherUser), isUnauthorized);
+  deepEqual(await mockPallyApi.listConversations(), historyBefore, "Rejected history deletion preserves conversations");
   deepEqual(await mockPallyApi.getSubscription(), before, "Rejected billing actions leave mock state unchanged");
   deepEqual(await mockPallyApi.refreshSubscription(profile.id), before);
   resetMockPallyApi();
@@ -129,7 +133,7 @@ async function checkMockBinding(): Promise<void> {
 async function main(): Promise<void> {
   await checkHttpBinding();
   await checkMockBinding();
-  console.log("Billing account binding checks passed: checkout, cancel and refresh reject changed sessions with zero fetches.");
+  console.log("Account binding checks passed: billing and history deletion reject changed sessions with zero fetches.");
 }
 
 main().catch((error: unknown) => {
