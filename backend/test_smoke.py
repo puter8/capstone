@@ -127,10 +127,22 @@ def test_clean_title_strips_quotes_punctuation_and_whitespace():
     assert len(main._clean_title("word " * 40)) <= main._TITLE_MAX_CHARS
 
 
+def test_conversation_title_falls_back_to_the_opener_when_nobody_spoke():
+    """발화 0건 대화도 History 에 남으므로(기획) 제목이 비지 않아야 한다."""
+    opener = {"role": "pally", "transcript": "Hey! Got any fun weekend plans coming up?"}
+    spoke = [opener, {"role": "user", "transcript": "i went to the park"}]
+
+    assert main._conversation_title({"title": None}, [opener]) == opener["transcript"]
+    # 발화가 있으면 사용자가 말한 내용이 먼저 (오프너가 앞에 있어도)
+    assert main._conversation_title({"title": None}, spoke) == "i went to the park"
+    assert main._conversation_title({"title": "Park Visit"}, [opener]) == "Park Visit"
+    assert main._conversation_title({"title": None}, []) is None
+
+
 def test_conversation_title_prefers_stored_title_then_first_utterance():
-    user_msgs = [{"transcript": "i had no lunch im diet"}]
-    assert main._conversation_title({"title": "Diet and Hunger"}, user_msgs) == "Diet and Hunger"
-    assert main._conversation_title({"title": None}, user_msgs) == "i had no lunch im diet"
+    messages = [{"role": "user", "transcript": "i had no lunch im diet"}]
+    assert main._conversation_title({"title": "Diet and Hunger"}, messages) == "Diet and Hunger"
+    assert main._conversation_title({"title": None}, messages) == "i had no lunch im diet"
     assert main._conversation_title({}, []) is None
 
 
@@ -464,3 +476,234 @@ def test_conversation_turns_restore_user_before_pally_for_equal_timestamps():
             "created_at": "2026-09-06T10:00:00+00:00",
         }
     ]
+
+
+# ── Opener — Pally 가 먼저 거는 말 ────────────────────────────────────────────
+
+
+def _opener_client(monkeypatch, *, session, first_message, text="Hey! What music do you like?",
+                   patch_generate=True):
+    """오프너 테스트용 TestClient. DB·모델·TTS 를 끊고 라우트 로직만 본다."""
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    inserted = []
+    sb = Mock()
+    sb.auth.get_user.return_value = SimpleNamespace(user=SimpleNamespace(id="caller-id"))
+
+    def table(name):
+        """messages 질의 2종을 구분한다: role=user 존재 확인, 그리고 첫 메시지 조회."""
+        query = Mock()
+        filters = []
+        for method in ("select", "order", "limit", "neq", "in_"):
+            getattr(query, method).return_value = query
+
+        def eq(column, value):
+            filters.append((column, value))
+            return query
+
+        query.eq.side_effect = eq
+
+        def execute():
+            user_probe = ("role", "user") in filters
+            rows = [first_message] if first_message else []
+            if user_probe:
+                rows = [r for r in rows if r["role"] == "user"]
+            return SimpleNamespace(data=rows)
+
+        query.execute.side_effect = execute
+        query.insert.side_effect = lambda row: inserted.append((name, row)) or query
+        return query
+
+    sb.table.side_effect = table
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_SUPABASE_ENABLED", True)
+    monkeypatch.setattr(main, "_owned_session", lambda *_: session)
+    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
+    monkeypatch.setattr(main, "_recent_session_texts", lambda *_: [])
+
+    async def fake_generate(axes, level, recent_texts):
+        calls.append((axes, level, recent_texts))
+        return text
+
+    calls = []
+    if patch_generate:  # False 면 실제 재시도 로직을 그대로 쓴다
+        monkeypatch.setattr(main, "_generate_opener_text", fake_generate)
+    return TestClient(main.app), inserted, calls
+
+
+def _tts(monkeypatch, audio="BASE64AUDIO"):
+    async def fake_tts(text, *_args, **_kwargs):
+        if audio is None:
+            raise RuntimeError("tts down")
+        return audio
+    monkeypatch.setattr(main, "_call_google_tts", fake_tts)
+
+
+_OPENER_URL = "/api/conversations/conversation-1/opener"
+_OPENER_HEADERS = {"Authorization": "Bearer test", "Idempotency-Key": "key-1"}
+
+
+def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
+    """오프너는 role=pally 메시지로 저장되고, 사용량은 차감하지 않는다."""
+    client, inserted, calls = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "A2", "ended_at": None}, first_message=None
+    )
+    _tts(monkeypatch)
+    reserved = []
+    monkeypatch.setattr(main, "_reserve_turn", lambda *a, **k: reserved.append(a) or 1)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "text": "Hey! What music do you like?", "audio": "BASE64AUDIO", "warnings": [],
+    }
+    assert [name for name, _ in inserted] == ["messages"]
+    row = inserted[0][1]
+    assert row["role"] == "pally" and row["session_id"] == "conversation-1"
+    assert row["transcript"] == "Hey! What music do you like?"
+    assert row["axes"] is None  # axes 는 user 발화의 것. 오프너에는 없다
+    assert reserved == []  # quota 차감 없음
+    # 축 출발점은 완료 대화가 없을 때 첫 Pally 와 같은 _INITIAL_AXES, 레벨은 세션 레벨
+    assert calls == [(dict(main._INITIAL_AXES), "A2", [])]
+
+
+def test_opener_is_refused_once_the_user_has_spoken_even_if_one_is_saved(monkeypatch):
+    """저장된 오프너가 있어도 발화가 시작된 뒤에는 다시 읽어주지 않는다.
+
+    읽어주면 Pally 가 대화 중간에 첫인사를 반복한다.
+    """
+    client, inserted, calls = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        first_message={"role": "user", "transcript": "I ate pizza"},
+    )
+    _tts(monkeypatch)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conversation_started"
+    assert inserted == [] and calls == []
+
+
+def test_opener_is_idempotent_without_calling_the_model_again(monkeypatch):
+    """다시 호출하면 저장된 오프너를 쓴다 — 모델 재호출·중복 저장 없음."""
+    saved = {"role": "pally", "transcript": "Hey! Seen any good shows?"}
+    client, inserted, calls = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=saved
+    )
+    _tts(monkeypatch)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 201
+    assert response.json()["text"] == "Hey! Seen any good shows?"
+    assert inserted == [] and calls == []
+
+
+def test_opener_rejected_after_a_user_turn_or_on_a_closed_conversation(monkeypatch):
+    """뒤늦게 오프너를 끼워 넣지 않는다: 사용자 발화가 있거나 끝난 대화면 409."""
+    client, inserted, _ = _opener_client(
+        monkeypatch,
+        session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        first_message={"role": "user", "transcript": "I ate pizza"},
+    )
+    _tts(monkeypatch)
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conversation_started"
+
+    client, _, _ = _opener_client(
+        monkeypatch,
+        session={"id": "conversation-1", "level": "B1", "ended_at": "2026-10-05T00:00:00Z"},
+        first_message=None,
+    )
+    _tts(monkeypatch)
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "conversation_closed"
+    assert inserted == []
+
+
+def test_opener_tts_failure_keeps_the_text_and_warns(monkeypatch):
+    """TTS 실패는 턴과 같게 non-fatal: 텍스트는 주고 audio=null + tts_failed."""
+    client, inserted, _ = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None
+    )
+    _tts(monkeypatch, audio=None)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["audio"] is None and body["text"]
+    assert [w["code"] for w in body["warnings"]] == ["tts_failed"]
+    assert len(inserted) == 1  # 저장은 됐으므로 재호출이 모델을 다시 부르지 않는다
+
+
+def test_opener_requires_authentication_and_idempotency_key(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    # 인증은 멱등 키보다 먼저 막힌다 (토큰 없이는 라우트 본문에 닿지 않는다)
+    assert TestClient(main.app).post(_OPENER_URL).status_code == 401
+
+    client, inserted, calls = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None
+    )
+    _tts(monkeypatch)
+    response = client.post(_OPENER_URL, headers={"Authorization": "Bearer test"})
+    assert response.status_code == 422
+    assert inserted == [] and calls == []
+
+
+def test_opener_failure_does_not_store_a_fallback_line(monkeypatch):
+    """모델이 두 번 다 실패하면 폴백 문구를 저장하지 않고 503 (§6 #3)."""
+    from ai.opener import OpenerRejected
+
+    client, inserted, _ = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        first_message=None, patch_generate=False,
+    )
+    _tts(monkeypatch)
+    attempts = []
+
+    def always_rejected(*_args, **_kwargs):
+        attempts.append(1)
+        raise OpenerRejected("no_closing_question")
+
+    monkeypatch.setattr(main, "generate_opener", always_rejected)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "opener_failed"
+    assert len(attempts) == 2  # 1회 재시도
+    assert inserted == []
+
+
+def test_opener_retries_once_and_keeps_a_valid_second_try(monkeypatch):
+    """첫 호출이 규칙을 깨도 재시도가 성공하면 그 결과를 저장한다."""
+    from ai.opener import OpenerRejected
+
+    client, inserted, _ = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        first_message=None, patch_generate=False,
+    )
+    _tts(monkeypatch)
+    results = [OpenerRejected("too_long"), "Hey! How was your day?"]
+
+    def flaky(*_args, **_kwargs):
+        outcome = results.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(main, "generate_opener", flaky)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 201
+    assert response.json()["text"] == "Hey! How was your day?"
+    assert inserted[0][1]["transcript"] == "Hey! How was your day?"
