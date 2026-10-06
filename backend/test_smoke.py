@@ -871,7 +871,7 @@ def test_carried_over_axes_skips_conversations_without_utterances_in_one_query()
     assert ("sessions.user_id", "user-1") in calls["eq"]
     assert ("axes", "null") in calls["not_is"]            # 발화에 축이 붙은 것만
     assert ("sessions.ended_at", "null") in calls["not_is"]  # 끝낸 대화만
-    assert calls["order"] == [("sessions(created_at)", True), ("created_at", True)]
+    assert calls["order"] == [("sessions(ended_at)", True), ("created_at", True)]
     assert calls["limit"] == [1]
     assert calls["in_"] == []  # 세션 목록을 넘기지 않는다 = 개수 상한 없음
 
@@ -906,3 +906,10 @@ def test_stt_keeps_every_segment_split_at_pauses():
         {"alternatives": [{"transcript": " yesterday I went to the park", "confidence": 0.8}]},
     ]
     assert main._join_stt_results(results) == ("hi Pali yesterday I went to the park", 0.8)
+
+
+def test_first_pally_axes_match_the_default_traits():
+    """신규 사용자의 홈 Pally(프로필 current_axes)와 마이페이지 기본 태그는 같은 모습이어야 한다."""
+    assert main._axes_to_traits(main._INITIAL_AXES) == main._DEFAULT_TRAITS
+    # 프론트 DEFAULT_AXES (frontend/lib/types/character.ts)
+    assert main._INITIAL_AXES == {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
