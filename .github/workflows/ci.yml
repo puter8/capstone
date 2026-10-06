@@ -29,7 +29,7 @@ jobs:
       - name: Backend billing, smoke, and speech regression tests
         env:
           PYTHONPATH: backend
-        run: pytest -q backend/test_billing.py backend/test_billing_overview.py backend/test_smoke.py backend/test_tts.py backend/test_session_feedback_worker.py tests/test_generate_feedback.py tests/test_session_feedback.py tests/test_ai_reply_shaping.py
+        run: pytest -q backend/test_billing.py backend/test_billing_overview.py backend/test_smoke.py backend/test_tts.py backend/test_session_feedback_worker.py tests/test_generate_feedback.py tests/test_session_feedback.py tests/test_ai_reply_shaping.py tests/test_opener.py
 
   frontend-billing:
     runs-on: ubuntu-latest
