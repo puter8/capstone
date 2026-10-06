@@ -501,6 +501,13 @@ def _parse_wav(audio_bytes: bytes) -> tuple[bytes, int, int] | None:
     return audio_bytes[44:], sample_rate, num_channels
 
 
+def _join_stt_results(results: list[dict]) -> tuple[str, float]:
+    # STT splits speech at pauses into consecutive results; keep every segment, not just the first.
+    alts = [r.get("alternatives", [{}])[0] for r in results]
+    transcript = " ".join(a.get("transcript", "").strip() for a in alts if a.get("transcript", "").strip())
+    return transcript, min(a.get("confidence", 1.0) for a in alts)
+
+
 @app.post("/api/stt")
 async def stt(audio: UploadFile = File(...)):
     """
@@ -576,11 +583,8 @@ async def stt(audio: UploadFile = File(...)):
     if not results:
         return {"transcript": "", "confidence": 0.0}
 
-    alt = results[0].get("alternatives", [{}])[0]
-    return {
-        "transcript": alt.get("transcript", "").strip(),
-        "confidence": alt.get("confidence", 1.0),
-    }
+    transcript, confidence = _join_stt_results(results)
+    return {"transcript": transcript, "confidence": confidence}
 
 
 # ── TTS — Google Cloud Text-to-Speech ────────────────────────────────────────
@@ -1417,8 +1421,7 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
     results = resp.json().get("results", [])
     if not results:
         return "", 0.0
-    alt = results[0].get("alternatives", [{}])[0]
-    return alt.get("transcript", "").strip(), alt.get("confidence", 1.0)
+    return _join_stt_results(results)
 
 
 _INITIAL_AXES = {"Formality": 50, "Energy": 50, "Intimacy": 50, "Humor": 50, "Curiosity": 50}
