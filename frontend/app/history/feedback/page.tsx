@@ -10,7 +10,7 @@ import { PageLoader } from "@/components/ui/PageLoader";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { ConversationTurn, FeedbackItem } from "@/lib/api";
-import { getCurrentUserId, loadConversationPage, loadHistoryPage } from "@/lib/api/route-data";
+import { getCurrentUserId, invalidateConversationData, loadConversationPage, loadHistoryPage } from "@/lib/api/route-data";
 import { recordFeedbackItemOpened } from "@/lib/analytics/activity-events";
 
 type FeedbackGroup = { turnId: string; utterance: string | null; items: FeedbackItem[] };
@@ -27,10 +27,17 @@ export default function FeedbackPage() {
   const [feedback, setFeedback] = useState<FeedbackGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [feedbackPending, setFeedbackPending] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [pollingStopped, setPollingStopped] = useState(false);
+  const [isActiveConversation, setIsActiveConversation] = useState(false);
+  const loadedCursorsRef = useRef<Array<string | undefined>>([undefined]);
+  const refreshingRef = useRef(false);
   const openedFeedbackRef = useRef(new Set<string>());
   const conversationIdRef = useRef<string | null>(null);
   const listRef = useRef<HTMLElement | null>(null);
@@ -55,6 +62,7 @@ export default function FeedbackPage() {
         if (active) {
           setFeedback(toFeedbackGroups(detail.turns));
           setFeedbackPending(detail.turns.some((turn) => turn.feedback_pending));
+          setIsActiveConversation(detail.conversation.status === "active");
           setNextCursor(detail.next_cursor);
           void pallyApi.recordActivityEvent({
             event_id: crypto.randomUUID(),
@@ -84,13 +92,14 @@ export default function FeedbackPage() {
     const userId = userIdRef.current;
     const conversationId = conversationIdRef.current;
     const cursor = nextCursor;
-    if (!userId || !conversationId || !cursor || loadingMoreRef.current) return;
+    if (!userId || !conversationId || !cursor || loadingMoreRef.current || refreshingRef.current) return;
 
     loadingMoreRef.current = true;
     setIsLoadingMore(true);
     setLoadMoreError(null);
     try {
       const detail = await loadConversationPage(userId, conversationId, cursor);
+      loadedCursorsRef.current.push(cursor);
       setFeedback((current) => [...current, ...toFeedbackGroups(detail.turns)]);
       setFeedbackPending((current) => current || detail.turns.some((turn) => turn.feedback_pending));
       setNextCursor(detail.next_cursor);
@@ -106,8 +115,60 @@ export default function FeedbackPage() {
     }
   }, [nextCursor, router]);
 
+  // Refresh every loaded page so completed extraction replaces pending items,
+  // including feedback outside the first page, without appending duplicates.
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || !feedbackPending || isActiveConversation) return;
+    let cancelled = false;
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    setPollingStopped(false);
+    setRefreshError(null);
+    const poll = async () => {
+      if (loadingMoreRef.current || refreshingRef.current) {
+        timer = setTimeout(() => { void poll(); }, 3000);
+        return;
+      }
+      const userId = userIdRef.current;
+      const conversationId = conversationIdRef.current;
+      if (!userId || !conversationId) return;
+      refreshingRef.current = true;
+      setIsRefreshing(true);
+      try {
+        const pages = await Promise.all(loadedCursorsRef.current.map((cursor) => (
+          pallyApi.getConversation(conversationId, { cursor, limit: 50 })
+        )));
+        if (cancelled) return;
+        const turns = pages.flatMap((page) => page.turns);
+        const pending = turns.some((turn) => turn.feedback_pending);
+        setFeedback(toFeedbackGroups(turns));
+        setFeedbackPending(pending);
+        setIsActiveConversation(pages[0].conversation.status === "active");
+        setNextCursor(pages[pages.length - 1].next_cursor);
+        invalidateConversationData(userId, conversationId);
+        attempts += 1;
+        if (pending && attempts < 10 && pages[0].conversation.status === "completed") {
+          timer = setTimeout(() => { void poll(); }, 3000);
+        } else if (pending) {
+          setPollingStopped(true);
+        }
+      } catch (caught) {
+        console.error("Feedback refresh failed", caught);
+        if (!cancelled) {
+          setRefreshError(caught instanceof Error ? caught.message : "피드백을 다시 불러오지 못했어요.");
+          setPollingStopped(true);
+        }
+      } finally {
+        refreshingRef.current = false;
+        if (!cancelled) setIsRefreshing(false);
+      }
+    };
+    timer = setTimeout(() => { void poll(); }, 3000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [feedbackPending, isActiveConversation, isLoading, refreshVersion]);
+
+  useEffect(() => {
+    if (isLoading || isRefreshing) return;
     const root = listRef.current;
     const sentinel = sentinelRef.current;
     if (!root || !sentinel || !nextCursor || loadMoreError) return;
@@ -117,7 +178,7 @@ export default function FeedbackPage() {
     }, { root, rootMargin: "120px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [isLoading, loadMore, loadMoreError, nextCursor]);
+  }, [isLoading, isRefreshing, loadMore, loadMoreError, nextCursor]);
 
   const recordFeedbackOpen = useCallback((conversationId: string, item: FeedbackItem) => {
     const key = item.id ?? `${conversationId}:${item.original}:${item.corrected}`;
@@ -144,8 +205,8 @@ export default function FeedbackPage() {
         title="Feedback"
         variant="back"
       />
-      {!error && feedback.length === 0 ? (
-        <p className="absolute left-[5px] top-[399px] flex h-6 w-[362px] items-center justify-center text-body text-text-tertiary">
+      {!error && !feedbackPending && feedback.length === 0 ? (
+        <p className="absolute inset-x-4 top-[399px] text-center text-body text-text-tertiary">
           아직 피드백이 없어요!
         </p>
       ) : null}
@@ -157,9 +218,11 @@ export default function FeedbackPage() {
           </div>
         ) : null}
         {feedbackPending ? (
-          <p className="rounded-2xl bg-amber-50 px-4 py-3 text-body-2 text-text-secondary" role="status">
-            일부 피드백이 아직 준비되지 않았어요. 잠시 후 다시 확인해 주세요.
-          </p>
+          <div className="rounded-2xl bg-amber-50 px-4 py-3 text-body-2 text-text-secondary" role="status">
+            {isActiveConversation ? "대화를 종료하면 피드백을 정리해요." : pollingStopped ? "피드백 정리에 시간이 걸리고 있어요. 잠시 후 다시 확인해 주세요." : "대화 피드백을 정리하고 있어요. 준비되면 자동으로 표시돼요."}
+            {refreshError ? <p className="mt-2 text-red-600" role="alert">{refreshError}</p> : null}
+            {pollingStopped && !isActiveConversation ? <button className="mt-2 min-h-11 underline underline-offset-4" onClick={() => setRefreshVersion((version) => version + 1)} type="button">다시 확인</button> : null}
+          </div>
         ) : null}
         {feedback.map((group) => (
           <FeedbackCard

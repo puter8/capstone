@@ -17,15 +17,23 @@ import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
 import { requestPallyOpener } from "@/lib/api/opener";
 import { markTitlePending } from "@/lib/api/pending-titles";
 import {
+  clearUserRouteData,
+  forgetRememberedUser,
   invalidateConversationData,
   invalidateProfile,
   invalidateUsage,
   loadConversationPage,
-  loadLatestCompletedConversation,
+  loadProfile,
   loadSubscription,
   loadUsage,
+  patchStaleProfileAxes,
+  patchStaleUsage,
+  peekHomeSnapshot,
+  rememberUser,
   schedulePrimaryRoutePrefetch,
+  usageFromQuota,
 } from "@/lib/api/route-data";
+import type { HomeSnapshot } from "@/lib/api/route-data";
 import { blobToMonoWav } from "@/lib/audio/blobToWav";
 import { useRecorder } from "@/lib/audio/useRecorder";
 import { usePally } from "@/lib/hooks/usePally";
@@ -37,10 +45,21 @@ import { UsageSummary } from "@/components/usage/UsageSummary";
 
 const CONVERSATION_KEY = "pally:conversationId";
 
+// Returning to home paints the last known state instead of the full-screen loader.
+// A conversation to restore (stored id or ?conversation_id) still needs the loader.
+// Client-only: on a hard load the cache is empty, so server and client markup match.
+function readHomeSnapshot(): HomeSnapshot | null {
+  if (typeof window === "undefined") return null;
+  if (new URLSearchParams(window.location.search).get("conversation_id")) return null;
+  if (window.localStorage.getItem(CONVERSATION_KEY)) return null;
+  return peekHomeSnapshot();
+}
+
 export default function HomePage() {
   const router = useRouter();
+  const [snapshot] = useState(readHomeSnapshot);
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { axes, restoreAxes, revealAxes, updateFromChatResponse } = usePally();
+  const { axes, getAccumulatedAxes, resetAxes, restoreAxes, revealAxes, updateFromChatResponse } = usePally(snapshot?.profile.current_axes);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -49,17 +68,22 @@ export default function HomePage() {
   const pendingTurnRef = useRef<Promise<void> | null>(null);
   const closingRef = useRef(false);
   const openerRequestRef = useRef(0);
+  const pendingOpenerRef = useRef<Promise<void> | null>(null);
+  const openerKeyRef = useRef<string | null>(null);
   const conversationIdRef = useRef<string | null>(null);
   const firstUserTranscriptRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
   const [limitDialogOpen, setLimitDialogOpen] = useState(false);
-  const [quotaExhausted, setQuotaExhausted] = useState(false);
+  const [quotaExhausted, setQuotaExhausted] = useState(snapshot?.usage.remaining_turns === 0);
   const [isClosing, setIsClosing] = useState(false);
+  // Controls stay disabled until the session and fresh data are verified, even when
+  // the screen is already painted from the snapshot.
   const [isRestoring, setIsRestoring] = useState(true);
-  const [hasRestoredPally, setHasRestoredPally] = useState(false);
+  const [paintedFromSnapshot, setPaintedFromSnapshot] = useState(snapshot !== null);
+  const [hasRestoredPally, setHasRestoredPally] = useState(snapshot !== null);
   const [warning, setWarning] = useState<string | null>(null);
-  const [usage, setUsage] = useState<UsageResponse | null>(null);
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [usage, setUsage] = useState<UsageResponse | null>(snapshot?.usage ?? null);
+  const [subscription, setSubscription] = useState<Subscription | null>(snapshot?.subscription ?? null);
 
   useEffect(() => {
     let active = true;
@@ -69,18 +93,31 @@ export default function HomePage() {
       const auth = await supabase.auth.getSession();
       if (auth.error) throw auth.error;
       if (!auth.data.session) {
+        forgetRememberedUser();
+        if (snapshot) clearUserRouteData(snapshot.userId);
         router.replace("/");
         return;
       }
 
       const userId = auth.data.session.user.id;
       userIdRef.current = userId;
+      if (snapshot && snapshot.userId !== userId) {
+        // The painted data belongs to a previous account: drop it and load normally.
+        clearUserRouteData(snapshot.userId);
+        resetAxes();
+        setUsage(null);
+        setSubscription(null);
+        setQuotaExhausted(false);
+        setHasRestoredPally(false);
+        setPaintedFromSnapshot(false);
+      }
+      rememberUser(userId);
       const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
       const storedId = window.localStorage.getItem(CONVERSATION_KEY);
       const conversationId = requestedId ?? storedId;
 
       const usagePromise = loadUsage(userId);
-      const completedPromise = loadLatestCompletedConversation(userId);
+      const profilePromise = loadProfile(userId);
       const detailPromise = conversationId
         ? loadConversationPage(userId, conversationId)
         : Promise.resolve(null);
@@ -97,9 +134,9 @@ export default function HomePage() {
         occurred_at: new Date().toISOString(),
       }).catch((error: unknown) => console.error("Activity event failed", error));
 
-      const [usage, completed, detail] = await Promise.all([
+      const [usage, profileResponse, detail] = await Promise.all([
         usagePromise,
-        completedPromise,
+        profilePromise,
         detailPromise,
       ]);
       if (!active) return;
@@ -111,7 +148,9 @@ export default function HomePage() {
         if (exhausted) setLimitDialogOpen(true);
       }
 
-      const revealedAxes = completed.items[0]?.current_axes;
+      // Undefined only against a backend deployed before profile.current_axes existed;
+      // Pally then keeps the default look instead of guessing.
+      const revealedAxes = profileResponse.profile.current_axes;
       if (active && revealedAxes) restoreAxes(revealedAxes);
       setHasRestoredPally(true);
 
@@ -120,6 +159,7 @@ export default function HomePage() {
 
       if (detail.conversation.status !== "active") {
         window.localStorage.removeItem(CONVERSATION_KEY);
+        router.replace("/home");
         return;
       }
 
@@ -127,6 +167,9 @@ export default function HomePage() {
       if (!active) return;
       conversationIdRef.current = conversationId;
       firstUserTranscriptRef.current = messages.find((message) => message.role === "user")?.transcript ?? null;
+      if (detail.conversation.turn_count > 0 && detail.conversation.current_axes) {
+        updateFromChatResponse({ axes: detail.conversation.current_axes });
+      }
       window.localStorage.setItem(CONVERSATION_KEY, conversationId);
       dispatch({ type: "session/load", id: conversationId, messages });
     };
@@ -149,7 +192,7 @@ export default function HomePage() {
       active = false;
       cancelPrefetch?.();
     };
-  }, [restoreAxes, router, updateFromChatResponse]);
+  }, [resetAxes, restoreAxes, router, snapshot, updateFromChatResponse]);
 
   const ensureConversation = useCallback(async () => {
     if (conversationIdRef.current) return conversationIdRef.current;
@@ -254,6 +297,15 @@ export default function HomePage() {
     });
   }, [stopPlayback]);
 
+  useEffect(() => {
+    closingRef.current = false;
+    return () => {
+      closingRef.current = true;
+      openerRequestRef.current += 1;
+      stopPlayback();
+    };
+  }, [stopPlayback]);
+
   const handleProcessed = useCallback(
     async (blob: Blob) => {
       try {
@@ -279,6 +331,7 @@ export default function HomePage() {
           role: "pally",
           transcript: response.pally.text,
           createdAt: response.created_at ?? new Date().toISOString(),
+          feedback: { items: response.feedback, pending: response.feedback_pending },
         };
         if (firstUserTranscriptRef.current === null) firstUserTranscriptRef.current = response.user.transcript;
         dispatch({ type: "rec/processed", userMsg: userMessage, pallyMsg: pallyMessage });
@@ -294,15 +347,8 @@ export default function HomePage() {
           setLimitDialogOpen(true);
         }
         if (quota) {
-          setUsage((current) => ({
-            plan: quota.daily_limit === null ? "pro" : "free",
-            date: current?.date ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date()),
-            timezone: "Asia/Seoul",
-            used_turns: quota.used_turns ?? (quota.daily_limit !== null && quota.remaining_turns !== null ? quota.daily_limit - quota.remaining_turns : 0),
-            remaining_turns: quota.remaining_turns,
-            daily_limit: quota.daily_limit,
-            reset_at: quota.resets_at,
-          }));
+          setUsage((current) => usageFromQuota(current, quota));
+          if (userId) patchStaleUsage(userId, quota);
         }
         const notices = response.warnings.map((item) => item.message);
         if (response.replayed) notices.push("네트워크 재시도로 저장된 응답을 다시 불러왔어요.");
@@ -386,6 +432,9 @@ export default function HomePage() {
     stopPlayback();
 
     const pendingTurn = pendingTurnRef.current;
+    // Wait for opener persistence before completing the session.
+    const pendingOpener = pendingOpenerRef.current;
+    if (pendingOpener) await pendingOpener;
     if (pendingTurn) {
       await pendingTurn;
       if (pendingTurnRef.current === pendingTurn) pendingTurnRef.current = null;
@@ -402,15 +451,20 @@ export default function HomePage() {
         invalidateProfile(userId);
       }
       const firstUserTranscript = firstUserTranscriptRef.current;
+      // The final axes are Pally's new look. Keep them as the stale profile value so
+      // coming back to home does not flash the previous look before the reload.
+      if (userId && firstUserTranscript) patchStaleProfileAxes(userId, getAccumulatedAxes());
       if (conversationId && firstUserTranscript) markTitlePending(conversationId, firstUserTranscript);
       if (completed && completed.warnings.length > 0) {
         setWarning(completed.warnings.map((item) => item.message).join(" "));
       }
-      revealAxes();
+      if (firstUserTranscript) revealAxes();
       conversationIdRef.current = null;
       firstUserTranscriptRef.current = null;
+      openerKeyRef.current = null;
       window.localStorage.removeItem(CONVERSATION_KEY);
       dispatch({ type: "session/end" });
+      router.replace("/home");
     } catch (caught) {
       dispatch({
         type: "rec/error",
@@ -421,7 +475,7 @@ export default function HomePage() {
       closingRef.current = false;
       setIsClosing(false);
     }
-  }, [recorder, revealAxes, stopPlayback]);
+  }, [getAccumulatedAxes, recorder, revealAxes, router, stopPlayback]);
 
   const handlePressStart = useCallback(() => {
     if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
@@ -448,46 +502,91 @@ export default function HomePage() {
     recorder.stop();
   }, [recorder, unlockAudio]);
 
-  const handleStartConversation = useCallback(async () => {
-    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
+  const handleStartConversation = useCallback(() => {
+    if (pendingOpenerRef.current || closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally || state.messages.length > 0) return;
     unlockAudio();
     const requestId = openerRequestRef.current + 1;
     openerRequestRef.current = requestId;
+    setWarning(null);
     dispatch({ type: "opener/request" });
 
-    try {
-      const opener = await requestPallyOpener();
-      if (openerRequestRef.current !== requestId || closingRef.current) return;
-      dispatch({
-        type: "opener/received",
-        pallyMsg: {
-          id: `m-${Date.now()}-opener`,
-          // No backend conversation exists until the user's first turn.
-          sessionId: conversationIdRef.current ?? "pending",
-          role: "pally",
-          transcript: opener.text,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      if (opener.audio) {
-        await playTts(opener.audio);
-      } else {
-        stopPlayback();
-        speakingTimerRef.current = window.setTimeout(() => {
-          speakingTimerRef.current = null;
-          if (!closingRef.current) dispatch({ type: "rec/speakingDone" });
-        }, 3000);
+    const pending = (async () => {
+      try {
+        const conversationId = await ensureConversation();
+        if (openerRequestRef.current !== requestId || closingRef.current) return;
+        openerKeyRef.current ??= crypto.randomUUID();
+        const opener = await requestPallyOpener(conversationId, openerKeyRef.current);
+        const userId = userIdRef.current;
+        if (userId) invalidateConversationData(userId, conversationId);
+        if (openerRequestRef.current !== requestId || closingRef.current) return;
+        setWarning(opener.warnings.length ? opener.warnings.map((warning) => warning.message).join(" ") : null);
+        dispatch({
+          type: "opener/received",
+          pallyMsg: {
+            id: `m-${Date.now()}-opener`,
+            sessionId: conversationId,
+            role: "pally",
+            transcript: opener.text,
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (opener.audio) {
+          await playTts(opener.audio);
+        } else {
+          stopPlayback();
+          speakingTimerRef.current = window.setTimeout(() => {
+            speakingTimerRef.current = null;
+            if (!closingRef.current) dispatch({ type: "rec/speakingDone" });
+          }, 3000);
+        }
+      } catch (error) {
+        console.error("Pally opener request failed.", error);
+        if (openerRequestRef.current !== requestId || closingRef.current) return;
+        if (error instanceof PallyApiError && error.code === "conversation_started") {
+          try {
+            const conversationId = conversationIdRef.current;
+            if (!conversationId) throw new Error("대화를 다시 불러와 주세요.");
+            const detail = await pallyApi.getConversation(conversationId, { limit: 50 });
+            if (openerRequestRef.current !== requestId || closingRef.current) return;
+            if (detail.conversation.status !== "active") throw new PallyApiError(409, "conversation_closed", "이미 종료된 대화예요.");
+            const messages = conversationTurnsToMessages(conversationId, detail.turns);
+            firstUserTranscriptRef.current = messages.find((message) => message.role === "user")?.transcript ?? null;
+            if (detail.conversation.current_axes) updateFromChatResponse({ axes: detail.conversation.current_axes });
+            dispatch({ type: "session/load", id: conversationId, messages });
+            dispatch({ type: "rec/speakingDone" });
+            setWarning("이미 시작된 대화를 불러왔어요. 이어서 말해 주세요.");
+            return;
+          } catch (restoreError) {
+            console.error("Started conversation recovery failed", restoreError);
+            error = restoreError;
+          }
+        }
+        if (error instanceof PallyApiError && (error.code === "conversation_closed" || error.code === "not_found")) {
+          const userId = userIdRef.current;
+          if (userId) invalidateConversationData(userId, conversationIdRef.current ?? undefined);
+          conversationIdRef.current = null;
+          firstUserTranscriptRef.current = null;
+          openerKeyRef.current = null;
+          window.localStorage.removeItem(CONVERSATION_KEY);
+          dispatch({ type: "session/end" });
+          router.replace("/home");
+        }
+        dispatch({
+          type: "rec/error",
+          reason: "generic",
+          message: error instanceof PallyApiError && error.code === "conversation_closed"
+            ? "이미 종료된 대화예요. 대화 시작하기를 눌러 새로 시작해 주세요."
+            : error instanceof PallyApiError && error.code === "opener_failed"
+              ? "Pally가 먼저 말을 걸지 못했어요. 대화 시작하기를 눌러 다시 시도해 주세요."
+              : error instanceof Error ? error.message : "Pally가 말을 걸지 못했어요. 다시 시도해 주세요.",
+        });
       }
-    } catch (error) {
-      console.error("Pally opener request failed.", error);
-      if (openerRequestRef.current !== requestId || closingRef.current) return;
-      dispatch({
-        type: "rec/error",
-        reason: "generic",
-        message: error instanceof Error ? error.message : "Pally가 말을 걸지 못했어요. 다시 시도해 주세요.",
-      });
-    }
-  }, [hasRestoredPally, isRestoring, playTts, quotaExhausted, stopPlayback, unlockAudio]);
+    })();
+    pendingOpenerRef.current = pending;
+    void pending.finally(() => {
+      if (pendingOpenerRef.current === pending) pendingOpenerRef.current = null;
+    });
+  }, [ensureConversation, hasRestoredPally, isRestoring, playTts, quotaExhausted, router, state.messages.length, stopPlayback, unlockAudio, updateFromChatResponse]);
 
   const handleToggleHistory = useCallback(() => {
     if (!state.historyOpen) {
@@ -509,11 +608,11 @@ export default function HomePage() {
   const isRecording = state.rec.kind === "recording";
   const errorVisible = state.rec.kind === "error";
   const showChatBubble = (state.messages.length > 0 || isRecording || isProcessing) && !errorVisible;
-  const historyCoversScreen = state.historyOpen && !isIdle;
+  const historyCoversScreen = state.historyOpen;
   // Pally speaks first: until the opener arrives there is nothing to reply to, so hide the mic.
   const showStartScreen = state.messages.length === 0 && (isIdle || errorVisible);
 
-  if (isRestoring) {
+  if (isRestoring && !paintedFromSnapshot) {
     return (
       <MobileShell minHeight={640}>
         <PageLoader />
@@ -566,7 +665,7 @@ export default function HomePage() {
           </div>
           {showStartScreen ? (
             <div className="absolute inset-x-0 top-[calc(578px_+_min(0px,_100%_-_874px))] z-20 flex flex-col items-center px-4 text-center">
-              <h2 className="text-title-1 text-text">Pally가 할 말이 있대요</h2>
+              <h2 className="text-title-1 text-text">Pally&apos;s here to chat!</h2>
               <p className="mt-1 text-body text-text-tertiary">소리를 켜고 시작해 주세요 <span aria-hidden="true">🔊</span></p>
               <button
                 className="mt-4 h-20 w-[304px] max-w-full rounded-full bg-primary-soft p-2 transition-transform duration-150 active:scale-95 disabled:opacity-50"

@@ -15,6 +15,7 @@ import { PallyApiError } from "@/lib/api/contracts";
 import {
   achievementsResponseSchema,
   deleteAccountResponseSchema,
+  deleteConversationHistoryResponseSchema,
   billingProductsResponseSchema,
   billingOverviewResponseSchema,
   checkoutResponseSchema,
@@ -28,6 +29,7 @@ import {
   profileAvatarResponseSchema,
   recordedEventResponseSchema,
   speechResponseSchema,
+  openerResponseSchema,
   subscriptionResponseSchema,
   turnResponseSchema,
   usageResponseSchema,
@@ -149,6 +151,12 @@ export const httpPallyApi: PallyApi = {
     });
   },
 
+  createOpener: (conversationId: string, idempotencyKey: string) => apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}/opener`, {
+    schema: openerResponseSchema,
+    method: "POST",
+    idempotencyKey,
+  }),
+
   synthesizeSpeech: (text: string) => apiRequest("/api/tts", {
     schema: speechResponseSchema,
     method: "POST",
@@ -226,6 +234,12 @@ export const httpPallyApi: PallyApi = {
     method: "DELETE",
     contentType: "application/json",
     body: JSON.stringify(input),
+  }),
+
+  deleteConversationHistory: (expectedUserId: string) => apiRequest("/api/conversations", {
+    schema: deleteConversationHistoryResponseSchema,
+    method: "DELETE",
+    accountBinding: { expectedUserId },
   }),
 
 };

@@ -55,3 +55,6 @@ jobs:
           npx --no-install tsx scripts/check-billing-account-binding.ts
           npm run check:mock-api
           npm run check:query-cache
+          npm run check:conversation-order
+          npm run check:opener
+          npm run check:home-snapshot

@@ -1424,7 +1424,11 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
     return _join_stt_results(results)
 
 
-_INITIAL_AXES = {"Formality": 50, "Energy": 50, "Intimacy": 50, "Humor": 50, "Curiosity": 50}
+# 첫 Pally 의 5축. 프론트 DEFAULT_AXES(lib/types/character.ts)와 같은 값이고,
+# 여기에 태그 규칙을 적용한 것이 profiles.traits 의 기본값(_DEFAULT_TRAITS,
+# 20260922000000_profiles_default_traits.sql)이다. 셋이 어긋나면 신규 사용자의
+# 홈 Pally 와 마이페이지 태그가 서로 다른 모습을 말한다 (test_smoke 가 지킨다).
+_INITIAL_AXES = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
 
 
 def _conversation_to_response(row: dict) -> dict:
@@ -2203,7 +2207,7 @@ def _axes_to_traits(axes: dict) -> list:
 
 
 def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
-    """Pally 의 현재 모습 = 가장 최근에 끝낸 대화의 최종 5축. 홈이 그리는 Pally,
+    """Pally 의 현재 모습 = 가장 최근에 끝낸(ended_at) 대화의 최종 5축. 홈이 그리는 Pally,
     마이페이지 태그, 다음 대화의 EMA 출발점이 모두 이 값을 쓴다 — 기준이 하나라
     세 화면이 어긋나지 않는다.
 
@@ -2220,7 +2224,10 @@ def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
                .select("axes, created_at, sessions!inner(user_id, created_at, ended_at)")
                .eq("role", "user").not_.is_("axes", "null")
                .eq("sessions.user_id", user_id).not_.is_("sessions.ended_at", "null")
-               .order("sessions(created_at)", desc=True)  # 최신 완료 대화부터
+               # 종료 시각 기준: 지난 대화를 이어 하고 다시 끝내면 그 대화가 최신이 된다.
+               # 마이페이지 태그(_refresh_profile_traits)도 방금 끝낸 대화로 갱신하므로
+               # 생성 시각으로 정렬하면 둘이 서로 다른 대화를 가리킨다.
+               .order("sessions(ended_at)", desc=True)
                .order("created_at", desc=True)            # 그 대화의 마지막 발화
                .limit(1).execute())
     except Exception as e:

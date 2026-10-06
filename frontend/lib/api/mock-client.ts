@@ -16,6 +16,8 @@ import type {
   UsageQuota,
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
+import { DEFAULT_AXES } from "@/lib/types/character";
+import type { Axes } from "@/lib/types/character";
 import {
   MOCK_CONVERSATIONS,
   MOCK_PROFILE,
@@ -184,11 +186,24 @@ export function resetMockPallyApi(): void {
   }
 }
 
+// Same rule as the backend: the last user turn of the most recently completed
+// conversation the user actually spoke in. Opener-only conversations do not count.
+function currentPallyAxes(): Axes {
+  const spoken = mockState.records
+    .flatMap((record) => {
+      const completedAt = record.conversation.completed_at;
+      const lastAxes = record.turns.filter((turn) => turn.user_transcript !== null && turn.axes).at(-1)?.axes;
+      return completedAt && lastAxes ? [{ completedAt, axes: lastAxes }] : [];
+    })
+    .sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+  return clone(spoken[0]?.axes ?? DEFAULT_AXES);
+}
+
 export const mockPallyApi: PallyApi = {
   async getProfile() {
     await delay();
     ensureActiveAccount();
-    return { profile: clone(mockState.profile) };
+    return { profile: { ...clone(mockState.profile), current_axes: currentPallyAxes() } };
   },
 
   async getProfileAvatar() {
@@ -216,7 +231,7 @@ export const mockPallyApi: PallyApi = {
       onboarding_completed: true,
       updated_at: new Date().toISOString(),
     };
-    return { profile: clone(mockState.profile) };
+    return { profile: { ...clone(mockState.profile), current_axes: currentPallyAxes() } };
   },
 
   async updateProfile(input: UpdateProfileInput) {
@@ -237,7 +252,7 @@ export const mockPallyApi: PallyApi = {
       ...(input.english_level === undefined ? {} : { english_level: input.english_level }),
       updated_at: new Date().toISOString(),
     };
-    return { profile: clone(mockState.profile) };
+    return { profile: { ...clone(mockState.profile), current_axes: currentPallyAxes() } };
   },
 
   async createConversation(idempotencyKey: string) {
@@ -284,7 +299,7 @@ export const mockPallyApi: PallyApi = {
         throw new PallyApiError(429, "quota_exceeded", "오늘 사용할 수 있는 대화를 모두 사용했어요.");
       }
 
-      const totalTurns = mockState.records.reduce((sum, item) => sum + item.turns.length, 0);
+      const totalTurns = mockState.records.reduce((sum, item) => sum + item.turns.filter((turn) => turn.user_transcript !== null).length, 0);
       const script = MOCK_TURN_SCRIPTS[totalTurns % MOCK_TURN_SCRIPTS.length];
       const createdAt = new Date().toISOString();
       const turnId = createUuid();
@@ -298,8 +313,8 @@ export const mockPallyApi: PallyApi = {
         pally_audio_url: MOCK_SILENT_AUDIO_URL,
         axes: clone(script.axes),
         character: clone(script.character),
-        feedback: clone(script.feedback),
-        feedback_pending: false,
+        feedback: [],
+        feedback_pending: true,
         warnings: [],
         created_at: createdAt,
       };
@@ -309,7 +324,7 @@ export const mockPallyApi: PallyApi = {
         ...record.conversation,
         title: record.conversation.title ?? "New Pally conversation",
         last_turn_at: createdAt,
-        turn_count: record.turns.length,
+        turn_count: record.turns.filter((item) => item.user_transcript !== null).length,
         current_axes: clone(script.axes),
       };
       mockState.quota = {
@@ -330,8 +345,8 @@ export const mockPallyApi: PallyApi = {
         },
         axes: clone(script.axes),
         character: clone(script.character),
-        feedback: clone(script.feedback),
-        feedback_pending: false,
+        feedback: [],
+        feedback_pending: true,
         warnings: [],
         quota: clone(mockState.quota),
         created_at: createdAt,
@@ -345,10 +360,36 @@ export const mockPallyApi: PallyApi = {
     return { audio_b64: MOCK_SILENT_AUDIO_URL.split(",", 2)[1], voice: "mock", encoding: "MP3" as const };
   },
 
+  async createOpener(conversationId, idempotencyKey) {
+    await delay();
+    ensureActiveAccount();
+    if (!idempotencyKey) throw new PallyApiError(422, "validation_error", "Idempotency-Key가 필요해요.");
+    const record = getRecord(conversationId);
+    if (record.conversation.status !== "active") throw new PallyApiError(409, "conversation_closed", "이미 종료된 대화예요.");
+    if (record.turns.some((turn) => turn.user_transcript !== null)) throw new PallyApiError(409, "conversation_started", "이미 시작된 대화예요.");
+    const existing = record.turns[0]?.pally_text;
+    const text = existing ?? "What was the best part of your day?";
+    if (!existing) {
+      const createdAt = new Date().toISOString();
+      record.turns.push({ id: createUuid(), sequence: 1, status: "completed", user_transcript: null, pally_text: text, feedback: [], feedback_pending: false, created_at: createdAt });
+      record.conversation.title = text;
+      record.conversation.last_turn_at = createdAt;
+    }
+    return { text, audio: MOCK_SILENT_AUDIO_URL.split(",", 2)[1], warnings: [] };
+  },
+
   async completeConversation(conversationId: string) {
     await delay();
     ensureActiveAccount();
     const record = getRecord(conversationId);
+    for (const turn of record.turns) {
+      if (turn.feedback_pending) {
+        const script = MOCK_TURN_SCRIPTS.find((item) => item.transcript === turn.user_transcript);
+        if (!script) throw new Error("Missing mock feedback script");
+        turn.feedback = clone(script.feedback);
+        turn.feedback_pending = false;
+      }
+    }
     if (record.conversation.status === "active") {
       record.conversation = {
         ...record.conversation,
@@ -515,6 +556,20 @@ export const mockPallyApi: PallyApi = {
     mockState.records = [];
     idempotencyCache.clear();
     return { status: "deleted" };
+  },
+
+  async deleteConversationHistory(expectedUserId) {
+    await delay();
+    ensureActiveAccount();
+    if (expectedUserId !== mockState.profile.id) {
+      throw new PallyApiError(401, "unauthorized", "로그인 계정이 변경됐어요. 다시 로그인해 주세요.");
+    }
+    const deletedConversations = mockState.records.length;
+    mockState.records = [];
+    mockState.profile.traits = ["acquaint", "serious", "calm", "indifferent", "casual"];
+    mockState.profile.updated_at = new Date().toISOString();
+    idempotencyCache.clear();
+    return { status: "deleted", deleted_conversations: deletedConversations };
   },
 
 };

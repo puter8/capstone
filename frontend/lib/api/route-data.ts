@@ -4,12 +4,14 @@ import type {
   ConversationListResponse,
   ProfileResponse,
   SubscriptionResponse,
+  UsageQuota,
   UsageResponse,
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
 import { pallyApi } from "@/lib/api";
-import { clearUser, invalidate, peek, prefetch, read, write } from "@/lib/api/query-cache";
+import { clearUser, evict, invalidate, peekStale, prefetch, read, write, writeStale } from "@/lib/api/query-cache";
 import { supabase } from "@/lib/supabase/client";
+import type { Axes } from "@/lib/types/character";
 
 const USAGE_TTL_MS = 15_000;
 const CONVERSATION_TTL_MS = 30_000;
@@ -28,11 +30,73 @@ function cursorKey(cursor?: string): string {
   return cursor ?? "first";
 }
 
+// Last signed-in user seen in this tab. Lets the home screen paint cached data
+// before the session check returns; it is always verified against the session.
+let rememberedUserId: string | null = null;
+
+export function rememberUser(userId: string): void {
+  rememberedUserId = userId;
+}
+
+export function forgetRememberedUser(): void {
+  rememberedUserId = null;
+}
+
 export async function getCurrentUserId(): Promise<string> {
   const { data, error } = await supabase.auth.getSession();
   if (error) throw new PallyApiError(401, "unauthorized", error.message);
   if (!data.session) throw new PallyApiError(401, "unauthorized", "로그인이 필요해요.");
+  rememberUser(data.session.user.id);
   return data.session.user.id;
+}
+
+export interface HomeSnapshot {
+  userId: string;
+  usage: UsageResponse;
+  profile: ProfileResponse["profile"];
+  subscription: SubscriptionResponse["subscription"] | null;
+}
+
+// Last known home data for the remembered user, even if expired. Null until the
+// user has loaded both usage and profile once, so a cold start still shows the loader.
+export function peekHomeSnapshot(): HomeSnapshot | null {
+  if (!rememberedUserId) return null;
+  const usage = peekStale<UsageResponse>(rememberedUserId, CACHE_KEYS.usage);
+  const profile = peekStale<ProfileResponse>(rememberedUserId, CACHE_KEYS.profile);
+  if (!usage || !profile) return null;
+  const subscription = peekStale<SubscriptionResponse>(rememberedUserId, CACHE_KEYS.subscription);
+  return {
+    userId: rememberedUserId,
+    usage,
+    profile: profile.profile,
+    subscription: subscription ? subscription.subscription : null,
+  };
+}
+
+export function usageFromQuota(current: UsageResponse | null | undefined, quota: UsageQuota): UsageResponse {
+  return {
+    plan: quota.daily_limit === null ? "pro" : "free",
+    date: current?.date ?? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date()),
+    timezone: "Asia/Seoul",
+    used_turns: quota.used_turns ?? (quota.daily_limit !== null && quota.remaining_turns !== null ? quota.daily_limit - quota.remaining_turns : 0),
+    remaining_turns: quota.remaining_turns,
+    daily_limit: quota.daily_limit,
+    reset_at: quota.resets_at,
+  };
+}
+
+// After a turn the server value is already known from the response. Keep it as the
+// stale value so returning to home does not flash the old count before the reload.
+export function patchStaleUsage(userId: string, quota: UsageQuota): void {
+  writeStale(userId, CACHE_KEYS.usage, usageFromQuota(peekStale<UsageResponse>(userId, CACHE_KEYS.usage), quota));
+}
+
+// Same for Pally's look: a finished conversation changes current_axes. Traits and
+// everything else stay stale and reload on the next read.
+export function patchStaleProfileAxes(userId: string, axes: Axes): void {
+  const cached = peekStale<ProfileResponse>(userId, CACHE_KEYS.profile);
+  if (!cached) return;
+  writeStale(userId, CACHE_KEYS.profile, { profile: { ...cached.profile, current_axes: axes } });
 }
 
 export function loadUsage(userId: string): Promise<UsageResponse> {
@@ -67,16 +131,6 @@ export function reloadHistoryFirstPage(userId: string): Promise<ConversationList
   return loadHistoryPage(userId);
 }
 
-export function loadLatestCompletedConversation(userId: string): Promise<ConversationListResponse> {
-  const history = peek<ConversationListResponse>(userId, `${CACHE_KEYS.history}first`);
-  if (history) return Promise.resolve(history);
-
-  // Share history data on return visits; fetch only one summary on a cold home load.
-  return read(userId, `${CACHE_KEYS.history}latest`, ROUTE_DATA_TTL_MS, () => (
-    pallyApi.listConversations({ status: "completed", limit: 1 })
-  ));
-}
-
 export function loadConversationPage(
   userId: string,
   conversationId: string,
@@ -88,8 +142,10 @@ export function loadConversationPage(
   ));
 }
 
+// Evict rather than expire: usage and subscription change with plan changes, so an
+// old value must not be painted before the reload. Turns re-seed it via patchStaleUsage.
 export function invalidateUsage(userId: string): void {
-  invalidate(userId, CACHE_KEYS.usage);
+  evict(userId, CACHE_KEYS.usage);
 }
 
 export function invalidateProfile(userId: string): void {
@@ -97,7 +153,7 @@ export function invalidateProfile(userId: string): void {
 }
 
 export function invalidateSubscription(userId: string): void {
-  invalidate(userId, CACHE_KEYS.subscription);
+  evict(userId, CACHE_KEYS.subscription);
 }
 
 export function invalidateConversationData(userId: string, conversationId?: string): void {
@@ -108,6 +164,7 @@ export function invalidateConversationData(userId: string, conversationId?: stri
 
 export function clearUserRouteData(userId: string): void {
   clearUser(userId);
+  if (rememberedUserId === userId) rememberedUserId = null;
 }
 
 export async function invalidateCurrentUserConversationData(conversationId?: string): Promise<void> {
@@ -119,7 +176,7 @@ export async function prefetchRouteData(href: string, userId?: string): Promise<
   const scope = userId ?? await getCurrentUserId();
   if (href.startsWith("/home")) {
     await Promise.all([
-      loadLatestCompletedConversation(scope),
+      loadProfile(scope),
       prefetch(scope, CACHE_KEYS.usage, USAGE_TTL_MS, () => pallyApi.getUsage()),
       prefetch(scope, CACHE_KEYS.subscription, ROUTE_DATA_TTL_MS, () => pallyApi.getSubscription()),
     ]);

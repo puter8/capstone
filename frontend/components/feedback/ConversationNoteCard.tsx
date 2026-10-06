@@ -38,26 +38,26 @@ export function ConversationNoteCard({ conversationId, feedbackHref, title, titl
   };
 
   return (
-    <article className="relative h-[134px] w-full shrink-0 rounded-[10px] bg-primary-soft">
+    <article className="relative flex min-h-[134px] w-full shrink-0 flex-col rounded-[10px] bg-primary-soft pb-[14px] pt-10">
       <span className="absolute left-2 top-0 grid size-[30px] place-items-center" aria-hidden="true">
         <img alt="" className="size-[21.17px] rotate-[35.03deg]" src="/icons/history-star.svg" />
       </span>
       {titlePending ? (
-        <div aria-busy="true" className="absolute left-[23px] top-10 flex h-[30px] w-[209px] items-center" role="status">
+        <div aria-busy="true" className="mx-[23px] flex h-[30px] items-center" role="status">
           <span className="sr-only">대화 제목을 만들고 있어요</span>
           <span aria-hidden="true" className="h-[18px] w-[150px] animate-pulse rounded-full bg-surface/50" />
         </div>
       ) : (
-        <h2 className="absolute left-[23px] top-10 flex h-[30px] w-[209px] items-center truncate text-body-sb text-surface">{title}</h2>
+        <h2 className="mx-[23px] flex min-h-[30px] items-center text-body-sb text-surface [overflow-wrap:anywhere]">{title}</h2>
       )}
       <img
         alt=""
         aria-hidden="true"
-        className="pointer-events-none absolute left-[18px] top-[72.5px] h-[1.5px] w-[214.009px]"
+        className="pointer-events-none mx-[18px] mt-[2.5px] h-[1.5px] w-[calc(100%-36px)] max-w-none"
         src="/icons/history-title-line.svg"
       />
       {error ? <p className="absolute bottom-1 left-[13px] text-[11px] text-red-100" role="alert">{error}</p> : null}
-      <div className="absolute right-[10px] top-[84px] flex gap-4">
+      <div className="mt-[10px] flex justify-end gap-4 pr-[10px]">
         <button aria-busy={isReopening} className="grid h-9 w-[83px] place-items-center rounded-full border border-surface text-button-2 text-surface disabled:opacity-60" disabled={isReopening} onClick={() => { void reopen(); }} type="button">
           대화하기
         </button>

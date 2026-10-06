@@ -104,6 +104,12 @@ export interface SpeechResponse {
   encoding: "MP3";
 }
 
+export interface OpenerResponse {
+  text: string;
+  audio: string | null;
+  warnings: ApiWarning[];
+}
+
 export interface ConversationCompleteResponse extends ConversationMutationResponse {
   warnings: ApiWarning[];
 }
@@ -241,6 +247,11 @@ export interface DeleteAccountResponse {
   status: "deleted";
 }
 
+export interface DeleteConversationHistoryResponse {
+  status: "deleted";
+  deleted_conversations: number;
+}
+
 export type ActivityEventType =
   | "app_session_started"
   | "conversation_detail_opened"
@@ -305,6 +316,7 @@ export interface PallyApi {
   onboard(input: OnboardingInput): Promise<ProfileResponse>;
   updateProfile(input: UpdateProfileInput): Promise<ProfileResponse>;
   createConversation(idempotencyKey: string): Promise<ConversationResponse>;
+  createOpener(conversationId: string, idempotencyKey: string): Promise<OpenerResponse>;
   createTurn(conversationId: string, input: TurnInput): Promise<TurnResponse>;
   synthesizeSpeech(text: string): Promise<SpeechResponse>;
   completeConversation(conversationId: string): Promise<ConversationCompleteResponse>;
@@ -321,6 +333,7 @@ export interface PallyApi {
   refreshSubscription(expectedUserId: string): Promise<SubscriptionResponse>;
   cancelSubscription(expectedUserId: string): Promise<SubscriptionResponse>;
   deleteAccount(input: DeleteAccountInput): Promise<DeleteAccountResponse>;
+  deleteConversationHistory(expectedUserId: string): Promise<DeleteConversationHistoryResponse>;
 }
 
 export type ApiErrorCode =
@@ -334,6 +347,8 @@ export type ApiErrorCode =
   | "quota_exceeded"
   | "conflict"
   | "conversation_closed"
+  | "conversation_started"
+  | "opener_failed"
   | "idempotency_conflict"
   | "persistence_failed"
   | "service_unavailable";

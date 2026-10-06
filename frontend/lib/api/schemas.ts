@@ -27,6 +27,12 @@ const warningSchema = z.object({
   message: z.string(),
 });
 
+export const openerResponseSchema = z.object({
+  text: z.string().trim().min(1),
+  audio: z.string().nullable(),
+  warnings: z.array(warningSchema),
+});
+
 const conversationSchema = z.object({
   id: z.string().uuid(),
   status: z.enum(["active", "completed"]),
@@ -224,6 +230,11 @@ export const billingOverviewResponseSchema = z.object({
 
 export const deleteAccountResponseSchema = z.object({
   status: z.literal("deleted"),
+});
+
+export const deleteConversationHistoryResponseSchema = z.object({
+  status: z.literal("deleted"),
+  deleted_conversations: z.number().int().nonnegative(),
 });
 
 export const errorResponseSchema = z.object({
