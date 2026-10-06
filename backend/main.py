@@ -1244,6 +1244,19 @@ class ProfileAvatarResponse(BaseModel):
     avatar_url: Optional[str] = None
 
 
+def _profile_payload(sb, row: dict, user) -> dict:
+    """프로필 + 현재 Pally 상태(current_axes).
+
+    홈이 그리는 Pally 와 마이페이지 태그가 같은 값에서 나오도록 프로필에 담는다.
+    대화 목록 항목의 current_axes 는 "그 대화의 축"이라 의미가 달라 섞어 쓰면
+    헷갈린다 — 현재 Pally 상태는 프로필에서 읽는다. 완료한 대화가 없으면 첫 Pally
+    와 같은 _INITIAL_AXES.
+    """
+    payload = _profile_to_response(row, _extract_avatar(user))
+    payload["current_axes"] = _carried_over_axes(sb, row["id"]) or dict(_INITIAL_AXES)
+    return payload
+
+
 def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
     # 계약: snake_case UserProfile. traits는 DB seed 5개(생성 로직은 후속).
     # avatar_url 은 DB 가 아니라 OAuth 메타데이터(구글/카카오)에서 정규화해 넣는다.
@@ -1297,7 +1310,7 @@ async def onboarding(
     if not res.data:
         raise AppError(503, "persistence_failed", "Failed to save profile")
 
-    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
+    return {"profile": _profile_payload(sb, res.data[0], user)}
 
 
 @app.get("/api/profile/avatar", response_model=ProfileAvatarResponse)
@@ -1320,7 +1333,7 @@ async def get_profile(user=Depends(get_current_user)):
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
+    return {"profile": _profile_payload(sb, res.data[0], user)}
 
 
 @app.patch("/api/profile")
@@ -1352,7 +1365,7 @@ async def update_profile(
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_to_response(res.data[0], _extract_avatar(user))}
+    return {"profile": _profile_payload(sb, res.data[0], user)}
 
 
 # ── Conversations & Turns — 3주차 음성 대화 (sessions/messages 재사용) ────────
@@ -2187,31 +2200,30 @@ def _axes_to_traits(axes: dict) -> list:
 
 
 def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
-    """새 대화의 EMA 출발점 = 가장 최근에 끝낸 대화의 최종 5축.
+    """Pally 의 현재 모습 = 가장 최근에 끝낸 대화의 최종 5축. 홈이 그리는 Pally,
+    마이페이지 태그, 다음 대화의 EMA 출발점이 모두 이 값을 쓴다 — 기준이 하나라
+    세 화면이 어긋나지 않는다.
 
-    홈 화면이 복원해 보여주는 Pally(완료 대화 중 최신)와 같은 기준이라
-    '보이는 Pally'에서 다음 대화가 이어진다. 발화가 없는 완료 대화는 건너뛰고,
-    이전 완료 대화가 없으면 None(첫 발화 원점수로 시작).
+    말을 하지 않은 대화는 없는 셈 친다: axes 는 사용자 발화에만 붙으므로 Pally
+    오프너만 있는 대화는 자연히 건너뛴다. 완료 대화 개수에 상한을 두지 않는다 —
+    시작만 누르고 나간 대화가 쌓여도 누적 체인이 끊겨선 안 된다. 이전 완료 대화가
+    없으면 None (첫 발화 원점수로 시작).
+
+    sessions 를 임베딩해 한 번에 조회한다. 세션 id 목록을 in_() 으로 넘기던 이전
+    방식은 상한을 없애면 URL 이 무한히 길어진다.
     """
     try:
-        sessions = (sb.table("sessions").select("id").eq("user_id", user_id)
-                    .not_.is_("ended_at", "null").order("created_at", desc=True).limit(20).execute())
-        ids = [row["id"] for row in (sessions.data or [])]
-        if not ids:
-            return None
-        msgs = (sb.table("messages").select("session_id, axes, created_at")
-                .in_("session_id", ids).eq("role", "user").not_.is_("axes", "null")
-                .order("created_at").execute())
+        res = (sb.table("messages")
+               .select("axes, created_at, sessions!inner(user_id, created_at, ended_at)")
+               .eq("role", "user").not_.is_("axes", "null")
+               .eq("sessions.user_id", user_id).not_.is_("sessions.ended_at", "null")
+               .order("sessions(created_at)", desc=True)  # 최신 완료 대화부터
+               .order("created_at", desc=True)            # 그 대화의 마지막 발화
+               .limit(1).execute())
     except Exception as e:
         logging.error(f"carried-over axes read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to load previous Pally state")
-    latest_by_session: Dict[str, dict] = {}
-    for m in (msgs.data or []):
-        latest_by_session[m["session_id"]] = m["axes"]
-    for session_id in ids:  # 최신 완료 대화부터
-        if session_id in latest_by_session:
-            return latest_by_session[session_id]
-    return None
+    return res.data[0]["axes"] if res.data else None
 
 
 @app.delete("/api/conversations")

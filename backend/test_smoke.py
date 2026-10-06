@@ -838,3 +838,64 @@ def test_opener_only_conversations_do_not_fill_the_weekly_streak_tasks():
 
     assert len(ctx["week_conv_dates"]) == 2
     assert main._eval_task(sb, "user-1", date_kst, "E2", ctx) is False
+
+
+# ── 현재 Pally 상태(current_axes) — 홈·마이페이지·다음 대화가 같은 값을 쓴다 ──
+
+
+def test_carried_over_axes_skips_conversations_without_utterances_in_one_query():
+    """axes 는 사용자 발화에만 붙으므로 오프너만 있는 대화는 조회에서 빠진다.
+
+    완료 대화 수에 상한을 두지 않는다 — 시작만 누르고 나간 대화가 쌓여도 누적
+    체인이 끊기면 안 된다. 그래서 세션 id 를 in_() 으로 넘기지 않고 임베딩한다.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    calls = {"eq": [], "not_is": [], "order": [], "limit": [], "in_": []}
+    query = Mock()
+    query.select.return_value = query
+    query.eq.side_effect = lambda c, v: calls["eq"].append((c, v)) or query
+    query.not_.is_.side_effect = lambda c, v: calls["not_is"].append((c, v)) or query
+    query.order.side_effect = lambda c, **kw: calls["order"].append((c, kw.get("desc"))) or query
+    query.limit.side_effect = lambda n: calls["limit"].append(n) or query
+    query.in_.side_effect = lambda c, v: calls["in_"].append(c) or query
+    query.execute.return_value = SimpleNamespace(data=[{"axes": {"Formality": 20}}])
+
+    sb = Mock()
+    sb.table.return_value = query
+
+    assert main._carried_over_axes(sb, "user-1") == {"Formality": 20}
+    sb.table.assert_called_once_with("messages")
+    assert ("role", "user") in calls["eq"]
+    assert ("sessions.user_id", "user-1") in calls["eq"]
+    assert ("axes", "null") in calls["not_is"]            # 발화에 축이 붙은 것만
+    assert ("sessions.ended_at", "null") in calls["not_is"]  # 끝낸 대화만
+    assert calls["order"] == [("sessions(created_at)", True), ("created_at", True)]
+    assert calls["limit"] == [1]
+    assert calls["in_"] == []  # 세션 목록을 넘기지 않는다 = 개수 상한 없음
+
+    query.execute.return_value = SimpleNamespace(data=[])
+    assert main._carried_over_axes(sb, "user-1") is None
+
+
+def test_profile_carries_pallys_current_look(monkeypatch):
+    """홈이 그리는 Pally 와 마이페이지 태그가 같은 값에서 나오게 프로필이 축을 담는다."""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    row = {
+        "id": "user-1", "display_name": "민주", "english_level": "B1",
+        "onboarding_completed": True, "traits": ["acquaint"],
+        "created_at": "2026-10-01T00:00:00Z", "updated_at": None,
+    }
+    user = SimpleNamespace(id="user-1", user_metadata={}, app_metadata={})
+    sb = Mock()
+
+    spoken = {"Formality": 34, "Energy": 37, "Intimacy": 22, "Humor": 11, "Curiosity": 21}
+    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: spoken)
+    assert main._profile_payload(sb, row, user)["current_axes"] == spoken
+
+    # 완료한 대화가 없으면 홈의 첫 Pally 와 같은 값
+    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
+    assert main._profile_payload(sb, row, user)["current_axes"] == main._INITIAL_AXES
