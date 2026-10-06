@@ -244,6 +244,7 @@ export type Database = {
           character: Json | null
           created_at: string
           feedback: Json | null
+          feedback_requested_at: string | null
           id: string
           idempotency_key: string | null
           role: string
@@ -255,6 +256,7 @@ export type Database = {
           character?: Json | null
           created_at?: string
           feedback?: Json | null
+          feedback_requested_at?: string | null
           id?: string
           idempotency_key?: string | null
           role: string
@@ -266,6 +268,7 @@ export type Database = {
           character?: Json | null
           created_at?: string
           feedback?: Json | null
+          feedback_requested_at?: string | null
           id?: string
           idempotency_key?: string | null
           role?: string
@@ -321,6 +324,7 @@ export type Database = {
           level: string
           reopen_count: number
           reopened_at: string | null
+          title: string | null
           user_id: string | null
         }
         Insert: {
@@ -331,6 +335,7 @@ export type Database = {
           level?: string
           reopen_count?: number
           reopened_at?: string | null
+          title?: string | null
           user_id?: string | null
         }
         Update: {
@@ -341,6 +346,7 @@ export type Database = {
           level?: string
           reopen_count?: number
           reopened_at?: string | null
+          title?: string | null
           user_id?: string | null
         }
         Relationships: []
@@ -453,6 +459,14 @@ export type Database = {
         Returns: undefined
       }
       billing_stop_renewal: { Args: { p_user_id: string }; Returns: string }
+      complete_conversation_with_feedback: {
+        Args: {
+          p_conversation_id: string
+          p_expected_reopen_count: number
+          p_user_id: string
+        }
+        Returns: Json
+      }
       release_turn: {
         Args: { p_date: string; p_user_id: string }
         Returns: undefined
