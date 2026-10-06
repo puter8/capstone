@@ -60,7 +60,6 @@ export default function HomePage() {
   const [isRestoring, setIsRestoring] = useState(true);
   const [hasRestoredPally, setHasRestoredPally] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
-  const [pendingUserTranscript, setPendingUserTranscript] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
 
@@ -297,7 +296,6 @@ export default function HomePage() {
           createdAt: response.created_at ?? new Date().toISOString(),
           feedback: { items: response.feedback, pending: response.feedback_pending },
         };
-        setPendingUserTranscript(null);
         if (firstUserTranscriptRef.current === null) firstUserTranscriptRef.current = response.user.transcript;
         dispatch({ type: "rec/processed", userMsg: userMessage, pallyMsg: pallyMessage });
         updateFromChatResponse({ axes: response.axes });
@@ -338,7 +336,6 @@ export default function HomePage() {
       } catch (error) {
         console.error("Conversation request failed.", error);
         if (closingRef.current) return;
-        setPendingUserTranscript(null);
         if (error instanceof PallyApiError && error.code === "quota_exceeded") {
           setQuotaExhausted(true);
           setLimitDialogOpen(true);
@@ -356,14 +353,11 @@ export default function HomePage() {
   const recorder = useRecorder({
     onStart: () => {
       if (!closingRef.current) {
-        setPendingUserTranscript(null);
         dispatch({ type: "rec/start" });
       }
     },
-    onStop: (blob, transcript) => {
+    onStop: (blob) => {
       if (closingRef.current) return;
-      const normalizedTranscript = transcript?.trim();
-      setPendingUserTranscript(normalizedTranscript ? normalizedTranscript : null);
       dispatch({ type: "rec/stop" });
 
       const pendingTurn = (async () => {
@@ -374,7 +368,6 @@ export default function HomePage() {
         } catch (error) {
           console.error("Audio processing failed.", error);
           if (closingRef.current) return;
-          setPendingUserTranscript(null);
           dispatch({
             type: "rec/error",
             reason: "generic",
@@ -389,13 +382,11 @@ export default function HomePage() {
     },
     onPermissionDenied: () => {
       if (!closingRef.current) {
-        setPendingUserTranscript(null);
         dispatch({ type: "rec/error", reason: "permission-denied", message: "마이크 권한이 필요해요. 브라우저 설정에서 허용해 주세요." });
       }
     },
     onError: (message) => {
       if (!closingRef.current) {
-        setPendingUserTranscript(null);
         dispatch({ type: "rec/error", reason: "generic", message });
       }
     },
@@ -435,7 +426,6 @@ export default function HomePage() {
         setWarning(completed.warnings.map((item) => item.message).join(" "));
       }
       if (firstUserTranscript) revealAxes();
-      setPendingUserTranscript(null);
       conversationIdRef.current = null;
       firstUserTranscriptRef.current = null;
       openerKeyRef.current = null;
@@ -614,7 +604,6 @@ export default function HomePage() {
               expanded={state.historyOpen}
               listening={isRecording}
               messages={state.messages}
-              pendingUserTranscript={pendingUserTranscript}
               onToggleExpand={handleToggleHistory}
               thinking={isProcessing}
             />

@@ -19,6 +19,9 @@ export interface UserProfile {
   avatar_url: string | null;
   created_at: string;
   updated_at: string;
+  // Pally's current look. Same source as `traits`, so the home canvas and the
+  // My Pally tags never disagree. Undefined only against an older backend.
+  current_axes?: Axes;
 }
 
 export interface Conversation {
@@ -44,6 +47,8 @@ export interface FeedbackItem {
   original: string;
   corrected: string;
   explanation_ko: string;
+  /** original rewritten in the user's own words; absent on older or ungrounded items. */
+  replacement?: string;
 }
 
 export type ApiWarningCode = "tts_failed" | "feedback_failed" | "traits_update_failed";

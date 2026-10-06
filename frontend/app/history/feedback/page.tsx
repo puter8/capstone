@@ -9,13 +9,22 @@ import { BottomNav } from "@/components/nav/BottomNav";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import type { FeedbackItem } from "@/lib/api";
+import type { ConversationTurn, FeedbackItem } from "@/lib/api";
 import { getCurrentUserId, invalidateConversationData, loadConversationPage, loadHistoryPage } from "@/lib/api/route-data";
 import { recordFeedbackItemOpened } from "@/lib/analytics/activity-events";
 
+type FeedbackGroup = { turnId: string; utterance: string | null; items: FeedbackItem[] };
+
+// One card per utterance, so the full sentence shows every correction made to it.
+function toFeedbackGroups(turns: readonly ConversationTurn[]): FeedbackGroup[] {
+  return turns
+    .filter((turn) => turn.feedback.length > 0)
+    .map((turn) => ({ turnId: turn.id, utterance: turn.user_transcript, items: turn.feedback }));
+}
+
 export default function FeedbackPage() {
   const router = useRouter();
-  const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
+  const [feedback, setFeedback] = useState<FeedbackGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -51,8 +60,7 @@ export default function FeedbackPage() {
         const detail = await loadConversationPage(userId, conversationId);
 
         if (active) {
-          const nextFeedback = detail.turns.flatMap((turn) => turn.feedback);
-          setFeedback(nextFeedback);
+          setFeedback(toFeedbackGroups(detail.turns));
           setFeedbackPending(detail.turns.some((turn) => turn.feedback_pending));
           setIsActiveConversation(detail.conversation.status === "active");
           setNextCursor(detail.next_cursor);
@@ -92,8 +100,7 @@ export default function FeedbackPage() {
     try {
       const detail = await loadConversationPage(userId, conversationId, cursor);
       loadedCursorsRef.current.push(cursor);
-      const nextFeedback = detail.turns.flatMap((turn) => turn.feedback);
-      setFeedback((current) => [...current, ...nextFeedback]);
+      setFeedback((current) => [...current, ...toFeedbackGroups(detail.turns)]);
       setFeedbackPending((current) => current || detail.turns.some((turn) => turn.feedback_pending));
       setNextCursor(detail.next_cursor);
     } catch (caught) {
@@ -134,7 +141,7 @@ export default function FeedbackPage() {
         if (cancelled) return;
         const turns = pages.flatMap((page) => page.turns);
         const pending = turns.some((turn) => turn.feedback_pending);
-        setFeedback(turns.flatMap((turn) => turn.feedback));
+        setFeedback(toFeedbackGroups(turns));
         setFeedbackPending(pending);
         setIsActiveConversation(pages[0].conversation.status === "active");
         setNextCursor(pages[pages.length - 1].next_cursor);
@@ -217,16 +224,15 @@ export default function FeedbackPage() {
             {pollingStopped && !isActiveConversation ? <button className="mt-2 min-h-11 underline underline-offset-4" onClick={() => setRefreshVersion((version) => version + 1)} type="button">다시 확인</button> : null}
           </div>
         ) : null}
-        {feedback.map((item, index) => (
+        {feedback.map((group) => (
           <FeedbackCard
-            corrected={item.corrected}
-            explanation={item.explanation_ko}
-            key={`${item.original}-${index}`}
+            items={group.items}
+            key={group.turnId}
             onOpen={() => {
               const conversationId = conversationIdRef.current;
-              if (conversationId) recordFeedbackOpen(conversationId, item);
+              if (conversationId) group.items.forEach((item) => recordFeedbackOpen(conversationId, item));
             }}
-            original={item.original}
+            utterance={group.utterance}
           />
         ))}
         <div aria-hidden="true" className="h-px shrink-0" ref={sentinelRef} />

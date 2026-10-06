@@ -19,6 +19,7 @@ const feedbackSchema = z.object({
   original: z.string(),
   corrected: z.string(),
   explanation_ko: z.string(),
+  replacement: z.string().optional(),
 });
 
 const warningSchema = z.object({
@@ -55,6 +56,9 @@ export const profileResponseSchema = z.object({
     avatar_url: z.string().url().nullable(),
     created_at: z.string(),
     updated_at: z.string(),
+    // Pally's current look: the final axes of the last conversation the user spoke in.
+    // Optional so the frontend keeps validating against a backend deployed before it.
+    current_axes: axesSchema.optional(),
   }),
 });
 
