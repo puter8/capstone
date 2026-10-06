@@ -127,10 +127,22 @@ def test_clean_title_strips_quotes_punctuation_and_whitespace():
     assert len(main._clean_title("word " * 40)) <= main._TITLE_MAX_CHARS
 
 
+def test_conversation_title_falls_back_to_the_opener_when_nobody_spoke():
+    """발화 0건 대화도 History 에 남으므로(기획) 제목이 비지 않아야 한다."""
+    opener = {"role": "pally", "transcript": "Hey! Got any fun weekend plans coming up?"}
+    spoke = [opener, {"role": "user", "transcript": "i went to the park"}]
+
+    assert main._conversation_title({"title": None}, [opener]) == opener["transcript"]
+    # 발화가 있으면 사용자가 말한 내용이 먼저 (오프너가 앞에 있어도)
+    assert main._conversation_title({"title": None}, spoke) == "i went to the park"
+    assert main._conversation_title({"title": "Park Visit"}, [opener]) == "Park Visit"
+    assert main._conversation_title({"title": None}, []) is None
+
+
 def test_conversation_title_prefers_stored_title_then_first_utterance():
-    user_msgs = [{"transcript": "i had no lunch im diet"}]
-    assert main._conversation_title({"title": "Diet and Hunger"}, user_msgs) == "Diet and Hunger"
-    assert main._conversation_title({"title": None}, user_msgs) == "i had no lunch im diet"
+    messages = [{"role": "user", "transcript": "i had no lunch im diet"}]
+    assert main._conversation_title({"title": "Diet and Hunger"}, messages) == "Diet and Hunger"
+    assert main._conversation_title({"title": None}, messages) == "i had no lunch im diet"
     assert main._conversation_title({}, []) is None
 
 

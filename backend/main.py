@@ -2047,12 +2047,23 @@ _TITLE_MAX_CHARS = 60
 _TITLE_TRANSCRIPT_MAX_CHARS = 4000  # 긴 대화도 제목 생성 비용·지연을 일정하게 유지
 
 
-def _conversation_title(session: dict, user_msgs: list) -> Optional[str]:
-    """저장된 제목이 있으면 그것을, 없으면(종료 전·생성 실패) 첫 발화를 제목으로 쓴다."""
+def _conversation_title(session: dict, messages: list) -> Optional[str]:
+    """저장된 제목이 있으면 그것을, 없으면(종료 전·생성 실패) 첫 발화를 제목으로 쓴다.
+
+    사용자가 한 마디도 하지 않아도 대화를 시작한 기록이므로 History 에 남긴다. 그런
+    대화에 남은 텍스트는 Pally 오프너뿐이고, 제목을 비우면 목록에 빈 줄이 보이므로
+    오프너를 제목으로 쓴다. 발화가 하나라도 있으면 지금처럼 사용자가 말한 내용이
+    먼저다 — 제목은 사용자가 무슨 얘기를 했는지 가리켜야 한다.
+    `messages` 는 created_at 오름차순.
+    """
     stored = session.get("title")
     if stored:
         return stored
-    return _truncate(user_msgs[0]["transcript"], _TITLE_MAX_CHARS) if user_msgs else None
+    source = next(
+        (m for m in messages if m["role"] == "user"),
+        next((m for m in messages if m["role"] == "pally"), None),
+    )
+    return _truncate(source["transcript"], _TITLE_MAX_CHARS) if source else None
 
 
 def _clean_title(raw) -> Optional[str]:
@@ -2265,7 +2276,7 @@ async def list_conversations(
         items.append({
             "id": s["id"],
             "status": "completed" if s.get("ended_at") else "active",
-            "title": _conversation_title(s, user_msgs),
+            "title": _conversation_title(s, ms),
             "started_at": s["created_at"],
             "last_turn_at": ms[-1]["created_at"] if ms else None,
             "completed_at": s.get("ended_at"),
@@ -2308,7 +2319,7 @@ async def get_conversation(
     conv = {
         "id": session["id"],
         "status": "completed" if session.get("ended_at") else "active",
-        "title": _conversation_title(session, user_msgs),
+        "title": _conversation_title(session, ms),
         "started_at": session["created_at"],
         "last_turn_at": ms[-1]["created_at"] if ms else None,
         "completed_at": session.get("ended_at"),
