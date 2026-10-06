@@ -41,23 +41,5 @@
       "drifted_axes": { "Formality": 44, "Energy": 35, "Intimacy": 18, "Humor": 8, "Curiosity": 23 },
       "drifted_character": { "tone_casual": 38, "energy_level": 42, "humor_level": 19 }
     }
-  ],
-  "feedback_fallback_cases": [
-    {
-      "name": "had_no_pattern",
-      "utterance": "I had no lunch. I'm on a diet.",
-      "expected_items": [
-        {
-          "original": "I had no lunch. I'm on a diet.",
-          "corrected": "I didn't have lunch.",
-          "explanation_ko": "'I had no lunch. I'm on a diet.'보다 'I didn't have lunch.'가 더 자연스럽습니다."
-        }
-      ]
-    },
-    {
-      "name": "no_pattern_match",
-      "utterance": "Thank you so much for your help!",
-      "expected_items": []
-    }
   ]
 }
