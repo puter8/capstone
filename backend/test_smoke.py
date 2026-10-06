@@ -707,3 +707,134 @@ def test_opener_retries_once_and_keeps_a_valid_second_try(monkeypatch):
     assert response.status_code == 201
     assert response.json()["text"] == "Hey! How was your day?"
     assert inserted[0][1]["transcript"] == "Hey! How was your day?"
+
+
+# ── Daily tasks — 오프너만 있는 대화는 "대화했다"로 세지 않는다 ───────────────
+
+
+class _FakeAchievementQuery:
+    """_gather_achievement_context 가 던지는 질의 4종만 구분해 돌려주는 가짜 쿼리."""
+
+    def __init__(self, table, data):
+        self.table = table
+        self.data = data
+        self.columns = ""
+        self.filters = []
+
+    def select(self, columns):
+        self.columns = columns
+        return self
+
+    def eq(self, column, value):
+        self.filters.append((column, value))
+        return self
+
+    def in_(self, column, values):
+        self.filters.append((column, tuple(values)))
+        return self
+
+    def gte(self, *_):
+        return self
+
+    def lt(self, *_):
+        return self
+
+    def order(self, *_, **__):
+        return self
+
+    def limit(self, *_):
+        return self
+
+    def execute(self):
+        from types import SimpleNamespace
+
+        if self.table == "messages":
+            # select("session_id") + role=user → 전체 기간 발화 세션 / 그 외 → 오늘 메시지
+            key = "spoken" if self.columns.strip() == "session_id" else "today"
+            return SimpleNamespace(data=self.data[key])
+        return SimpleNamespace(data=self.data.get(self.table, []))
+
+
+def _achievement_ctx(sessions, spoken_ids, today_msgs):
+    from unittest.mock import Mock
+
+    date_kst = main._kst_date()
+    data = {
+        "sessions": sessions,
+        "spoken": [{"session_id": sid} for sid in spoken_ids],
+        "today": today_msgs,
+        "activity_events": [],
+        "usage_daily": [],
+    }
+    sb = Mock()
+    sb.table.side_effect = lambda name: _FakeAchievementQuery(name, data)
+    return sb, main._gather_achievement_context(sb, "user-1", date_kst), date_kst
+
+
+def _today_window():
+    return main._kst_day_window_utc(main._kst_date())
+
+
+def test_daily_tasks_do_not_count_a_conversation_the_user_never_spoke_in():
+    """시작 버튼만 눌러도 Pally 오프너로 세션이 생기므로, 세션 존재만으로 판정하면
+    한 마디도 하지 않고 A1 이 달성된다. 발화가 있는 대화만 세야 한다."""
+    start, _end = _today_window()
+    opener_only = {"id": "s-opener", "created_at": start, "ended_at": start, "reopened_at": None}
+
+    sb, ctx, date_kst = _achievement_ctx([opener_only], spoken_ids=[], today_msgs=[])
+
+    assert ctx["sessions_today"] == [] and ctx["completed_today"] == []
+    assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is False  # 오늘 대화 시작
+    assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is False  # 오늘 대화 완료
+    assert main._eval_task(sb, "user-1", date_kst, "E3", ctx) is False  # 이번 주 첫 대화
+
+
+def test_daily_tasks_count_a_conversation_once_the_user_speaks():
+    start, _end = _today_window()
+    spoke = {"id": "s-spoke", "created_at": start, "ended_at": start, "reopened_at": None}
+    opener_only = {"id": "s-opener", "created_at": start, "ended_at": start, "reopened_at": None}
+    msgs = [{"session_id": "s-spoke", "role": "user", "transcript": "i went to the park",
+             "axes": None, "character": None, "created_at": start, "feedback": None}]
+
+    sb, ctx, date_kst = _achievement_ctx([spoke, opener_only], spoken_ids=["s-spoke"], today_msgs=msgs)
+
+    assert [s["id"] for s in ctx["sessions_today"]] == ["s-spoke"]
+    assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is True
+    assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is True
+    assert main._eval_task(sb, "user-1", date_kst, "E3", ctx) is True
+    # 발화한 대화는 1개뿐 → 세션 2개 과제는 오프너만 있는 대화로 채워지지 않는다
+    assert main._eval_task(sb, "user-1", date_kst, "A4", ctx) is False
+
+
+def test_a6_counts_a_conversation_spoken_yesterday_but_completed_today():
+    """발화는 어제, 종료는 오늘인 대화도 A6 대상이다 — 발화 판정을 오늘로 좁히면 안 된다."""
+    start, _end = _today_window()
+    session = {"id": "s-old", "created_at": "2026-01-01T00:00:00+00:00", "ended_at": start, "reopened_at": None}
+
+    sb, ctx, date_kst = _achievement_ctx([session], spoken_ids=["s-old"], today_msgs=[])
+
+    assert [s["id"] for s in ctx["completed_today"]] == ["s-old"]
+    assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is True
+
+
+def test_opener_only_conversations_do_not_fill_the_weekly_streak_tasks():
+    """E2(이번 주 3일)가 시작만 누른 날로 채워지지 않는다."""
+    from datetime import datetime, timedelta
+
+    from main import _KST
+
+    today = datetime.now(_KST)
+    monday = today - timedelta(days=today.weekday())
+    sessions, spoken = [], []
+    for day in range(3):
+        at = (monday + timedelta(days=day)).isoformat()
+        sessions.append({"id": f"s-open-{day}", "created_at": at, "ended_at": None, "reopened_at": None})
+    for day in range(2):  # 그중 2일만 실제로 말했다
+        at = (monday + timedelta(days=day)).isoformat()
+        sessions.append({"id": f"s-spoke-{day}", "created_at": at, "ended_at": None, "reopened_at": None})
+        spoken.append(f"s-spoke-{day}")
+
+    sb, ctx, date_kst = _achievement_ctx(sessions, spoken_ids=spoken, today_msgs=[])
+
+    assert len(ctx["week_conv_dates"]) == 2
+    assert main._eval_task(sb, "user-1", date_kst, "E2", ctx) is False

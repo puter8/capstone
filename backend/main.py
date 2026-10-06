@@ -2552,13 +2552,22 @@ def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
         raise AppError(503, "persistence_failed", "Failed to load achievements data")
     sessions = sess.data or []
     sess_ids = [s["id"] for s in sessions]
-    sessions_today = [s for s in sessions if start <= s["created_at"] < end]
-    completed_today = [s for s in sessions if s.get("ended_at") and start <= s["ended_at"] < end]
 
+    # 대화를 "했다"고 보는 기준은 사용자가 한 번이라도 말한 대화다. Pally 오프너만
+    # 있는 대화는 세지 않는다 — 시작 버튼을 누르면 Pally 가 먼저 말하면서 세션이
+    # 생기므로, 세션 존재만으로 판정하면 한 마디도 하지 않고 과제가 달성된다.
+    # 발화가 어제였고 종료만 오늘인 대화도 있어서(A6) 날짜 창으로 제한하지 않는다.
+    spoken_session_ids: set = set()
     user_msgs = []
     if sess_ids:
+        spoken = sb.table("messages").select("session_id").in_("session_id", sess_ids).eq("role", "user").execute()
+        spoken_session_ids = {m["session_id"] for m in (spoken.data or [])}
         msgs = sb.table("messages").select("session_id, role, transcript, axes, character, created_at, feedback").in_("session_id", sess_ids).gte("created_at", start).lt("created_at", end).order("created_at").execute()
         user_msgs = [m for m in (msgs.data or []) if m["role"] == "user"]
+
+    spoken_sessions = [s for s in sessions if s["id"] in spoken_session_ids]
+    sessions_today = [s for s in spoken_sessions if start <= s["created_at"] < end]
+    completed_today = [s for s in spoken_sessions if s.get("ended_at") and start <= s["ended_at"] < end]
 
     ev = sb.table("activity_events").select("event_type").eq("user_id", user_id).gte("received_at", start).lt("received_at", end).execute()
     event_counts: Dict[str, int] = {}
@@ -2572,7 +2581,7 @@ def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
     monday = datetime.fromisoformat(date_kst).date() - timedelta(days=datetime.fromisoformat(date_kst).weekday())
     week_dates = {
         datetime.fromisoformat(s["created_at"].replace("Z", "+00:00")).astimezone(_KST).date()
-        for s in sessions
+        for s in spoken_sessions
     }
     week_conv_dates = {d for d in week_dates if monday <= d <= monday + timedelta(days=6)}
 
@@ -2581,6 +2590,7 @@ def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
         "window": (start, end),
         "sessions": sessions,
         "sess_ids": sess_ids,
+        "spoken_session_ids": spoken_session_ids,
         "sessions_today": sessions_today,
         "completed_today": completed_today,
         "user_msgs": user_msgs,
@@ -2724,7 +2734,8 @@ def _eval_task(sb, user_id: str, date_kst: str, task_id: str, ctx: dict) -> bool
         today_avg = _avg_words(um)
         if today_avg <= 0:
             return False
-        prior = [s for s in ctx["sessions"] if s["created_at"] < start]
+        prior = [s for s in ctx["sessions"]
+                 if s["created_at"] < start and s["id"] in ctx["spoken_session_ids"]]
         if not prior:
             return False
         prev_session = max(prior, key=lambda s: s["created_at"])
