@@ -11,6 +11,7 @@
     "check:opener": "tsx scripts/check-opener.ts",
     "check:feedback-sentence": "tsx scripts/check-feedback-sentence.ts",
     "check:home-snapshot": "tsx scripts/check-home-snapshot.ts",
+    "check:inline-feedback": "tsx scripts/check-inline-feedback.ts",
     "check:mock-api": "tsx scripts/check-mock-api.ts",
     "check:query-cache": "tsx scripts/check-query-cache.ts",
     "check:supabase": "tsx scripts/check-supabase.ts",
