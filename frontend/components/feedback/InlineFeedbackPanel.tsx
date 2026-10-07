@@ -8,11 +8,10 @@ import { cn } from "@/lib/utils";
 type InlineFeedbackPanelProps = {
   className?: string;
   feedback: readonly FeedbackItem[];
-  feedbackPending: boolean;
   onOpen: (item: FeedbackItem) => void;
 };
 
-export function InlineFeedbackPanel({ className, feedback, feedbackPending, onOpen }: InlineFeedbackPanelProps) {
+export function InlineFeedbackPanel({ className, feedback, onOpen }: InlineFeedbackPanelProps) {
   const signature = useMemo(
     () => feedback.map((item) => item.id ?? `${item.original}:${item.corrected}`).join("|"),
     [feedback],
@@ -28,16 +27,13 @@ export function InlineFeedbackPanel({ className, feedback, feedbackPending, onOp
     if (openIndex !== null) explanationRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
   }, [openIndex]);
 
-  if (feedback.length === 0 && !feedbackPending) return null;
+  // Feedback is generated after the conversation ends, so while it is pending there is
+  // nothing to show here; History shows its own status. Rendering a notice only took
+  // space from the message area and clipped Pally's reply.
+  if (feedback.length === 0) return null;
 
   return (
     <section aria-label="이번 발화 피드백" className={cn("rounded-2xl bg-accent-soft p-3 text-left", className)}>
-      {feedbackPending ? (
-        <p className="text-caption-1 text-text-secondary" role="status">
-          대화를 종료하면 피드백을 정리해요. History에서 확인해 주세요.
-        </p>
-      ) : null}
-
       {feedback.map((item, index) => {
         const open = openIndex === index;
         return (

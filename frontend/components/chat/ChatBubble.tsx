@@ -243,7 +243,6 @@ function MessageFeedback({ message }: { message: Message }) {
     <InlineFeedbackPanel
       className="mt-2 shrink-0"
       feedback={message.feedback.items}
-      feedbackPending={message.feedback.pending}
       onOpen={(item) => {
         void recordFeedbackItemOpened(message.sessionId, item).catch((error: unknown) => {
           console.error('Feedback activity event failed', error);

@@ -58,3 +58,4 @@ jobs:
           npm run check:conversation-order
           npm run check:opener
           npm run check:home-snapshot
+          npm run check:inline-feedback
