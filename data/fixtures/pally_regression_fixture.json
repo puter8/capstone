@@ -10,8 +10,8 @@
     {
       "name": "formal_inquiry",
       "utterance": "I would like to formally inquire about the implications of this matter.",
-      "axes": { "Formality": 59, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 15 },
-      "character": { "tone_casual": 28, "energy_level": 38, "humor_level": 13 }
+      "axes": { "Formality": 51, "Energy": 30, "Intimacy": 14, "Humor": 5, "Curiosity": 15 },
+      "character": { "tone_casual": 33, "energy_level": 39, "humor_level": 16 }
     },
     {
       "name": "curious_question",
@@ -38,8 +38,8 @@
       "description": "Second demo case from Phase 2 SC #3 (persona drift): casual turn followed by a formal turn, EMA alpha=0.7 default.",
       "prev_case": "casual_greeting",
       "new_case": "formal_inquiry",
-      "drifted_axes": { "Formality": 44, "Energy": 35, "Intimacy": 18, "Humor": 8, "Curiosity": 19 },
-      "drifted_character": { "tone_casual": 38, "energy_level": 42, "humor_level": 18 }
+      "drifted_axes": { "Formality": 39, "Energy": 35, "Intimacy": 22, "Humor": 11, "Curiosity": 19 },
+      "drifted_character": { "tone_casual": 41, "energy_level": 42, "humor_level": 20 }
     }
   ]
 }
