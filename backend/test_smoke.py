@@ -179,7 +179,7 @@ def test_assign_conversation_title_only_fills_empty_title(monkeypatch):
     for query in (sessions, messages):
         for method in ("select", "eq", "order", "update", "is_"):
             getattr(query, method).return_value = query
-    messages.execute.return_value = SimpleNamespace(data=[{"role": "user", "transcript": "hello"}])
+    messages.execute.return_value = SimpleNamespace(data=[{"id": "m1", "role": "user", "transcript": "hello", "created_at": "2026-10-07T00:00:00+00:00"}])
     sb = Mock()
     sb.table.side_effect = lambda name: {"sessions": sessions, "messages": messages}[name]
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
@@ -937,3 +937,22 @@ def test_first_pally_axes_match_the_default_traits():
     assert main._axes_to_traits(main._INITIAL_AXES) == main._DEFAULT_TRAITS
     # 프론트 DEFAULT_AXES (frontend/lib/types/character.ts)
     assert main._INITIAL_AXES == {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+
+
+def test_in_turn_order_puts_the_user_message_before_its_reply_at_the_same_time():
+    """한 번의 INSERT 로 저장된 발화와 답변은 created_at 이 같아서 DB 는 어느 쪽을 먼저 돌려줄지 정하지 않는다."""
+    at = "2026-10-07T04:05:03.506262+00:00"
+    later = "2026-10-07T04:05:55.220484+00:00"
+    rows = [
+        {"id": "p2", "role": "pally", "transcript": "reply 2", "created_at": later},
+        {"id": "u2", "role": "user", "transcript": "say 2", "created_at": later},
+        {"id": "p1", "role": "pally", "transcript": "reply 1", "created_at": at},
+        {"id": "u1", "role": "user", "transcript": "say 1", "created_at": at},
+        {"id": "p0", "role": "pally", "transcript": "opener", "created_at": "2026-10-07T04:04:03.145771+00:00"},
+    ]
+
+    ordered = [(m["role"], m["transcript"]) for m in main._in_turn_order(rows)]
+
+    assert ordered == [
+        ("pally", "opener"), ("user", "say 1"), ("pally", "reply 1"), ("user", "say 2"), ("pally", "reply 2"),
+    ]
