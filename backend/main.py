@@ -1248,16 +1248,18 @@ class ProfileAvatarResponse(BaseModel):
     avatar_url: Optional[str] = None
 
 
-def _profile_payload(sb, row: dict, user) -> dict:
+def _profile_payload(row: dict, user) -> dict:
     """프로필 + 현재 Pally 상태(current_axes).
 
     홈이 그리는 Pally 와 마이페이지 태그가 같은 값에서 나오도록 프로필에 담는다.
     대화 목록 항목의 current_axes 는 "그 대화의 축"이라 의미가 달라 섞어 쓰면
-    헷갈린다 — 현재 Pally 상태는 프로필에서 읽는다. 완료한 대화가 없으면 첫 Pally
-    와 같은 _INITIAL_AXES.
+    헷갈린다 — 현재 Pally 상태는 프로필에서 읽는다. 저장된 값은 대화를 끝낼 때
+    갱신된다(_refresh_profile_traits). 말을 한 대화를 끝낸 적이 없으면(null) 첫
+    Pally 와 같은 _INITIAL_AXES.
     """
     payload = _profile_to_response(row, _extract_avatar(user))
-    payload["current_axes"] = _carried_over_axes(sb, row["id"]) or dict(_INITIAL_AXES)
+    saved = row.get("current_axes")
+    payload["current_axes"] = dict(_INITIAL_AXES) if saved is None else saved
     return payload
 
 
@@ -1314,7 +1316,7 @@ async def onboarding(
     if not res.data:
         raise AppError(503, "persistence_failed", "Failed to save profile")
 
-    return {"profile": _profile_payload(sb, res.data[0], user)}
+    return {"profile": _profile_payload(res.data[0], user)}
 
 
 @app.get("/api/profile/avatar", response_model=ProfileAvatarResponse)
@@ -1337,7 +1339,7 @@ async def get_profile(user=Depends(get_current_user)):
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_payload(sb, res.data[0], user)}
+    return {"profile": _profile_payload(res.data[0], user)}
 
 
 @app.patch("/api/profile")
@@ -1369,7 +1371,7 @@ async def update_profile(
     if not res.data:
         raise AppError(404, "profile_not_found", "Profile not found. Complete onboarding first.")
 
-    return {"profile": _profile_payload(sb, res.data[0], user)}
+    return {"profile": _profile_payload(res.data[0], user)}
 
 
 # ── Conversations & Turns — 3주차 음성 대화 (sessions/messages 재사용) ────────
@@ -2207,33 +2209,22 @@ def _axes_to_traits(axes: dict) -> list:
 
 
 def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
-    """Pally 의 현재 모습 = 가장 최근에 끝낸(ended_at) 대화의 최종 5축. 홈이 그리는 Pally,
-    마이페이지 태그, 다음 대화의 EMA 출발점이 모두 이 값을 쓴다 — 기준이 하나라
-    세 화면이 어긋나지 않는다.
+    """Pally 의 현재 모습 = 가장 최근에 끝낸 대화의 최종 5축 (profiles.current_axes).
 
-    말을 하지 않은 대화는 없는 셈 친다: axes 는 사용자 발화에만 붙으므로 Pally
-    오프너만 있는 대화는 자연히 건너뛴다. 완료 대화 개수에 상한을 두지 않는다 —
-    시작만 누르고 나간 대화가 쌓여도 누적 체인이 끊겨선 안 된다. 이전 완료 대화가
-    없으면 None (첫 발화 원점수로 시작).
+    홈이 그리는 Pally, 마이페이지 태그, 다음 대화의 EMA 출발점이 모두 이 값을 쓴다 —
+    기준이 하나라 세 화면이 어긋나지 않는다. 대화를 끝낼 때 저장하므로(태그와 같은
+    시점, _refresh_profile_traits) 지난 대화를 이어 하는 동안에도 값이 바뀌지 않는다.
+    예전처럼 끝난 대화에서 매번 다시 계산하면, 방금 끝낸 대화를 이어 하는 순간 그
+    대화가 "끝난 대화"에서 빠져 Pally 가 이전 대화의 모습으로 바뀐다.
 
-    sessions 를 임베딩해 한 번에 조회한다. 세션 id 목록을 in_() 으로 넘기던 이전
-    방식은 상한을 없애면 URL 이 무한히 길어진다.
+    말을 한 대화를 끝낸 적이 없으면 None (첫 발화 원점수로 시작).
     """
     try:
-        res = (sb.table("messages")
-               .select("axes, created_at, sessions!inner(user_id, created_at, ended_at)")
-               .eq("role", "user").not_.is_("axes", "null")
-               .eq("sessions.user_id", user_id).not_.is_("sessions.ended_at", "null")
-               # 종료 시각 기준: 지난 대화를 이어 하고 다시 끝내면 그 대화가 최신이 된다.
-               # 마이페이지 태그(_refresh_profile_traits)도 방금 끝낸 대화로 갱신하므로
-               # 생성 시각으로 정렬하면 둘이 서로 다른 대화를 가리킨다.
-               .order("sessions(ended_at)", desc=True)
-               .order("created_at", desc=True)            # 그 대화의 마지막 발화
-               .limit(1).execute())
+        res = sb.table("profiles").select("current_axes").eq("id", user_id).limit(1).execute()
     except Exception as e:
         logging.error(f"carried-over axes read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to load previous Pally state")
-    return res.data[0]["axes"] if res.data else None
+    return res.data[0]["current_axes"] if res.data else None
 
 
 @app.delete("/api/conversations")
@@ -2241,15 +2232,17 @@ async def delete_conversation_history(user_id: str = Depends(get_current_user_id
     """본인 대화 기록 전체 삭제 + Pally 초기화 (마이페이지 '데이터 삭제').
 
     되돌릴 수 없다. 확인 절차는 클라이언트가 담당한다.
-    - 지움: sessions (messages 는 FK ON DELETE CASCADE 로 함께 삭제), 성향 태그는 기본값 복원.
-      대화가 사라지면 홈 Pally 도 복원할 대화가 없어 기본 모습으로 돌아간다.
+    - 지움: sessions (messages 는 FK ON DELETE CASCADE 로 함께 삭제), 성향 태그는 기본값 복원,
+      저장된 Pally 모습(current_axes)은 비운다 → 홈 Pally 도 첫 모습으로 돌아간다.
     - 유지: usage_daily, streak_days, activity_events, daily_task_snapshots, subscriptions.
       특히 usage_daily 를 지우면 대화 기록 삭제로 무료 한도를 초기화할 수 있어 지우지 않는다.
     """
     sb = get_supabase()
     try:
         deleted = (sb.table("sessions").delete().eq("user_id", user_id).execute()).data or []
-        sb.table("profiles").update({"traits": _DEFAULT_TRAITS, "updated_at": _now_iso()}).eq("id", user_id).execute()
+        sb.table("profiles").update({
+            "traits": _DEFAULT_TRAITS, "current_axes": None, "updated_at": _now_iso(),
+        }).eq("id", user_id).execute()
     except Exception as e:
         logging.error(f"delete_conversation_history failed: {e}")
         raise AppError(503, "persistence_failed", "대화 기록을 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.")
@@ -2456,11 +2449,12 @@ async def complete_conversation(
 
 
 def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
-    """방금 끝낸 대화의 최종 5축으로 마이페이지 성향 태그를 갱신한다.
+    """방금 끝낸 대화의 최종 5축으로 마이페이지 성향 태그와 Pally 의 현재 모습을 갱신한다.
 
-    대화 간 EMA 가 이어지므로 이 값이 곧 지금까지의 누적 상태다. 발화가 없는 대화는
-    갱신하지 않는다. 대화 종료 자체는 이미 성공했으므로 실패해도 종료를 되돌리지 않고
-    False 를 돌려 응답 warnings 로 알린다(에러 로그는 남긴다).
+    대화 간 EMA 가 이어지므로 이 값이 곧 지금까지의 누적 상태다. 태그와 모습은 같은
+    요청으로 함께 저장해 서로 어긋나지 않는다. 발화가 없는 대화는 갱신하지 않는다.
+    대화 종료 자체는 이미 성공했으므로 실패해도 종료를 되돌리지 않고 False 를 돌려
+    응답 warnings 로 알린다(에러 로그는 남긴다).
     """
     try:
         msgs = (sb.table("messages").select("axes").eq("session_id", conversation_id)
@@ -2468,8 +2462,10 @@ def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
                 .order("created_at", desc=True).limit(1).execute())
         if not msgs.data:
             return True
-        traits = _axes_to_traits(msgs.data[0]["axes"])
-        sb.table("profiles").update({"traits": traits, "updated_at": _now_iso()}).eq("id", user_id).execute()
+        axes = msgs.data[0]["axes"]
+        sb.table("profiles").update({
+            "traits": _axes_to_traits(axes), "current_axes": axes, "updated_at": _now_iso(),
+        }).eq("id", user_id).execute()
     except Exception as e:
         logging.error(f"profile traits refresh failed: {e}")
         return False

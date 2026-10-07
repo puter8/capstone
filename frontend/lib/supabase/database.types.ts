@@ -288,6 +288,7 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string
+          current_axes: Json | null
           display_name: string
           english_level: string
           id: string
@@ -297,6 +298,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          current_axes?: Json | null
           display_name?: string
           english_level?: string
           id: string
@@ -306,6 +308,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          current_axes?: Json | null
           display_name?: string
           english_level?: string
           id?: string
