@@ -248,6 +248,7 @@ def test_delete_conversation_history_resets_pally_but_keeps_usage(monkeypatch):
     tables["sessions"].delete.assert_called_once_with()
     tables["profiles"].update.assert_called_once()
     assert tables["profiles"].update.call_args[0][0]["traits"] == main._DEFAULT_TRAITS
+    assert tables["profiles"].update.call_args[0][0]["current_axes"] is None  # 홈 Pally 도 첫 모습으로
 
 
 def test_delete_conversation_history_requires_authentication():
@@ -843,62 +844,85 @@ def test_opener_only_conversations_do_not_fill_the_weekly_streak_tasks():
 # ── 현재 Pally 상태(current_axes) — 홈·마이페이지·다음 대화가 같은 값을 쓴다 ──
 
 
-def test_carried_over_axes_skips_conversations_without_utterances_in_one_query():
-    """axes 는 사용자 발화에만 붙으므로 오프너만 있는 대화는 조회에서 빠진다.
+def test_carried_over_axes_reads_the_saved_look_from_the_profile():
+    """Pally 의 현재 모습은 끝난 대화에서 다시 계산하지 않고 프로필에 저장된 값을 읽는다.
 
-    완료 대화 수에 상한을 두지 않는다 — 시작만 누르고 나간 대화가 쌓여도 누적
-    체인이 끊기면 안 된다. 그래서 세션 id 를 in_() 으로 넘기지 않고 임베딩한다.
+    다시 계산하면 가장 최근에 끝낸 대화를 이어 하는 순간 그 대화가 "끝난 대화"에서
+    빠져 Pally 가 이전 대화의 모습으로 바뀐다. 저장값은 이어 하기가 건드리지 않는다.
     """
     from types import SimpleNamespace
     from unittest.mock import Mock
 
-    calls = {"eq": [], "not_is": [], "order": [], "limit": [], "in_": []}
+    tables_read = []
     query = Mock()
     query.select.return_value = query
-    query.eq.side_effect = lambda c, v: calls["eq"].append((c, v)) or query
-    query.not_.is_.side_effect = lambda c, v: calls["not_is"].append((c, v)) or query
-    query.order.side_effect = lambda c, **kw: calls["order"].append((c, kw.get("desc"))) or query
-    query.limit.side_effect = lambda n: calls["limit"].append(n) or query
-    query.in_.side_effect = lambda c, v: calls["in_"].append(c) or query
-    query.execute.return_value = SimpleNamespace(data=[{"axes": {"Formality": 20}}])
-
+    query.eq.return_value = query
+    query.limit.return_value = query
+    query.execute.return_value = SimpleNamespace(data=[{"current_axes": {"Formality": 20}}])
     sb = Mock()
-    sb.table.return_value = query
+    sb.table.side_effect = lambda name: tables_read.append(name) or query
 
     assert main._carried_over_axes(sb, "user-1") == {"Formality": 20}
-    sb.table.assert_called_once_with("messages")
-    assert ("role", "user") in calls["eq"]
-    assert ("sessions.user_id", "user-1") in calls["eq"]
-    assert ("axes", "null") in calls["not_is"]            # 발화에 축이 붙은 것만
-    assert ("sessions.ended_at", "null") in calls["not_is"]  # 끝낸 대화만
-    assert calls["order"] == [("sessions(ended_at)", True), ("created_at", True)]
-    assert calls["limit"] == [1]
-    assert calls["in_"] == []  # 세션 목록을 넘기지 않는다 = 개수 상한 없음
+    assert tables_read == ["profiles"]  # 대화·메시지를 훑지 않는다 = 대화 수와 무관하게 한 번에 읽는다
+    query.select.assert_called_once_with("current_axes")
+    query.eq.assert_called_once_with("id", "user-1")
 
+    # 말을 한 대화를 끝낸 적이 없으면 null → 호출하는 쪽이 첫 발화 원점수로 시작한다
+    query.execute.return_value = SimpleNamespace(data=[{"current_axes": None}])
+    assert main._carried_over_axes(sb, "user-1") is None
     query.execute.return_value = SimpleNamespace(data=[])
     assert main._carried_over_axes(sb, "user-1") is None
 
 
-def test_profile_carries_pallys_current_look(monkeypatch):
-    """홈이 그리는 Pally 와 마이페이지 태그가 같은 값에서 나오게 프로필이 축을 담는다."""
+def test_ending_a_conversation_saves_tags_and_look_together():
+    """태그와 모습은 같은 요청으로 저장돼 어긋나지 않는다. 지난 대화를 끝내도 마찬가지."""
     from types import SimpleNamespace
     from unittest.mock import Mock
 
+    axes = {"Formality": 54, "Energy": 41, "Intimacy": 30, "Humor": 8, "Curiosity": 22}
+    messages, profiles = Mock(), Mock()
+    messages.select.return_value = messages
+    messages.eq.return_value = messages
+    messages.not_.is_.return_value = messages
+    messages.order.return_value = messages
+    messages.limit.return_value = messages
+    messages.execute.return_value = SimpleNamespace(data=[{"axes": axes}])
+    profiles.update.return_value = profiles
+    profiles.eq.return_value = profiles
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"messages": messages, "profiles": profiles}[name]
+
+    assert main._refresh_profile_traits(sb, "user-1", "conversation-1") is True
+    saved = profiles.update.call_args[0][0]
+    assert saved["current_axes"] == axes
+    assert saved["traits"] == main._axes_to_traits(axes)
+    profiles.eq.assert_called_once_with("id", "user-1")
+
+    # 발화가 없는 대화(오프너만)는 모습을 건드리지 않는다
+    profiles.update.reset_mock()
+    messages.execute.return_value = SimpleNamespace(data=[])
+    assert main._refresh_profile_traits(sb, "user-1", "conversation-2") is True
+    profiles.update.assert_not_called()
+
+
+def test_profile_carries_pallys_current_look():
+    """홈이 그리는 Pally 와 마이페이지 태그가 같은 값에서 나오게 프로필이 축을 담는다."""
+    from types import SimpleNamespace
+
+    spoken = {"Formality": 34, "Energy": 37, "Intimacy": 22, "Humor": 11, "Curiosity": 21}
     row = {
         "id": "user-1", "display_name": "민주", "english_level": "B1",
-        "onboarding_completed": True, "traits": ["acquaint"],
+        "onboarding_completed": True, "traits": ["acquaint"], "current_axes": spoken,
         "created_at": "2026-10-01T00:00:00Z", "updated_at": None,
     }
     user = SimpleNamespace(id="user-1", user_metadata={}, app_metadata={})
-    sb = Mock()
 
-    spoken = {"Formality": 34, "Energy": 37, "Intimacy": 22, "Humor": 11, "Curiosity": 21}
-    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: spoken)
-    assert main._profile_payload(sb, row, user)["current_axes"] == spoken
+    assert main._profile_payload(row, user)["current_axes"] == spoken
 
-    # 완료한 대화가 없으면 홈의 첫 Pally 와 같은 값
-    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
-    assert main._profile_payload(sb, row, user)["current_axes"] == main._INITIAL_AXES
+    # 말을 한 대화를 끝낸 적이 없으면(null) 홈의 첫 Pally 와 같은 값
+    assert main._profile_payload({**row, "current_axes": None}, user)["current_axes"] == main._INITIAL_AXES
+
+
 def test_stt_keeps_every_segment_split_at_pauses():
     # latest_long splits "Hi Pally. (pause) Yesterday I went..." into two results.
     results = [
