@@ -87,8 +87,12 @@ Rules:
   "I'm not going to be able to" / "you won't be able to" are not error pairs.
 - STT capitalization, punctuation, and proper-name spelling are not errors.
 - Return [] when no genuine correction was actually given. If unsure, omit it.
-- Give a brief Korean explanation (1-2 sentences) of only the recorded grammar
-  change. Do not introduce additional mistakes or learning advice.
+- Shorter, more concise, more natural, or more idiomatic rewrites of an already
+  grammatical sentence are style suggestions, not corrections. Return none.
+- Give a brief Korean explanation (1-2 sentences) of only the grammar rule that
+  was broken. Do not introduce additional mistakes or learning advice. Never
+  mention Pally or whether Pally corrected it; an item you would need to qualify
+  that way must not exist.
 - Do not repeat the same correction within a single turn.
 """ + PALLY_NAME_RULES + """
 For this extraction task, never include name/alias changes in any feedback field.
@@ -122,6 +126,14 @@ Output: []
 
 User: "I have been learning English for six months."
 Pally: "That's awesome that you've been learning English for six months!"
+Output: []
+
+User: "I was the one who forgot."
+Pally: "Oh, you forgot? That happens!"
+Output: []
+
+User: "That is so funny."
+Pally: "That's so funny!"
 Output: []
 
 User: "I had no lunch."
@@ -288,6 +300,10 @@ def _restatement_tokens(tokens: list[str]) -> list[str]:
         "weren't": ["were", "not"], "haven't": ["have", "not"],
         "hasn't": ["has", "not"], "couldn't": ["could", "not"],
         "wouldn't": ["would", "not"], "shouldn't": ["should", "not"],
+        "it's": ["it", "is"], "that's": ["that", "is"], "there's": ["there", "is"],
+        "here's": ["here", "is"], "what's": ["what", "is"], "he's": ["he", "is"],
+        "she's": ["she", "is"], "we're": ["we", "are"], "they're": ["they", "are"],
+        "we've": ["we", "have"], "they've": ["they", "have"], "let's": ["let", "us"],
     }
     expanded = [word for token in tokens for word in contractions.get(token, [token])]
     # Only these grammatical subject/verb pairs express the same perspective.
@@ -366,11 +382,11 @@ def _ground_feedback(items: List[Dict], utterance: str, reply: str, *, strict: b
         key = (tuple(original), tuple(corrected))
         if key not in seen:
             replacement = _ground_replacement(original, corrected, item.replacement)
-            if item.replacement and replacement is None:
-                # The card still shows the user's sentence with Pally's correction.
-                logging.warning("Feedback replacement skipped: not grounded in the paired turn")
-            grounded.append(item.model_dump(exclude={"replacement"})
-                            | ({"replacement": replacement} if replacement else {}))
+            if replacement is None:
+                # No fix in the user's own words that Pally actually said: not a real correction.
+                logging.warning("Feedback item skipped: replacement not grounded in the paired turn")
+                continue
+            grounded.append({**item.model_dump(), "replacement": replacement})
             seen.add(key)
     return grounded
 

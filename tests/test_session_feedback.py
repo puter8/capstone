@@ -18,6 +18,7 @@ def _item(original="she want", corrected="she wants"):
         "original": original,
         "corrected": corrected,
         "explanation_ko": "3인칭 단수 현재형에는 동사에 -s를 붙여요.",
+        "replacement": corrected,
     }
 
 
@@ -310,7 +311,7 @@ def test_first_person_to_second_person_reaction_is_not_a_correction(monkeypatch)
     # Pally's perspective must not leak into the user's sentence.
     ("Yesterday I go to the park.", "You went to the park yesterday?",
      {"original": "I go", "corrected": "You went", "replacement": "You went"}, None),
-    # A fix Pally never said is not grounded; the card still shows the item.
+    # A fix Pally never said is not a real correction, so no card is made.
     ("I have many people.", "Having many people there sounds fun!",
      {"original": "I have", "corrected": "Having", "replacement": "I had"}, None),
 ])
@@ -320,7 +321,19 @@ def test_replacement_is_kept_only_when_grounded_in_the_users_sentence(monkeypatc
     [result] = feedback_module.generate_session_feedback([_turn(user=user, reply=reply)])
 
     assert result["failed"] is False
-    assert result["items"][0].get("replacement") == expected
+    assert [item["replacement"] for item in result["items"]] == ([] if expected is None else [expected])
+
+
+@pytest.mark.parametrize(("user", "reply", "item"), [
+    # Contractions only restate the same grammar.
+    ("That is so funny.", "That's so funny!",
+     {"original": "That is", "corrected": "That's", "replacement": "That's"}),
+    ("Let us go.", "Let's go!", {"original": "Let us", "corrected": "Let's", "replacement": "Let's"}),
+])
+def test_contraction_only_changes_are_not_corrections(monkeypatch, user, reply, item):
+    _provider_returns(monkeypatch, [{"turn_id": "turn-1", "items": [{**item, "explanation_ko": "설명"}]}])
+
+    assert feedback_module.generate_session_feedback([_turn(user=user, reply=reply)]) == [_result("turn-1")]
 
 
 def test_stt_capitalization_and_punctuation_changes_are_not_corrections(monkeypatch):

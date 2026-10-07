@@ -11,8 +11,10 @@ def isolated_feedback_http_pool():
     feedback_module._reset_client()
 
 
-def _item(original, corrected):
-    return {"original": original, "corrected": corrected, "explanation_ko": "주어에 맞춰 동사를 바꿔요."}
+def _item(original, corrected, replacement=None):
+    # The model always returns replacement; by default it is the corrected span itself.
+    return {"original": original, "corrected": corrected, "explanation_ko": "주어에 맞춰 동사를 바꿔요.",
+            "replacement": replacement or corrected}
 
 
 def test_review_records_correction_actually_spoken(monkeypatch):
@@ -92,24 +94,24 @@ def test_names_and_correct_restatements_are_not_grammar_feedback(monkeypatch, or
     assert generate_feedback(original, corrected, "B1") == ([], False)
 
 
-@pytest.mark.parametrize("original, corrected", [
-    ("Fally want cookies", "Fally wants cookies"),
-    ("Pally cookies", "Pally's cookies"),
-    ("I are happy", "you are happy"),
-    ("Me went to school", "I went to school"),
-    ("She invited I to dinner", "she invited you to dinner"),
-    ("He gave I a book", "he gave you a book"),
-    ("she have cookies", "she has cookies"),
-    ("he don't like it", "he doesn't like it"),
-    ("I go yesterday", "you went yesterday"),
-    ("I am happy", "you were happy"),
-    ("I can go", "you can't go"),
+@pytest.mark.parametrize("original, corrected, replacement", [
+    ("Fally want cookies", "Fally wants cookies", None),
+    ("Pally cookies", "Pally's cookies", None),
+    ("I are happy", "you are happy", "I am happy"),
+    ("Me went to school", "I went to school", None),
+    ("She invited I to dinner", "she invited you to dinner", "She invited me to dinner"),
+    ("He gave I a book", "he gave you a book", "He gave me a book"),
+    ("she have cookies", "she has cookies", None),
+    ("he don't like it", "he doesn't like it", None),
+    ("I go yesterday", "you went yesterday", "I went yesterday"),
+    ("I am happy", "you were happy", "I was happy"),
+    ("I can go", "you can't go", "I can't go"),
 ])
-def test_filter_keeps_grammar_tense_and_negation_changes(monkeypatch, original, corrected):
+def test_filter_keeps_grammar_tense_and_negation_changes(monkeypatch, original, corrected, replacement):
     # This checks the conservative filter, not whether the model SHOULD emit
     # every pair. Semantic correctness is also covered by live model checks.
     monkeypatch.setenv("GOOGLE_AI_API_KEY", "test-key")
-    item = _item(original, corrected)
+    item = _item(original, corrected, replacement)
     monkeypatch.setattr(feedback_module, "_call_gemini_feedback", lambda *args: [item])
     assert generate_feedback(original, corrected, "B1") == ([item], False)
 
