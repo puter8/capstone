@@ -551,7 +551,7 @@ async def stt(audio: UploadFile = File(...)):
         "encoding": encoding,
         "languageCode": "en-US",
         "model": model,
-        "enableAutomaticPunctuation": False,
+        "enableAutomaticPunctuation": True,
     }
     if encoding == "LINEAR16" and sample_rate:
         config["sampleRateHertz"] = sample_rate
@@ -1402,7 +1402,7 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
         "encoding": encoding,
         "languageCode": "en-US",
         "model": model,
-        "enableAutomaticPunctuation": False,
+        "enableAutomaticPunctuation": True,
     }
     if encoding == "LINEAR16" and sample_rate:
         config["sampleRateHertz"] = sample_rate
