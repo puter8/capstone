@@ -159,7 +159,8 @@ CURIOSITY_WORDS = {
     "what do you think", "your opinion", "what's your", "do you think",
     "have you ever", "have you seen", "did you know", "ever wonder",
     "what if", "imagine if", "suppose", "hypothetically",
-    "can you", "could you", "would you", "will you", "should i",
+    # can/could/would you live in FORMAL_WORDS only: polite requests are not curiosity.
+    "will you", "should i",
     "is it", "are there", "does it", "do you",
 }
 

@@ -22,8 +22,8 @@
     {
       "name": "polite_request",
       "utterance": "Could you please help me understand this a bit better?",
-      "axes": { "Formality": 56, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 35 },
-      "character": { "tone_casual": 29, "energy_level": 40, "humor_level": 14 }
+      "axes": { "Formality": 56, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 27 },
+      "character": { "tone_casual": 29, "energy_level": 39, "humor_level": 14 }
     },
     {
       "name": "excited_casual",
