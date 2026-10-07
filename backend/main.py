@@ -1008,11 +1008,11 @@ async def chat(req: ChatRequest):
                 }).execute()
                 if getattr(insert_session_res, "error", None):
                     raise RuntimeError(getattr(insert_session_res.error, "message", repr(insert_session_res.error)))
-            msg_res = sb.table("messages").select("role, transcript").eq("session_id", req.session_id).order("created_at").execute()
+            msg_res = sb.table("messages").select("id, role, transcript, created_at").eq("session_id", req.session_id).order("created_at").execute()
             if getattr(msg_res, "error", None):
                 raise RuntimeError(getattr(msg_res.error, "message", repr(msg_res.error)))
             if msg_res.data:
-                history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in msg_res.data]
+                history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in _in_turn_order(msg_res.data)]
         except Exception as e:
             logging.warning(f"Supabase session load failed: {e}")
 
@@ -1894,12 +1894,13 @@ async def create_turn(
 
     # 5. 이전 이력 + 누적 axes 로드
     try:
-        prior = sb.table("messages").select("role, transcript, axes, created_at").eq("session_id", conversation_id).order("created_at").execute()
+        prior = sb.table("messages").select("id, role, transcript, axes, created_at").eq("session_id", conversation_id).order("created_at").execute()
     except Exception as e:
         logging.error(f"turn history read failed: {e}")
         _release_turn(sb, user_id)
         raise AppError(503, "persistence_failed", "Failed to load history")
-    prior_rows = prior.data or []
+    # The history sent to the AI must alternate user→reply; see _in_turn_order.
+    prior_rows = _in_turn_order(prior.data or [])
     history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
     current_axes = None
     for m in reversed(prior_rows):
@@ -2143,9 +2144,9 @@ async def _assign_conversation_title(conversation_id: str) -> None:
     """
     try:
         sb = get_supabase()
-        msgs = (sb.table("messages").select("role, transcript")
+        msgs = (sb.table("messages").select("id, role, transcript, created_at")
                 .eq("session_id", conversation_id).order("created_at").execute())
-        turns = msgs.data or []
+        turns = _in_turn_order(msgs.data or [])
         if not any(m["role"] == "user" for m in turns):
             return
         title = await _generate_conversation_title(turns)
@@ -2346,17 +2347,28 @@ async def get_conversation(
     return {"conversation": conv, "turns": page, "next_cursor": next_cursor}
 
 
+_TURN_ROLE_ORDER = {"user": 0, "pally": 1}
+
+
+def _in_turn_order(messages: list[dict]) -> list[dict]:
+    """Messages oldest first, each user message before the Pally reply saved with it.
+
+    A user message and its reply are saved by one INSERT, so they share created_at and
+    the database is free to return them in either order. Ending a conversation then
+    writes feedback onto the user rows, which moves them physically behind their replies
+    and made `order by created_at` return reply-before-user. Anything that needs the
+    conversation in order (the history sent to the AI, titles, turn pairing) must sort
+    with this instead of trusting the query order. Rows need id, role and created_at.
+    """
+    return sorted(
+        messages,
+        key=lambda message: (message["created_at"], _TURN_ROLE_ORDER[message["role"]], message["id"]),
+    )
+
+
 def _conversation_turns(messages: list[dict]) -> list[dict]:
     """Build user→pally turns even when equal timestamps arrive out of order."""
-    role_order = {"user": 0, "pally": 1}
-    ordered = sorted(
-        messages,
-        key=lambda message: (
-            message["created_at"],
-            role_order[message["role"]],
-            message["id"],
-        ),
-    )
+    ordered = _in_turn_order(messages)
 
     # user→pally 쌍으로 turn 구성. turn_id = user 메시지 id.
     turns = []

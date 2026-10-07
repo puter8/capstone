@@ -391,3 +391,53 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
         assert main._TURN_METRICS[0]["feedback_ms"] == 0
 
     asyncio.run(scenario())
+
+
+FULL_AXES = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+
+
+def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch):
+    """대화를 끝낸 뒤 이어 하면 DB 가 같은 시각의 답변을 발화보다 먼저 돌려줬고, AI 는 마지막 발화에
+    답이 없는 대화를 받아 직전 답변을 그대로 반복했다."""
+    first, second = "2026-10-07T04:04:19.641016+00:00", "2026-10-07T04:05:03.506262+00:00"
+    sessions, messages = Mock(), Mock()
+    for query in (sessions, messages):
+        for method in ("select", "eq", "order", "insert"):
+            getattr(query, method).return_value = query
+    sessions.execute.return_value = SimpleNamespace(data=[{
+        "id": "conversation-1", "user_id": "user-1", "ended_at": None,
+        "reopen_count": 1, "character_name": "Pally", "level": "B1",
+    }])
+    # What the database returned for the earlier turns: every reply before its user message.
+    stored = [
+        {"id": "p1", "role": "pally", "transcript": "reply to 1", "axes": None, "created_at": first},
+        {"id": "u1", "role": "user", "transcript": "say 1", "axes": FULL_AXES, "created_at": first},
+        {"id": "p2", "role": "pally", "transcript": "reply to 2", "axes": None, "created_at": second},
+        {"id": "u2", "role": "user", "transcript": "say 2", "axes": FULL_AXES, "created_at": second},
+    ]
+    messages.execute.side_effect = [
+        SimpleNamespace(data=[]), SimpleNamespace(data=stored),
+        SimpleNamespace(data=[{"id": "turn-3", "role": "user", "created_at": "2026-10-07T04:05:55+00:00"}]),
+    ]
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"sessions": sessions, "messages": messages}[name]
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
+    monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
+    monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "GOOGLE_CLOUD_API_KEY", "test-key")
+    monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("say 3", 1.0)))
+    chat = AsyncMock(return_value="A fresh reply to 3")
+    monkeypatch.setattr(main, "_call_gemini_chat", chat)
+    monkeypatch.setattr(main, "_call_google_tts", AsyncMock(return_value="bXAz"))
+
+    asyncio.run(main.create_turn(
+        "conversation-1", Request({"type": "http"}),
+        UploadFile(filename="test.wav", file=BytesIO(b"test-audio")),
+        "user-1", "request-1",
+    ))
+
+    sent_history = chat.call_args[0][1]
+    assert [(m.role, m.content) for m in sent_history] == [
+        ("user", "say 1"), ("pally", "reply to 1"), ("user", "say 2"), ("pally", "reply to 2"),
+    ]
