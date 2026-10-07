@@ -10,20 +10,20 @@
     {
       "name": "formal_inquiry",
       "utterance": "I would like to formally inquire about the implications of this matter.",
-      "axes": { "Formality": 59, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 21 },
-      "character": { "tone_casual": 28, "energy_level": 38, "humor_level": 13 }
+      "axes": { "Formality": 51, "Energy": 30, "Intimacy": 14, "Humor": 5, "Curiosity": 15 },
+      "character": { "tone_casual": 33, "energy_level": 39, "humor_level": 16 }
     },
     {
       "name": "curious_question",
       "utterance": "Why do you think people struggle with English conversation?",
-      "axes": { "Formality": 38, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 51 },
-      "character": { "tone_casual": 40, "energy_level": 43, "humor_level": 21 }
+      "axes": { "Formality": 38, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 43 },
+      "character": { "tone_casual": 40, "energy_level": 42, "humor_level": 21 }
     },
     {
       "name": "polite_request",
       "utterance": "Could you please help me understand this a bit better?",
-      "axes": { "Formality": 56, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 41 },
-      "character": { "tone_casual": 29, "energy_level": 40, "humor_level": 14 }
+      "axes": { "Formality": 56, "Energy": 30, "Intimacy": 8, "Humor": 0, "Curiosity": 27 },
+      "character": { "tone_casual": 29, "energy_level": 39, "humor_level": 14 }
     },
     {
       "name": "excited_casual",
@@ -38,8 +38,8 @@
       "description": "Second demo case from Phase 2 SC #3 (persona drift): casual turn followed by a formal turn, EMA alpha=0.7 default.",
       "prev_case": "casual_greeting",
       "new_case": "formal_inquiry",
-      "drifted_axes": { "Formality": 44, "Energy": 35, "Intimacy": 18, "Humor": 8, "Curiosity": 23 },
-      "drifted_character": { "tone_casual": 38, "energy_level": 42, "humor_level": 19 }
+      "drifted_axes": { "Formality": 39, "Energy": 35, "Intimacy": 22, "Humor": 11, "Curiosity": 19 },
+      "drifted_character": { "tone_casual": 41, "energy_level": 42, "humor_level": 20 }
     }
   ]
 }

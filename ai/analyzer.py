@@ -159,7 +159,8 @@ CURIOSITY_WORDS = {
     "what do you think", "your opinion", "what's your", "do you think",
     "have you ever", "have you seen", "did you know", "ever wonder",
     "what if", "imagine if", "suppose", "hypothetically",
-    "can you", "could you", "would you", "will you", "should i",
+    # can/could/would you live in FORMAL_WORDS only: polite requests are not curiosity.
+    "will you", "should i",
     "is it", "are there", "does it", "do you",
 }
 
@@ -210,31 +211,27 @@ def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z']+", text.lower())
 
 
-def _count_keyword_hits(tokens: list[str], text_lower: str, keyword_set: set) -> int:
+def _count_keyword_hits(tokens: list[str], keyword_set: set) -> int:
     """
-    [STEP 2] 키워드 딕셔너리 매칭
+    [STEP 2] 키워드 딕셔너리 매칭: 한 구간을 한 번만 센다.
 
-    발화에서 특정 키워드 딕셔너리의 단어/구가 몇 개 등장하는지 셈.
-
-    단어 vs 구(phrase) 처리 방식:
-      - 단어 (공백 없음): 토큰 리스트에서 정확히 일치 검색
-          예: "lol" → tokens 안에 "lol"이 있는지 확인
-      - 구 (공백 포함): 원문 전체에서 부분 문자열 검색
-          예: "no cap" → text_lower에 "no cap"이 포함되는지 확인
-          (토큰 분리하면 "no", "cap"으로 쪼개져서 구 매칭 불가)
-
-    Returns:
-      매칭된 키워드 개수 (같은 단어가 여러 번 나와도 1로 카운트)
+    토큰 단위로 가장 긴 구부터 맞추고, 맞춘 단어는 다시 쓰지 않는다.
+      - "i would like"가 would like / i would like로 두 번 세어지지 않는다.
+      - "this it" 안의 "is it"처럼 단어 경계를 넘는 부분 문자열은 맞지 않는다.
+    같은 키워드가 여러 번 나와도 1로 센다.
     """
-    count = 0
-    for kw in keyword_set:
-        if " " in kw:           # 구(phrase): 원문 전체에서 부분 문자열 검색
-            if kw in text_lower:
-                count += 1
-        else:                   # 단어: 토큰 리스트에서 정확히 일치 검색
-            if kw in tokens:
-                count += 1
-    return count
+    phrases = sorted((tuple(kw.split()) for kw in keyword_set), key=len, reverse=True)
+    hits = set()
+    i = 0
+    while i < len(tokens):
+        for phrase in phrases:
+            if tuple(tokens[i:i + len(phrase)]) == phrase:
+                hits.add(phrase)
+                i += len(phrase)
+                break
+        else:
+            i += 1
+    return len(hits)
 
 
 # ---------------------------------------------------------------------------
@@ -262,12 +259,12 @@ def analyze_utterance(text: str) -> dict:
     word_count = max(len(tokens), 1)    # 0 나누기 방지용 최솟값 1
 
     # STEP 2: 6종 키워드 딕셔너리 매칭
-    slang_hits     = _count_keyword_hits(tokens, text_lower, SLANG_WORDS)      # 슬랭 단어 수
-    formal_hits    = _count_keyword_hits(tokens, text_lower, FORMAL_WORDS)     # 격식 단어 수
-    energy_hits    = _count_keyword_hits(tokens, text_lower, HIGH_ENERGY_WORDS)# 고에너지 단어 수
-    intimate_hits  = _count_keyword_hits(tokens, text_lower, INTIMATE_WORDS)   # 친밀 단어 수
-    humor_hits     = _count_keyword_hits(tokens, text_lower, HUMOR_WORDS)      # 유머 단어 수
-    curiosity_hits = _count_keyword_hits(tokens, text_lower, CURIOSITY_WORDS)  # 호기심 단어 수
+    slang_hits     = _count_keyword_hits(tokens, SLANG_WORDS)      # 슬랭 단어 수
+    formal_hits    = _count_keyword_hits(tokens, FORMAL_WORDS)     # 격식 단어 수
+    energy_hits    = _count_keyword_hits(tokens, HIGH_ENERGY_WORDS)# 고에너지 단어 수
+    intimate_hits  = _count_keyword_hits(tokens, INTIMATE_WORDS)   # 친밀 단어 수
+    humor_hits     = _count_keyword_hits(tokens, HUMOR_WORDS)      # 유머 단어 수
+    curiosity_hits = _count_keyword_hits(tokens, CURIOSITY_WORDS)   # 호기심 단어 수
 
     # STEP 3: 정규식 패턴 감지
     contraction_count    = len(CONTRACTION_PATTERN.findall(text))   # 축약형 수 (don't, i'm 등)
@@ -332,12 +329,11 @@ def analyze_utterance(text: str) -> dict:
     humor = max(0, min(100, round(humor)))
 
     # Curiosity (탐구심): 기준값 15에서 시작
-    #   올라가는 신호: 호기심 단어(+8), ?(+12, 가장 강한 신호), 격식 단어(+3, 격식체 질문도 탐구적)
+    #   올라가는 신호: 호기심 단어(+8), ?(+12, 가장 강한 신호). 격식 단어는 Formality 신호라 넣지 않음
     #   내려가는 신호: !(-2) → 감탄은 질문과 반대 방향
     curiosity = 15
     curiosity += curiosity_hits * 8       # 호기심 단어 1개당 +8
     curiosity += question_count * 12     # ? 1개당 +12 (가장 강한 탐구 신호)
-    curiosity += formal_hits * 3         # 격식체 질문도 탐구적 성격
     curiosity -= exclamation_count * 2   # ! 는 탐구보다 감탄/에너지 신호
     curiosity = max(0, min(100, round(curiosity)))
 
