@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import type { Message } from '@/lib/types/message';
 import { InlineFeedbackPanel } from '@/components/feedback/InlineFeedbackPanel';
 import { recordFeedbackItemOpened } from '@/lib/analytics/activity-events';
@@ -113,6 +114,20 @@ function ShortBubble({
 }) {
   const lastPally = messages.findLast?.((m) => m.role === 'pally');
   const lastUser = messages.findLast?.((m) => m.role === 'user');
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const lastPallyRowRef = useRef<HTMLDivElement>(null);
+  const mode = listening ? 'listening' : thinking ? 'thinking' : 'idle';
+
+  // Long replies scroll inside the message area. When a new turn lands, bring the
+  // start of Pally's reply to the top so it is never cut off mid-sentence.
+  useEffect(() => {
+    const area = scrollAreaRef.current;
+    if (!area) return;
+    const row = lastPallyRowRef.current;
+    area.scrollTop = row
+      ? area.scrollTop + row.getBoundingClientRect().top - area.getBoundingClientRect().top
+      : 0;
+  }, [lastPally?.id, lastUser?.id, mode]);
 
   return (
     <section
@@ -146,12 +161,17 @@ function ShortBubble({
       />
 
       {/* 메시지 영역 */}
-      <div className="absolute top-[100px] left-[16px] right-[16px] bottom-[178px] flex flex-col gap-1 overflow-y-auto">
+      <div
+        ref={scrollAreaRef}
+        className="absolute top-[100px] left-[16px] right-[16px] bottom-[178px] flex flex-col gap-1 overflow-y-auto [scrollbar-color:theme(colors.text-tertiary)_transparent] [scrollbar-width:thin]"
+      >
         {listening ? (
           // 첫 발화: Listening... 단독 / 2번째~: 마지막 Pally + Listening...
           <>
             {lastPally && (
-              <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
+              <div ref={lastPallyRowRef}>
+                <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
+              </div>
             )}
             <MessageRow speaker="pally" transcript="" state="listening" />
           </>
@@ -162,7 +182,11 @@ function ShortBubble({
           // 대화중 / idle: 마지막 유저 + 마지막 Pally
           <>
             {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
-            {lastPally && <MessageRow speaker="pally" transcript={lastPally.transcript} compact />}
+            {lastPally && (
+              <div ref={lastPallyRowRef}>
+                <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
+              </div>
+            )}
             {lastPally && <MessageFeedback key={lastPally.id} message={lastPally} />}
           </>
         )}
