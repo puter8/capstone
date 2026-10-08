@@ -13,6 +13,12 @@ import type {
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
 import {
+  NETWORK_ERROR_MESSAGE,
+  SESSION_ERROR_MESSAGE,
+  UNREADABLE_RESPONSE_MESSAGE,
+  userFacingErrorMessage,
+} from "@/lib/api/error-messages";
+import {
   achievementsResponseSchema,
   deleteAccountResponseSchema,
   deleteConversationHistoryResponseSchema,
@@ -46,7 +52,10 @@ type AccountBinding = { expectedUserId: string };
 
 async function getAccessToken(accountBinding?: AccountBinding): Promise<string> {
   const { data, error } = await supabase.auth.getSession();
-  if (error) throw new PallyApiError(401, "unauthorized", error.message);
+  if (error) {
+    console.error("Reading the login session failed", error);
+    throw new PallyApiError(401, "unauthorized", SESSION_ERROR_MESSAGE);
+  }
   const session = data.session;
   const token = session?.access_token;
   if (!token) throw new PallyApiError(401, "unauthorized", "로그인이 필요해요.");
@@ -73,14 +82,21 @@ async function apiRequest<TSchema extends z.ZodType>(path: string, options: Requ
   if (options.contentType) headers.set("Content-Type", options.contentType);
   if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
 
-  const response = await fetch(`${backendUrl}${path}`, {
-    method: options.method ?? "GET",
-    headers,
-    body: options.body,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${backendUrl}${path}`, {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body,
+    });
+  } catch (error) {
+    console.error("API request could not reach the server", { path, error });
+    throw new PallyApiError(0, "network_error", NETWORK_ERROR_MESSAGE);
+  }
 
   const payload: unknown = await response.json().catch((error: unknown) => {
-    throw new PallyApiError(502, "invalid_response", error instanceof Error ? error.message : "서버 응답을 읽지 못했어요.");
+    console.error("API response was not JSON", { path, status: response.status, error });
+    throw new PallyApiError(502, "invalid_response", UNREADABLE_RESPONSE_MESSAGE);
   });
 
   if (!response.ok) {
@@ -88,12 +104,9 @@ async function apiRequest<TSchema extends z.ZodType>(path: string, options: Requ
     if (!parsedError.success) {
       throw new PallyApiError(response.status, "invalid_response", `서버 오류 응답 형식이 올바르지 않아요. (${response.status})`);
     }
-    throw new PallyApiError(
-      response.status,
-      parsedError.data.error.code,
-      parsedError.data.error.message,
-      parsedError.data.error.request_id,
-    );
+    const { code, message, request_id: requestId } = parsedError.data.error;
+    console.error("API request failed", { path, status: response.status, code, message, requestId });
+    throw new PallyApiError(response.status, code, userFacingErrorMessage(response.status, code, message), requestId);
   }
 
   const parsed = options.schema.safeParse(payload);

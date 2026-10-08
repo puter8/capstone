@@ -12,6 +12,8 @@ import { PageLoader } from "@/components/ui/PageLoader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { TextInput } from "@/components/ui/TextInput";
 import { pallyApi, PallyApiError } from "@/lib/api";
+import { DISPLAY_NAME_MAX_LENGTH } from "@/lib/display-name";
+import { saveOnboardingProfile } from "@/lib/onboarding-save";
 import type { Level } from "@/lib/types/session";
 import { cn } from "@/lib/utils";
 
@@ -70,7 +72,7 @@ export default function OnboardingPage() {
     setIsSaving(true);
     setError(null);
     try {
-      await pallyApi.onboard({ display_name: name, english_level: level });
+      await saveOnboardingProfile(pallyApi, { display_name: name, english_level: level });
       setStep(3);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "설정을 저장하지 못했어요.");
@@ -136,6 +138,7 @@ export default function OnboardingPage() {
           <TextInput
             aria-label="이름"
             className="absolute left-5 top-[460px] w-[calc(100%-40px)]"
+            maxLength={DISPLAY_NAME_MAX_LENGTH}
             onChange={(event) => setName(event.target.value)}
             placeholder="이름을 입력해 주세요"
             value={name}

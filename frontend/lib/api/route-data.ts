@@ -8,6 +8,7 @@ import type {
   UsageResponse,
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
+import { SESSION_ERROR_MESSAGE } from "@/lib/api/error-messages";
 import { pallyApi } from "@/lib/api";
 import { clearUser, evict, invalidate, peekStale, prefetch, read, write, writeStale } from "@/lib/api/query-cache";
 import { supabase } from "@/lib/supabase/client";
@@ -44,7 +45,10 @@ export function forgetRememberedUser(): void {
 
 export async function getCurrentUserId(): Promise<string> {
   const { data, error } = await supabase.auth.getSession();
-  if (error) throw new PallyApiError(401, "unauthorized", error.message);
+  if (error) {
+    console.error("Reading the login session failed", error);
+    throw new PallyApiError(401, "unauthorized", SESSION_ERROR_MESSAGE);
+  }
   if (!data.session) throw new PallyApiError(401, "unauthorized", "로그인이 필요해요.");
   rememberUser(data.session.user.id);
   return data.session.user.id;
@@ -71,6 +75,31 @@ export function peekHomeSnapshot(): HomeSnapshot | null {
     profile: profile.profile,
     subscription: subscription ? subscription.subscription : null,
   };
+}
+
+export interface RouteSnapshot<T> {
+  userId: string;
+  data: T;
+}
+
+// Last known tab data for the remembered user, even if expired, so returning to a tab
+// paints at once. The screen still verifies the session and replaces it with a fresh read.
+function peekRouteSnapshot<T>(key: string): RouteSnapshot<T> | null {
+  if (!rememberedUserId) return null;
+  const data = peekStale<T>(rememberedUserId, key);
+  return data === undefined ? null : { userId: rememberedUserId, data };
+}
+
+export function peekHistorySnapshot(): RouteSnapshot<ConversationListResponse> | null {
+  return peekRouteSnapshot(`${CACHE_KEYS.history}first`);
+}
+
+export function peekAchievementsSnapshot(): RouteSnapshot<AchievementsResponse> | null {
+  return peekRouteSnapshot(CACHE_KEYS.achievements);
+}
+
+export function peekProfileSnapshot(): RouteSnapshot<ProfileResponse> | null {
+  return peekRouteSnapshot(CACHE_KEYS.profile);
 }
 
 export function usageFromQuota(current: UsageResponse | null | undefined, quota: UsageQuota): UsageResponse {
@@ -204,9 +233,11 @@ type NetworkInformationLike = {
 
 function canPrefetchOnCurrentNetwork(): boolean {
   const connection = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
-  if (!connection) return false;
+  // Safari, and so every iOS browser, has no Network Information API. Treat it as a
+  // normal connection instead of never prefetching on iPhones.
+  if (!connection) return true;
   if (connection.saveData) return false;
-  return connection.effectiveType === "4g";
+  return connection.effectiveType === undefined || connection.effectiveType === "4g";
 }
 
 export function schedulePrimaryRoutePrefetch(userId: string): () => void {
