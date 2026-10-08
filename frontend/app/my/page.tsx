@@ -29,6 +29,7 @@ export default function MyPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [accountDeleted, setAccountDeleted] = useState(false);
@@ -73,6 +74,7 @@ export default function MyPage() {
 
   const updateName = async (nextName: string) => {
     setError(null);
+    setNameError(null);
     try {
       const response = await pallyApi.updateProfile({ display_name: nextName });
       setProfile(response.profile);
@@ -80,7 +82,8 @@ export default function MyPage() {
       if (userId) invalidateProfile(userId);
       setDialog(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "이름을 변경하지 못했어요.");
+      console.error("Name change failed", caught);
+      setNameError(caught instanceof Error ? caught.message : "이름을 변경하지 못했어요.");
     }
   };
 
@@ -201,7 +204,7 @@ export default function MyPage() {
       </div>
       <BottomNav />
 
-      {dialog === "name" && profile ? <NameEditDialog initialName={profile.display_name} onCancel={() => setDialog(null)} onConfirm={(nextName) => { void updateName(nextName); }} /> : null}
+      {dialog === "name" && profile ? <NameEditDialog error={nameError} initialName={profile.display_name} onCancel={() => { setNameError(null); setDialog(null); }} onConfirm={(nextName) => { void updateName(nextName); }} /> : null}
       {dialog === "delete" ? (
         <ConfirmDialog
           body={"모든 대화 기록과 피드백이 삭제되고 Pally의 모습과 성향이 초기화돼요. 삭제한 기록은 복구할 수 없어요.\n\n계정, 요금제, 오늘의 사용량과 업적은 유지돼요."}
