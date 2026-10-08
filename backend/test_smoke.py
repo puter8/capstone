@@ -956,3 +956,52 @@ def test_in_turn_order_puts_the_user_message_before_its_reply_at_the_same_time()
     assert ordered == [
         ("pally", "opener"), ("user", "say 1"), ("pally", "reply 1"), ("user", "say 2"), ("pally", "reply 2"),
     ]
+
+
+# ── /api/metrics — 공유 토큰으로 보호된 운영 latency 조회 ────────────────────
+
+
+def test_metrics_route_is_absent_without_a_token_configured():
+    """PALLY_METRICS_TOKEN 미설정(기본값)이면 라우트 자체가 없다 — URL 을 안다는
+    사실만으로는 운영 성능 데이터를 보지 못한다. 이 프로세스의 import 시점 값을
+    그대로 검증한다 (테스트 환경에 PALLY_METRICS_TOKEN 미설정)."""
+    from fastapi.testclient import TestClient
+
+    assert not main._METRICS_TOKEN
+    paths = TestClient(main.app).get("/openapi.json").json()["paths"]
+    assert "/api/metrics" not in paths
+
+
+def test_metrics_requires_a_valid_token_when_configured():
+    """토큰을 import 전에 설정하면(운영과 동일한 순서) 라우트가 등록되고,
+    토큰 없음 -> 422, 틀린 토큰 -> 403, 맞는 토큰 -> 200.
+
+    _METRICS_TOKEN 은 import 시점에 한 번 읽혀 조건부로 라우트를 등록하므로,
+    monkeypatch 로 값만 바꿔선 재현되지 않는다 (운영과 같은 순서로 서브프로세스에서
+    새로 import 한다).
+    """
+    import os
+    import subprocess
+    import sys
+
+    script = (
+        "import os\n"
+        'os.environ["PALLY_METRICS_TOKEN"] = "secret-token"\n'
+        "import sys\n"
+        'sys.path.insert(0, "backend")\n'
+        "from fastapi.testclient import TestClient\n"
+        "import main\n"
+        "client = TestClient(main.app)\n"
+        'assert client.get("/api/metrics").status_code == 422\n'
+        'assert client.get("/api/metrics", headers={"X-Metrics-Token": "wrong"}).status_code == 403\n'
+        'response = client.get("/api/metrics", headers={"X-Metrics-Token": "secret-token"})\n'
+        "assert response.status_code == 200, response.text\n"
+        'assert set(response.json()) == {"count", "stages", "recent"}\n'
+        'print("OK")\n'
+    )
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=repo_root,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0 and "OK" in result.stdout, result.stdout + result.stderr
