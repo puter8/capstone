@@ -14,6 +14,7 @@
     "check:home-snapshot": "tsx scripts/check-home-snapshot.ts",
     "check:inline-feedback": "tsx scripts/check-inline-feedback.ts",
     "check:mock-api": "tsx scripts/check-mock-api.ts",
+    "check:onboarding-save": "tsx scripts/check-onboarding-save.ts",
     "check:query-cache": "tsx scripts/check-query-cache.ts",
     "check:supabase": "tsx scripts/check-supabase.ts",
     "test:e2e": "e2e run tests/public-pages.e2e.ts",
