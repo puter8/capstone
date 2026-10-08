@@ -8,6 +8,7 @@ import type {
   UsageResponse,
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
+import { SESSION_ERROR_MESSAGE } from "@/lib/api/error-messages";
 import { pallyApi } from "@/lib/api";
 import { clearUser, evict, invalidate, peekStale, prefetch, read, write, writeStale } from "@/lib/api/query-cache";
 import { supabase } from "@/lib/supabase/client";
@@ -44,7 +45,10 @@ export function forgetRememberedUser(): void {
 
 export async function getCurrentUserId(): Promise<string> {
   const { data, error } = await supabase.auth.getSession();
-  if (error) throw new PallyApiError(401, "unauthorized", error.message);
+  if (error) {
+    console.error("Reading the login session failed", error);
+    throw new PallyApiError(401, "unauthorized", SESSION_ERROR_MESSAGE);
+  }
   if (!data.session) throw new PallyApiError(401, "unauthorized", "로그인이 필요해요.");
   rememberUser(data.session.user.id);
   return data.session.user.id;
