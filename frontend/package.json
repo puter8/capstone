@@ -17,6 +17,7 @@
     "check:name-edit-dialog": "tsx scripts/check-name-edit-dialog.ts",
     "check:onboarding-save": "tsx scripts/check-onboarding-save.ts",
     "check:query-cache": "tsx scripts/check-query-cache.ts",
+    "check:route-snapshots": "tsx scripts/check-route-snapshots.ts",
     "check:supabase": "tsx scripts/check-supabase.ts",
     "test:e2e": "e2e run tests/public-pages.e2e.ts",
     "test:e2e:member": "e2e run tests/member-navigation.e2e.ts --headed"

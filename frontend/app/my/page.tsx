@@ -10,24 +10,36 @@ import { NameEditDialog } from "@/components/dialogs/NameEditDialog";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
 import { ProfileSummary } from "@/components/profile/ProfileSummary";
-import { PageLoader } from "@/components/ui/PageLoader";
+import { ContentSkeleton } from "@/components/ui/ContentSkeleton";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import type { UserProfile } from "@/lib/api";
+import type { ProfileResponse, UserProfile } from "@/lib/api";
 import {
   clearUserRouteData,
   getCurrentUserId,
   invalidateProfile,
   loadProfile,
+  peekProfileSnapshot,
 } from "@/lib/api/route-data";
+import type { RouteSnapshot } from "@/lib/api/route-data";
 import { supabase } from "@/lib/supabase/client";
 
 type Dialog = "delete" | "logout" | "name" | "withdrawal" | null;
 
+// Returning to this tab paints the last known profile while the fresh read runs.
+// Client-only: on a hard load the cache is empty, so server and client markup match.
+function readProfileSnapshot(): RouteSnapshot<ProfileResponse> | null {
+  if (typeof window === "undefined") return null;
+  return peekProfileSnapshot();
+}
+
 export default function MyPage() {
   const router = useRouter();
+  const [snapshot] = useState(readProfileSnapshot);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [profile, setProfile] = useState<UserProfile | null>(snapshot ? snapshot.data.profile : null);
+  const [isLoading, setIsLoading] = useState(snapshot === null);
+  // Account actions need the verified user id, even when the profile is painted from the snapshot.
+  const [sessionVerified, setSessionVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -44,6 +56,13 @@ export default function MyPage() {
     const load = async () => {
       const userId = await getCurrentUserId();
       userIdRef.current = userId;
+      if (!active) return;
+      setSessionVerified(true);
+      if (snapshot && snapshot.userId !== userId) {
+        // The painted profile belongs to a previous account: hide it until the fresh read.
+        setProfile(null);
+        setIsLoading(true);
+      }
       void pallyApi.recordActivityEvent({
         event_id: crypto.randomUUID(),
         event_type: "profile_opened",
@@ -70,7 +89,7 @@ export default function MyPage() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, snapshot]);
 
   const updateName = async (nextName: string) => {
     setError(null);
@@ -164,14 +183,6 @@ export default function MyPage() {
     window.location.replace("/");
   };
 
-  if (isLoading) {
-    return (
-      <MobileShell minHeight={810}>
-        <PageLoader delayMs={200} />
-      </MobileShell>
-    );
-  }
-
   return (
     <MobileShell minHeight={810}>
       <h1 className="absolute left-5 top-[62px] text-display text-primary">My Pally</h1>
@@ -179,6 +190,8 @@ export default function MyPage() {
         <div className="absolute left-5 right-5 top-[172px] h-[228px]">
           <ProfileSummary avatarUrl={profile.avatar_url} name={profile.display_name} onEditName={() => setDialog("name")} traits={profile.traits} />
         </div>
+      ) : isLoading ? (
+        <ContentSkeleton className="absolute left-5 right-5 top-[172px]" rows={2} />
       ) : null}
       {error ? <p className="absolute left-5 right-5 top-[408px] max-h-12 overflow-y-auto text-center text-caption-1 text-red-600" role="alert">{error}</p> : null}
       {notice ? <p className="absolute left-5 right-5 top-[408px] max-h-12 overflow-y-auto text-center text-caption-1 text-success" role="status">{notice}</p> : null}
@@ -187,7 +200,7 @@ export default function MyPage() {
       <section aria-label="사용 설정" className="absolute left-0 right-0 top-[509px]">
         <Link className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black" href="/settings/plans">요금제 및 결제</Link>
         <Link className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black" href="/settings/level">영어 레벨 변경</Link>
-        <button className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black disabled:opacity-50" disabled={!profile || isDeletingHistory || isDeleting || accountDeleted} onClick={() => { historyDeletionUserId.current = userIdRef.current; setError(null); setNotice(null); setDialog("delete"); }} type="button">데이터 삭제</button>
+        <button className="ml-6 flex h-[52px] w-[calc(100%-24px)] items-center border-t border-[#e6e6e6] text-left font-sf text-[17px] leading-[22px] tracking-[-0.43px] text-black disabled:opacity-50" disabled={!profile || !sessionVerified || isDeletingHistory || isDeleting || accountDeleted} onClick={() => { historyDeletionUserId.current = userIdRef.current; setError(null); setNotice(null); setDialog("delete"); }} type="button">데이터 삭제</button>
       </section>
 
       <div className="absolute bottom-[111px] left-0 right-0 z-20 text-center text-button-2 text-text-tertiary">

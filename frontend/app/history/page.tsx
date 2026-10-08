@@ -6,37 +6,55 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationNoteCard } from "@/components/feedback/ConversationNoteCard";
 import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/nav/BottomNav";
-import { PageLoader } from "@/components/ui/PageLoader";
+import { ContentSkeleton } from "@/components/ui/ContentSkeleton";
 import { PallyApiError } from "@/lib/api";
-import type { ConversationListItem } from "@/lib/api";
+import type { ConversationListItem, ConversationListResponse } from "@/lib/api";
 import { isTitlePending } from "@/lib/api/pending-titles";
-import { getCurrentUserId, loadHistoryPage, reloadHistoryFirstPage } from "@/lib/api/route-data";
+import { getCurrentUserId, loadHistoryPage, peekHistorySnapshot, reloadHistoryFirstPage } from "@/lib/api/route-data";
+import type { RouteSnapshot } from "@/lib/api/route-data";
 
 const TITLE_POLL_INTERVAL_MS = 1_500;
 
+// Returning to this tab paints the last known list while the fresh read runs.
+// Client-only: on a hard load the cache is empty, so server and client markup match.
+function readHistorySnapshot(): RouteSnapshot<ConversationListResponse> | null {
+  if (typeof window === "undefined") return null;
+  return peekHistorySnapshot();
+}
+
 export default function HistoryPage() {
   const router = useRouter();
-  const [items, setItems] = useState<ConversationListItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [snapshot] = useState(readHistorySnapshot);
+  const [items, setItems] = useState<ConversationListItem[]>(snapshot ? snapshot.data.items : []);
+  const [isLoading, setIsLoading] = useState(snapshot === null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(snapshot ? snapshot.data.next_cursor : null);
   const [error, setError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  // Set once the session is verified and the fresh first page has arrived. Paging and
+  // title polling wait for it, even when the list is already painted from the snapshot.
+  const [verifiedUserId, setVerifiedUserId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const loadingMoreRef = useRef(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
 
     const loadFirstPage = async () => {
       const userId = await getCurrentUserId();
+      if (!active) return;
+      if (snapshot && snapshot.userId !== userId) {
+        // The painted list belongs to a previous account: hide it until the fresh read.
+        setItems([]);
+        setNextCursor(null);
+        setIsLoading(true);
+      }
       const response = await loadHistoryPage(userId);
       if (!active) return;
-      userIdRef.current = userId;
       setItems(response.items);
       setNextCursor(response.next_cursor);
+      setVerifiedUserId(userId);
     };
 
     void loadFirstPage()
@@ -54,10 +72,10 @@ export default function HistoryPage() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, snapshot]);
 
   const loadMore = useCallback(async () => {
-    const userId = userIdRef.current;
+    const userId = verifiedUserId;
     const cursor = nextCursor;
     if (!userId || !cursor || loadingMoreRef.current) return;
 
@@ -81,7 +99,7 @@ export default function HistoryPage() {
       loadingMoreRef.current = false;
       setIsLoadingMore(false);
     }
-  }, [nextCursor, router]);
+  }, [nextCursor, router, verifiedUserId]);
 
   const now = Date.now();
   const pendingTitleIds = new Set(items.filter((item) => isTitlePending(item.id, item.title, now)).map((item) => item.id));
@@ -89,7 +107,7 @@ export default function HistoryPage() {
 
   // Poll the first page until background-generated titles arrive (or the wait expires).
   useEffect(() => {
-    const userId = userIdRef.current;
+    const userId = verifiedUserId;
     if (!hasPendingTitle || !userId) return;
     let active = true;
     const timer = window.setTimeout(() => {
@@ -109,10 +127,10 @@ export default function HistoryPage() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [hasPendingTitle, items]);
+  }, [hasPendingTitle, items, verifiedUserId]);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (!verifiedUserId) return;
     const root = listRef.current;
     const sentinel = sentinelRef.current;
     if (!root || !sentinel || !nextCursor || loadMoreError) return;
@@ -122,12 +140,14 @@ export default function HistoryPage() {
     }, { root, rootMargin: "120px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [isLoading, loadMore, loadMoreError, nextCursor]);
+  }, [loadMore, loadMoreError, nextCursor, verifiedUserId]);
 
   if (isLoading) {
     return (
       <MobileShell minHeight={640}>
-        <PageLoader />
+        <h1 className="absolute left-5 top-[79px] text-display text-primary">History</h1>
+        <ContentSkeleton className="absolute left-5 right-5 top-[180px]" rows={4} />
+        <BottomNav />
       </MobileShell>
     );
   }

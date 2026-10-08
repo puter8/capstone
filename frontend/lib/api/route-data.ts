@@ -77,6 +77,31 @@ export function peekHomeSnapshot(): HomeSnapshot | null {
   };
 }
 
+export interface RouteSnapshot<T> {
+  userId: string;
+  data: T;
+}
+
+// Last known tab data for the remembered user, even if expired, so returning to a tab
+// paints at once. The screen still verifies the session and replaces it with a fresh read.
+function peekRouteSnapshot<T>(key: string): RouteSnapshot<T> | null {
+  if (!rememberedUserId) return null;
+  const data = peekStale<T>(rememberedUserId, key);
+  return data === undefined ? null : { userId: rememberedUserId, data };
+}
+
+export function peekHistorySnapshot(): RouteSnapshot<ConversationListResponse> | null {
+  return peekRouteSnapshot(`${CACHE_KEYS.history}first`);
+}
+
+export function peekAchievementsSnapshot(): RouteSnapshot<AchievementsResponse> | null {
+  return peekRouteSnapshot(CACHE_KEYS.achievements);
+}
+
+export function peekProfileSnapshot(): RouteSnapshot<ProfileResponse> | null {
+  return peekRouteSnapshot(CACHE_KEYS.profile);
+}
+
 export function usageFromQuota(current: UsageResponse | null | undefined, quota: UsageQuota): UsageResponse {
   return {
     plan: quota.daily_limit === null ? "pro" : "free",
@@ -208,9 +233,11 @@ type NetworkInformationLike = {
 
 function canPrefetchOnCurrentNetwork(): boolean {
   const connection = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
-  if (!connection) return false;
+  // Safari, and so every iOS browser, has no Network Information API. Treat it as a
+  // normal connection instead of never prefetching on iPhones.
+  if (!connection) return true;
   if (connection.saveData) return false;
-  return connection.effectiveType === "4g";
+  return connection.effectiveType === undefined || connection.effectiveType === "4g";
 }
 
 export function schedulePrimaryRoutePrefetch(userId: string): () => void {
