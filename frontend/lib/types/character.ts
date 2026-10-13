@@ -44,7 +44,15 @@ export const DEFAULT_AXES: Axes = {
 // 캐릭터 시각 파라미터 (CharacterParams)
 // matrix_engine.py compute_character() 반환값 + 시각 디자인 스펙 확장
 //
-// 시각 매핑 스펙 (PM Frame 254 이미지 기준, 2026-08-15 PallyCanvas.tsx와 동기화):
+// 시각 매핑 스펙 (PM Frame 254 이미지 기준, 2026-08-15 PallyCanvas.tsx와 동기화).
+//
+// 2026-10-12 기준 더 이상 정확하지 않음: PallyCanvas.tsx는 아래 CharacterParams/
+// axesToCharacterParams() 변환을 거치지 않고 Axes를 직접 사용하며, 5축→캐릭터
+// 요소 매핑이 신뢰도 기반으로 재배정됐다(Intimacy→몸통 형태, Curiosity→색상,
+// Energy→움직임[음성 검증 전까지 비활성], Formality→눈 세로비율, Humor→라운딩
+// 보정). 실제 렌더링 로직은 PallyCanvas.tsx를 참고할 것 — 아래 스펙·변환 함수는
+// tone_casual/energy_level/humor_level을 담는 API 응답 타입(ChatApiResponse 등)
+// 때문에 남아 있을 뿐, 시각 매핑 자체는 더 이상 쓰이지 않는다.
 //   Energy    → spikiness (몸통 모양): 0~33=사각(calm), 34~66=별(lively), 67~100=선버스트(energetic)
 //   Formality → borderRadius: 0~33=둥긂(blunt, radius 100), 34~66=중간(casual, radius 40), 67~100=각짐(formal, radius 0)
 //   Curiosity → eyeType: 'small'(indifferent, 0~33) | 'large'(curious, 34~66) | 'glowing'(Inquisitive, 67~100)

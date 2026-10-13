@@ -36,10 +36,17 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from ai.analyzer import analyze_utterance
+from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
+from ai.intimacy import compute_intimacy_from_session_count
 from ai.matrix_engine import apply_ema, compute_character, describe_character
 from ai.opener import persona_prompt
 from ai.reply_shaping import shape_reply
-from lib import billing, kakaopay
+from lib import billing, kakaopay, session_feedback, voice_energy
+from ai.voice_energy import MAX_WAV_BYTES
+
+
+def _voice_energy_enabled() -> bool:
+    return os.getenv("PALLY_VOICE_ENERGY_ENABLED", "false").lower() == "true"
 
 
 class BillingAccessFilter(logging.Filter):
@@ -61,31 +68,51 @@ except Exception:
     _SUPABASE_ENABLED = False
     _get_supabase_raw = None  # type: ignore
 
-# AI 담당 제공: generate_feedback(utterance, pally_reply, level) -> (items, failed).
-# 없으면 None → turn 의 feedback 은 [] (실패 아님, 미구현).
+# Legacy single-turn extraction helper. Conversation turns do not call it;
+# completed sessions use session_feedback and the batched AI extraction API.
 try:
     from ai.generate_feedback import generate_feedback
 except Exception:
     generate_feedback = None  # type: ignore
 
-# 5축 분석 어댑터 (rule|ml|hybrid, env PALLY_AXIS_ANALYZER, 기본 rule).
-# 한 번만 생성해 재사용(ml/hybrid 모델 재로딩 방지). 실패하면 기존 rule 함수로 폴백.
+# Reuse the configured analyzer. Explicit researched mode must not silently
+# report rule scores when the selected model cannot load or predict.
+_AXIS_ANALYZER_KIND = os.getenv("PALLY_AXIS_ANALYZER", "rule").strip().lower()
 try:
     from ai.analyzers import get_axis_analyzer
     _axis_analyzer = get_axis_analyzer()
 except Exception as _axis_e:
+    if _AXIS_ANALYZER_KIND == "researched":
+        raise
     logging.warning(f"axis analyzer init failed → analyze_utterance(rule) fallback: {_axis_e}")
     _axis_analyzer = None
 
 
 def _analyze_axes(text: str) -> Dict[str, int]:
-    """5축 dict. 어댑터(rule/ml/hybrid) 사용, 실패 시 기존 rule 함수로 폴백."""
+    """Return five axes; explicit researched mode propagates model failures."""
     if _axis_analyzer is not None:
         try:
             return _axis_analyzer.analyze(text).model_dump()
         except Exception as e:
+            if _AXIS_ANALYZER_KIND == "researched":
+                raise
             logging.warning(f"axis analyzer.analyze failed → rule fallback: {e}")
+    if _AXIS_ANALYZER_KIND == "researched":
+        raise RuntimeError("Configured researched axis analyzer is unavailable")
     return analyze_utterance(text)
+
+
+def _app_open_count(sb, user_id: str) -> int:
+    """이 유저 소유 세션(sessions) 행 수 — 접속 횟수 Intimacy의 입력(v3.0 §2, provisional).
+
+    주의: 엄밀한 "평생 앱 실행 횟수"가 아니라 "현재 남아있는 세션 행 수"다.
+    대화 기록을 삭제하면(DELETE /api/conversations) 줄어들 수 있고, 발화 없는
+    빈 대화도 1개로 집계된다 — 코덱스 교차검증에서 지적된 알려진 한계.
+    """
+    res = sb.table("sessions").select("id", count="exact").eq("user_id", user_id).execute()
+    if res.count is None:
+        raise RuntimeError("sessions count query returned no count")
+    return res.count
 
 
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "")    # Gemini (AI Studio)
@@ -105,17 +132,32 @@ async def lifespan(application: FastAPI):
         application.state.http_client = client
         stop = asyncio.Event()
         task = None
+        feedback_task = None
+        energy_task = None
         try:
             if os.getenv("BILLING_PROVIDER") == "kakaopay" and os.getenv("BILLING_WORKER_ENABLED") == "true":
                 task = asyncio.create_task(billing.worker(get_supabase, stop))
+            if (os.getenv("PALLY_SESSION_FEEDBACK_WORKER_ENABLED", "true").lower() != "false"
+                    and os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")):
+                feedback_task = asyncio.create_task(
+                    session_feedback.worker(get_supabase, stop, _conversation_turns),
+                )
+            if _voice_energy_enabled():
+                energy_task = asyncio.create_task(voice_energy.worker(get_supabase, stop))
             yield
         finally:
             stop.set()
+            if energy_task is not None:
+                await energy_task
             try:
                 if task is not None:
                     await task
             finally:
-                application.state.http_client = None
+                try:
+                    if feedback_task is not None:
+                        await feedback_task
+                finally:
+                    application.state.http_client = None
 
 
 app = FastAPI(title="Pally Backend API", version="1.0.0", lifespan=lifespan)
@@ -827,25 +869,26 @@ You are {character_name}, the user's English conversation friend.
 Your personality right now (show it in every reply; the level and length rules win if they conflict):
 {persona_prompt(axes)}
 {level_guide}
-Keep your reply to ONE short sentence (about 10-15 words). Never write two sentences.
+Keep the entire reply within 90 characters, using at most two short sentences.
 
 ## Grammar correction rules
 When the user makes grammar or vocabulary mistakes, do not list or explain the mistakes.
 Instead, naturally recast the user's idea with the key corrected expression inside your reply.
 If two errors are tightly connected in one phrase, you may fix both without explaining them.
 
-Use this pattern:
-1. React emotionally or empathetically first.
-2. Rephrase the user's idea with the corrected expression.
-3. Ask one short follow-up question.
+Recast the key mistaken expression naturally, then ask one short follow-up.
+Add a brief empathetic reaction only if it fits. Keep the corrected expression
+when shortening the reply; never replace it with only a reaction.
 
-Keep the spoken reply compact, usually 1-2 short sentences.
+Keep the spoken reply compact and friendly.
 Keep the user's casual style when it is natural, such as "bestie", "hang out", "dying laughing", or "no way".
 Do not over-correct slang or casual expressions unless they are actually wrong.
 
 Example:
 User: "My bestie and I watch it yesterday and we was dying laughing."
-Pally: "Oh! You and your bestie watched it yesterday, and you were dying laughing? What was so funny?"
+Pally: "You watched it yesterday and were dying laughing? What was so funny?"
+
+{CONVERSATION_CORRECTION_RULES}
 
 Stay in character as {character_name} at all times. Never break the fourth wall."""
 
@@ -1245,6 +1288,70 @@ def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
         "created_at": row["created_at"],
         "updated_at": row.get("updated_at"),
     }
+
+
+def _baseline_payload(row: dict | None) -> dict:
+    if row is None:
+        return {"status": "required", "baseline": None}
+    return {"status": "ready", "baseline": {
+        "range_st": row["range_st"], "valid_clips": 3,
+        "method_version": row["method"],
+    }}
+
+
+@app.get("/api/energy/baseline")
+async def get_energy_baseline(user_id: str = Depends(get_current_user_id)):
+    if not _voice_energy_enabled():
+        return {"status": "disabled", "baseline": None}
+    try:
+        return _baseline_payload(voice_energy.get_baseline(get_supabase(), user_id))
+    except Exception as exc:
+        logging.error("energy baseline read failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to load voice baseline")
+
+
+@app.post("/api/energy/baseline")
+async def register_energy_baseline(
+    audio: list[UploadFile] = File(...),
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    if not _voice_energy_enabled():
+        raise AppError(503, "service_unavailable", "Voice Energy is not enabled")
+    if len(audio) != 3:
+        raise AppError(422, "invalid_audio", "평소 목소리로 녹음한 파일 3개가 필요해요.")
+    sb = get_supabase()
+    try:
+        existing = voice_energy.get_baseline(sb, user_id)
+    except Exception as exc:
+        logging.error("energy baseline read failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to load voice baseline")
+    if existing is not None:
+        return _baseline_payload(existing)
+    from ai.voice_energy import measure_wav
+    measurements = []
+    clip_hashes: set[str] = set()
+    for clip in audio:
+        payload = await clip.read(MAX_WAV_BYTES + 1)
+        digest = hashlib.sha256(payload).hexdigest()
+        if digest in clip_hashes:
+            raise AppError(422, "invalid_audio", "같은 파일 대신 각각 녹음한 목소리 3개를 등록해 주세요.")
+        clip_hashes.add(digest)
+        try:
+            measured = await asyncio.to_thread(measure_wav, payload)
+        except Exception as exc:
+            logging.error("energy baseline measurement failed: %s", type(exc).__name__)
+            raise AppError(503, "service_unavailable", "목소리를 분석하지 못했어요. 다시 시도해 주세요.")
+        if measured.range_st is None:
+            raise AppError(422, "invalid_audio", "각 녹음에 충분한 목소리가 담겨야 해요. 다시 녹음해 주세요.",
+                           {"clip_index": len(measurements) + 1, "reason": measured.missing_reason})
+        measurements.append(measured)
+    try:
+        saved = voice_energy.save_baseline(sb, user_id, measurements)
+    except Exception as exc:
+        logging.error("energy baseline save failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to save voice baseline")
+    return _baseline_payload(saved)
 
 
 @app.post("/api/onboarding")
@@ -1684,7 +1791,7 @@ async def create_turn(
 
     # 1. conversation 소유권 (타인 소유는 존재 숨김 → 404)
     try:
-        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at").eq("id", conversation_id).execute()
+        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count").eq("id", conversation_id).execute()
     except Exception as e:
         logging.error(f"turn session read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read conversation")
@@ -1703,10 +1810,23 @@ async def create_turn(
     if dup.data:
         return _replayed_turn(sb, conversation_id, dup.data[0])
 
-    # 3. 오디오
-    audio_bytes = await audio.read()
+    # Voice jobs retain bounded PCM input until measurement finishes.
+    audio_bytes = await audio.read(MAX_WAV_BYTES + 1) if _voice_energy_enabled() else await audio.read()
     if not audio_bytes:
         raise AppError(400, "invalid_audio", "Empty audio file")
+    energy_input = None
+    if _voice_energy_enabled():
+        try:
+            registered_baseline = voice_energy.get_baseline(sb, user_id)
+        except Exception as exc:
+            logging.error("energy baseline read failed: %s", type(exc).__name__)
+            raise AppError(503, "persistence_failed", "Failed to load voice baseline")
+        if registered_baseline is None:
+            raise AppError(409, "energy_baseline_required", "대화를 시작하기 전에 평소 목소리 3개를 등록해 주세요.")
+        try:
+            energy_input = voice_energy.pending_audio(audio_bytes)
+        except ValueError:
+            raise AppError(422, "invalid_audio", "30초 이하의 WAV 녹음이 필요해요.")
 
     # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
     #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
@@ -1755,6 +1875,19 @@ async def create_turn(
     # 6. 5축 → EMA → character (분석 어댑터: rule|ml|hybrid, 기본 rule)
     raw_axes = _analyze_axes(transcript)
     smoothed = apply_ema(current_axes, raw_axes) if current_axes else raw_axes
+    # Intimacy는 발화 텍스트 EMA가 아니라 접속 횟수로 매 턴 직접 결정한다(v3.0 §2, provisional).
+    # EMA 전에 끼워 넣으면 과거 텍스트기반 값과 블렌딩되어 둘 다 아닌 값이 나온다 — 코덱스가
+    # 실측으로 재현한 버그(예: 레거시 80 + 신규목표 15 → 34로 뭉개짐). 그래서 EMA 뒤에서 덮어쓴다.
+    try:
+        if _voice_energy_enabled():
+            # Voice Energy is finalized at closure, independently of text EMA.
+            previous_voice = voice_energy.latest_snapshot(sb, user_id)
+            smoothed["Energy"] = previous_voice["current_axes"]["Energy"] if previous_voice else 50
+        smoothed = {**smoothed, "Intimacy": compute_intimacy_from_session_count(_app_open_count(sb, user_id))}
+    except Exception as e:
+        logging.error(f"app open count read failed: {e}")
+        _release_turn(sb, user_id)
+        raise AppError(503, "persistence_failed", "Failed to load account activity")
     character = compute_character(smoothed)
 
     # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패) — latency 측정
@@ -1769,48 +1902,33 @@ async def create_turn(
     # 답변 길이 정형화: 이후 TTS·저장·응답이 모두 shaped 버전을 써서 화면/음성 불일치 방지.
     reply = shape_reply(reply)
 
-    # 8. TTS + feedback 병렬 (둘 다 reply 만 있으면 됨 → asyncio.gather).
-    #    feedback 은 AI 담당(동기 함수)이라 to_thread 로 offload 해 이벤트 루프를 막지 않는다.
-    #    TTS 가 보통 long pole 이라, feedback 을 병렬로 붙여도 turn latency 는 거의 안 늘어난다.
-    timings: Dict[str, int] = {}
-
-    async def _timed_tts():
-        t0 = time.perf_counter()
-        try:
-            return await _call_google_tts(_strip_emoji(reply))
-        finally:
-            timings["tts_ms"] = round((time.perf_counter() - t0) * 1000)
-
-    async def _timed_feedback():
-        t0 = time.perf_counter()
-        try:
-            return await _gen_feedback(transcript, reply, session["level"])
-        finally:
-            timings["feedback_ms"] = round((time.perf_counter() - t0) * 1000)
-
-    tts_result, fb_result = await asyncio.gather(
-        _timed_tts(), _timed_feedback(), return_exceptions=True,
-    )
-    tts_ms = timings.get("tts_ms", 0)
-    feedback_ms = timings.get("feedback_ms", 0)
-
-    # TTS: 실패해도 turn 은 완료, audio 만 null.
+    # Spoken corrections are already in reply. Screen feedback is extracted
+    # from the saved pair only after /complete, outside the turn response.
+    tts_t0 = time.perf_counter()
     tts_audio: Optional[str] = None
-    if isinstance(tts_result, Exception):
-        logging.warning(f"turn TTS failed (non-fatal): {tts_result}")
-    else:
-        tts_audio = tts_result
+    try:
+        tts_audio = await _call_google_tts(_strip_emoji(reply))
+    except Exception as exc:
+        logging.warning("turn TTS failed (non-fatal): %s", type(exc).__name__)
+    tts_ms = round((time.perf_counter() - tts_t0) * 1000)
 
-    # feedback: 성공(list) / 실패(Exception → partial+warning) / 미구현(None 반환 → [])
-    feedback_items: list = []
-    feedback_failed = False
-    if isinstance(fb_result, Exception):
-        feedback_failed = True
-        logging.warning(f"turn feedback failed (non-fatal): {fb_result}")
-    elif fb_result:
-        feedback_items = fb_result
-    # 저장은 실패/무교정을 구분: 실패 → null(History 재생성 대상), 성공 → list([] 는 "교정 없음").
-    feedback_to_store = None if feedback_failed else feedback_items
+    # Guard a close/reopen that happened while speech providers were running.
+    # The frontend also waits for its in-flight turn before sending /complete.
+    try:
+        latest = (sb.table("sessions").select("id, user_id, ended_at, reopen_count")
+                  .eq("id", conversation_id).execute())
+    except Exception as exc:
+        _release_turn(sb, user_id)
+        logging.error("turn session recheck failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to verify conversation before saving")
+    if not latest.data or latest.data[0].get("user_id") != user_id:
+        _release_turn(sb, user_id)
+        raise AppError(404, "not_found", "Conversation not found")
+    current_session = latest.data[0]
+    if (current_session.get("ended_at")
+            or (current_session.get("reopen_count") or 0) != (session.get("reopen_count") or 0)):
+        _release_turn(sb, user_id)
+        raise AppError(409, "conversation_closed", "Conversation changed while processing the turn")
 
     # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단) — latency 측정
     save_t0 = time.perf_counter()
@@ -1823,7 +1941,10 @@ async def create_turn(
                 "axes": smoothed,
                 "character": character,
                 "idempotency_key": idem_key,
-                "feedback": feedback_to_store,
+                "feedback": None,
+                **({"voice_energy": energy_input,
+                    "voice_energy_epoch": session.get("reopen_count") or 0}
+                   if _voice_energy_enabled() else {}),
             },
             {
                 "session_id": conversation_id,
@@ -1834,6 +1955,9 @@ async def create_turn(
             },
         ]).execute()
     except Exception as e:
+        if "conversation_closed" in str(e):
+            _release_turn(sb, user_id)
+            raise AppError(409, "conversation_closed", "Conversation closed before the turn was saved")
         if _is_unique_violation(e):
             # 동시 중복 요청의 진 쪽: 이긴 요청이 이미 저장함 → 내 예약분 환불 후 저장된 turn 재반환.
             # (503 을 주던 기존 동작 대신 replayed 로 정상 결과 반환)
@@ -1855,7 +1979,7 @@ async def create_turn(
     turn_id = user_row["id"] if user_row else None
     turn_created = user_row["created_at"] if user_row else None
 
-    # TTS·feedback 부가 실패는 partial + warnings (계약 §4.6). 대화 텍스트는 정상.
+    # Deferred screen feedback is expected, not a failed or partial turn.
     status = "completed"
     warnings: list = []
     if tts_audio is None:
@@ -1863,12 +1987,6 @@ async def create_turn(
         warnings.append({
             "code": "tts_failed",
             "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
-        })
-    if feedback_failed:
-        status = "partial"
-        warnings.append({
-            "code": "feedback_failed",
-            "message": "피드백 생성에 실패했어요. 대화는 계속할 수 있어요.",
         })
 
     # 관측성: 단계별 latency 를 링버퍼에 저장 + 구조화 로그로 emit.
@@ -1880,7 +1998,7 @@ async def create_turn(
         "stt_ms": stt_ms,
         "gemini_ms": gemini_ms,
         "tts_ms": tts_ms,
-        "feedback_ms": feedback_ms,
+        "feedback_ms": 0,
         "save_ms": save_ms,
         "total_ms": round((time.perf_counter() - turn_t0) * 1000),
         "status": status,
@@ -1898,8 +2016,8 @@ async def create_turn(
         "pally": {"text": reply, "audio": tts_audio},  # audio = base64 inline (signed URL 미구현)
         "axes": smoothed,
         "character": character,
-        "feedback": feedback_items,
-        "feedback_pending": feedback_failed,
+        "feedback": [],
+        "feedback_pending": True,
         "warnings": warnings,
         "quota": {
             "used_turns": quota_used,
@@ -2022,6 +2140,20 @@ def _latest_user_axes(messages: list) -> dict:
     return dict(_INITIAL_AXES)
 
 
+def _session_display_axes(sb, session: dict, messages: list) -> dict:
+    if _voice_energy_enabled():
+        try:
+            rows = (sb.table("voice_energy_snapshots").select("current_axes")
+                    .eq("session_id", session["id"])
+                    .order("epoch", desc=True).limit(1).execute()).data
+            if rows:
+                return rows[0]["current_axes"]
+        except Exception as exc:
+            logging.error("energy snapshot read failed: %s", type(exc).__name__)
+            raise AppError(503, "persistence_failed", "Failed to load final Pally state")
+    return _latest_user_axes(messages)
+
+
 # 마이페이지 성향 태그. 축마다 캐릭터 렌더러(frontend PallyCanvas tier)와 같은
 # 0~33 / 34~66 / 67~100 구간 라벨을 쓴다 → 태그와 Pally 모습이 항상 같은 기준.
 # 순서가 곧 표시 순서다(기존 seed: bestie·ridiculous·lively·curious·blunt 와 같은 축 순서).
@@ -2060,6 +2192,10 @@ def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
     이전 완료 대화가 없으면 None(첫 발화 원점수로 시작).
     """
     try:
+        if _voice_energy_enabled():
+            snapshot = voice_energy.latest_snapshot(sb, user_id)
+            if snapshot is not None:
+                return snapshot["current_axes"]
         sessions = (sb.table("sessions").select("id").eq("user_id", user_id)
                     .not_.is_("ended_at", "null").order("created_at", desc=True).limit(20).execute())
         ids = [row["id"] for row in (sessions.data or [])]
@@ -2147,7 +2283,7 @@ async def list_conversations(
             "last_turn_at": ms[-1]["created_at"] if ms else None,
             "completed_at": s.get("ended_at"),
             "turn_count": len(user_msgs),
-            "current_axes": _latest_user_axes(ms),
+            "current_axes": _session_display_axes(sb, s, ms),
             "feedback_count": sum(len(m.get("feedback") or []) for m in user_msgs),
             "preview": _truncate(user_msgs[-1]["transcript"], 120) if user_msgs else None,
         })
@@ -2192,7 +2328,7 @@ async def get_conversation(
         "reopened_at": session.get("reopened_at"),
         "reopen_count": session.get("reopen_count", 0),
         "turn_count": len(user_msgs),
-        "current_axes": _latest_user_axes(ms),
+        "current_axes": _session_display_axes(sb, session, ms),
     }
     return {"conversation": conv, "turns": page, "next_cursor": next_cursor}
 
@@ -2251,23 +2387,56 @@ async def complete_conversation(
 ):
     """대화 종료. 재호출해도 같은 결과(멱등).
 
-    제목이 아직 없으면 응답을 보낸 뒤 백그라운드에서 생성한다(1~2초가 걸려도
-    Pally 공개가 늦어지지 않게). 이미 제목이 있으면 재개·재종료해도 바꾸지 않는다.
+    화면용 피드백과 제목은 응답을 보낸 뒤 생성한다. 종료 시 DB가 표시한
+    발화만 재처리 대상이 되며, 이미 생성한 피드백은 보존한다.
     """
     sb = get_supabase()
     session = _owned_session(sb, conversation_id, user_id)
     warnings: list = []
 
-    if not session.get("ended_at"):
-        try:
-            res = sb.table("sessions").update({"ended_at": _now_iso()}).eq("id", conversation_id).eq("user_id", user_id).execute()
-        except Exception as e:
-            logging.error(f"complete_conversation failed: {e}")
-            raise AppError(503, "persistence_failed", "Failed to complete conversation")
-        session = res.data[0] if res.data else session
+    was_active = not session.get("ended_at")
+    try:
+        rpc_name = "complete_conversation_with_energy" if _voice_energy_enabled() else "complete_conversation_with_feedback"
+        res = sb.rpc(rpc_name, {
+            "p_conversation_id": conversation_id,
+            "p_user_id": user_id,
+            "p_expected_reopen_count": session.get("reopen_count") or 0,
+        }).execute()
+        if (not isinstance(res.data, dict) or res.data.get("id") != conversation_id
+                or not res.data.get("ended_at")):
+            raise ValueError("Session completion RPC returned an invalid session")
+        if _voice_energy_enabled():
+            final_axes, energy_result = res.data.get("current_axes"), res.data.get("energy")
+            if (not isinstance(final_axes, dict) or set(final_axes) != set(_INITIAL_AXES)
+                    or any(type(v) is not int or not 0 <= v <= 100 for v in final_axes.values())
+                    or not isinstance(energy_result, dict)
+                    or energy_result.get("status") not in ("ready", "retained")
+                    or energy_result.get("score") != final_axes["Energy"]
+                    or "reason" not in energy_result):
+                raise ValueError("Voice Energy completion returned an invalid snapshot")
+        session = res.data
+    except Exception as exc:
+        if "conversation_changed" in str(exc):
+            raise AppError(409, "conversation_already_active", "Conversation was reopened while completing")
+        if "conversation_not_found" in str(exc):
+            raise AppError(404, "not_found", "Conversation not found")
+        logging.error("complete_conversation failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to complete conversation")
+    if _voice_energy_enabled() and session.get("energy", {}).get("status") != "ready":
+        warnings.append({"code": "energy_unavailable",
+                         "message": "음성 정보가 부족하거나 분석이 끝나지 않아 이번 대화의 에너지는 갱신하지 않았어요."})
+    if was_active:
         if not _refresh_profile_traits(sb, user_id, conversation_id):
             warnings.append({"code": "traits_update_failed",
                              "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
+
+    # The RPC marks exact saved user IDs atomically with session closure.
+    # The synchronous task runs in Starlette's thread pool after the response;
+    # the worker can rediscover these marks even after a restart or reopening.
+    background_tasks.add_task(
+        session_feedback.process_session, get_supabase, conversation_id,
+        _conversation_turns,
+    )
 
     if not session.get("title"):
         background_tasks.add_task(_assign_conversation_title, conversation_id)
@@ -2276,7 +2445,9 @@ async def complete_conversation(
         "id": session["id"],
         "status": "completed",
         "completed_at": session.get("ended_at"),
-    }, "warnings": warnings}
+    }, "warnings": warnings,
+        **({"current_axes": session["current_axes"], "energy": session["energy"]}
+           if _voice_energy_enabled() else {})}
 
 
 def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
@@ -2292,7 +2463,10 @@ def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
                 .order("created_at", desc=True).limit(1).execute())
         if not msgs.data:
             return True
-        traits = _axes_to_traits(msgs.data[0]["axes"])
+        axes = msgs.data[0]["axes"]
+        if _voice_energy_enabled():
+            axes = _session_display_axes(sb, {"id": conversation_id}, [])
+        traits = _axes_to_traits(axes)
         sb.table("profiles").update({"traits": traits, "updated_at": _now_iso()}).eq("id", user_id).execute()
     except Exception as e:
         logging.error(f"profile traits refresh failed: {e}")

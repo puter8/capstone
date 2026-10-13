@@ -1,0 +1,147 @@
+{
+  "pre_registered_rule": {
+    "min_spearman": 0.4,
+    "min_qwk": 0.4,
+    "max_false_high": 0.1,
+    "min_tier_recall": 0.5,
+    "tier_n": 10,
+    "max_error_rate": 0.05,
+    "population": "human TRAIN split, round-1 workbook items 41-150 (blind single-utterance labels), axes whose human case_type is not context_insufficient; Gemini numeric score incl. provisional"
+  },
+  "prompt_sha256": "ad8c4daec88102f1783043d5bdcf00767dae8068ec37162403501a6357288ae3",
+  "scorer_code_sha256": "6e3e2d5fa5d99892fde3a83b40911315634809294ceffe9b83a5b704a6bea890",
+  "decided_utc": "2026-10-13T04:18:32+00:00",
+  "axes": {
+    "Formality": {
+      "passed": false,
+      "reasons": [
+        "spearman nan < 0.4",
+        "qwk 0.000 < 0.4"
+      ],
+      "eligible": 76,
+      "gemini_errors": 0,
+      "metrics": {
+        "n": 76,
+        "spearman": NaN,
+        "mae": 10.723684210526315,
+        "signed_bias_gemini_minus_human": 10.328947368421053,
+        "tier_agreement": 0.9473684210526315,
+        "qwk": 0.0,
+        "tier_recall": {
+          "0": [
+            0.0,
+            4
+          ],
+          "1": [
+            1.0,
+            72
+          ]
+        },
+        "false_high": 0.0,
+        "confusion": [
+          [
+            0,
+            4,
+            0
+          ],
+          [
+            0,
+            72,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ]
+        ]
+      }
+    },
+    "Humor": {
+      "passed": false,
+      "reasons": [
+        "qwk 0.000 < 0.4"
+      ],
+      "eligible": 92,
+      "gemini_errors": 0,
+      "metrics": {
+        "n": 92,
+        "spearman": 0.5837300238472755,
+        "mae": 0.5434782608695652,
+        "signed_bias_gemini_minus_human": -0.32608695652173914,
+        "tier_agreement": 0.9891304347826086,
+        "qwk": 0.0,
+        "tier_recall": {
+          "0": [
+            0.9891304347826086,
+            92
+          ]
+        },
+        "false_high": 0.0,
+        "confusion": [
+          [
+            91,
+            1,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ]
+        ]
+      }
+    },
+    "Curiosity": {
+      "passed": true,
+      "reasons": [],
+      "eligible": 83,
+      "gemini_errors": 0,
+      "metrics": {
+        "n": 83,
+        "spearman": 0.8345140770808684,
+        "mae": 10.36144578313253,
+        "signed_bias_gemini_minus_human": 8.19277108433735,
+        "tier_agreement": 0.8072289156626506,
+        "qwk": 0.790654453736891,
+        "tier_recall": {
+          "0": [
+            0.8333333333333334,
+            60
+          ],
+          "1": [
+            0.5714285714285714,
+            14
+          ],
+          "2": [
+            1.0,
+            9
+          ]
+        },
+        "false_high": 0.016666666666666666,
+        "confusion": [
+          [
+            50,
+            9,
+            1
+          ],
+          [
+            1,
+            8,
+            5
+          ],
+          [
+            0,
+            0,
+            9
+          ]
+        ]
+      }
+    }
+  }
+}

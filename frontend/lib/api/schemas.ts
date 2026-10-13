@@ -22,7 +22,7 @@ const feedbackSchema = z.object({
 });
 
 const warningSchema = z.object({
-  code: z.enum(["tts_failed", "feedback_failed", "traits_update_failed"]),
+  code: z.enum(["tts_failed", "feedback_failed", "traits_update_failed", "energy_unavailable"]),
   message: z.string(),
 });
 
@@ -70,7 +70,15 @@ export const speechResponseSchema = z.object({
 
 export const conversationCompleteResponseSchema = conversationMutationResponseSchema.extend({
   warnings: z.array(warningSchema),
+  current_axes: axesSchema.optional(),
+  energy: z.object({ status: z.string(), score: z.number().min(0).max(100).nullable(), reason: z.string().nullable() }).optional(),
 });
+
+export const energyBaselineResponseSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ready"), baseline: z.object({ range_st: z.number().finite().nonnegative(), valid_clips: z.literal(3), method_version: z.string().min(1) }) }),
+  z.object({ status: z.literal("required"), baseline: z.null() }),
+  z.object({ status: z.literal("disabled"), baseline: z.null() }),
+]);
 
 export const conversationListResponseSchema = z.object({
   items: z.array(conversationSchema.extend({

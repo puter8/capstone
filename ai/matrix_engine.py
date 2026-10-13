@@ -23,30 +23,38 @@ Matrix Engine — CHARACTER MATRIX 핵심 연산 모듈
 # 행(Row): 출력 파라미터 → [tone_casual, energy_level, humor_level]
 # 열(Col): 입력 5축    → [Formality, Energy, Intimacy, Humor, Curiosity]
 #
-# 각 가중치 설계 근거:
-#   tone_casual  : Formality가 낮을수록 캐주얼해짐 → -0.45 (음수, 반비례)
-#                  Intimacy·Humor도 캐주얼 느낌에 기여 → +0.15씩
-#   energy_level : Energy 축이 주도 → +0.40
-#                  Intimacy·Humor·Curiosity도 소폭 기여 → +0.15, +0.10, +0.10
-#   humor_level  : Humor 축이 주도 → +0.50
-#                  Energy·Intimacy가 보조 → +0.05, +0.10
+# 2026-10-06 전면 재설계 — 가중합 폐기, 세 출력 모두 자기 축의 단순 변환:
+#   tone_casual  = 100 - Formality  (가중치 없음, 부호만 반전)
+#   energy_level = Energy           (그대로 통과)
+#   humor_level  = Humor            (그대로 통과)
 #
-# 가중치를 0.5 이하로 제한한 이유:
-#   입력이 0~100 범위이므로, 가중치가 크면 출력이 0~100을 초과해 포화(saturation) 발생.
-#   BIAS로 중립 기준점을 잡고, 가중치는 편차만 반영하도록 설계.
+# 재설계 이유 (Pally_RUBRIC_v3.0_md §7.1/§9):
+#   화면(PallyCanvas.tsx::tier())은 항상 원본 축 값을 직접 쓰는데, 기존
+#   persona_prompt()는 5축을 섞은 가중합(W·v+BIAS)을 썼다. 둘이 같은 축을
+#   놓고 서로 다른 값을 봐서, 화면은 "차분함/격식체"인데 대화 지시는
+#   "upbeat/캐주얼"인 불일치가 실측됨:
+#     - Energy: 8,181개 조합 중 18.2% 불일치 (경계 구간 + 다른 축 극단값일 때)
+#     - Formality: 24,543개 조합 중 41.4% 불일치 (전 구간에서 상시 발생 —
+#       BIAS=50이 가중치(-0.45)보다 커서 Formality 혼자서는 중립 구간을
+#       못 벗어남)
+#     - Humor: 24,543개 조합 중 35.2% 불일치 (중간~고구간에서 다른 축이
+#       극단값일 때)
+#   1차로 Energy만 가중치 비중을 올리는 절충을 시도했으나(E 0.40→0.65) 경계
+#   불일치가 남아 폐기 — 세 축 모두 "화면과 프롬프트가 같은 값을 보게"가
+#   유일한 완전한 해결책이라 섞지 않는 쪽으로 확정(사용자 결정, 2026-10-06).
+#   Intimacy/Curiosity는 원래부터 persona_prompt()에서 compute_character()를
+#   거치지 않고 raw 값을 직접 밴딩해서 애초에 이 문제가 없었다(변경 없음).
 # ---------------------------------------------------------------------------
 
 W = [
-    [-0.45,  0.10,  0.15,  0.15,  0.00],  # tone_casual  (격식도 반비례, 친밀·유머 정비례)
-    [ 0.05,  0.40,  0.15,  0.10,  0.10],  # energy_level (Energy 축 주도)
-    [ 0.00,  0.05,  0.10,  0.50,  0.05],  # humor_level  (Humor 축 주도)
+    [-1.00,  0.00,  0.00,  0.00,  0.00],  # tone_casual  = 100 - Formality
+    [ 0.00,  1.00,  0.00,  0.00,  0.00],  # energy_level = Energy
+    [ 0.00,  0.00,  0.00,  1.00,  0.00],  # humor_level  = Humor
 ]
 
-# 편향(Bias): 입력이 모두 0일 때의 기본 출력값 (중립 기준점)
-#   tone_casual  기본값 50 → 중립 말투
-#   energy_level 기본값 20 → 약간 차분한 상태
-#   humor_level  기본값 10 → 기본적으로 진지한 상태
-BIAS = [50, 20, 10]
+# 편향(Bias): tone_casual만 100 - Formality를 만들기 위해 100이 필요하고,
+# 나머지는 축 값을 그대로 통과시키므로 0이다.
+BIAS = [100, 0, 0]
 
 # EMA 스무딩 계수 (0 < alpha <= 1)
 # alpha=0.3: 새 발화 30% + 이전 누적 70% → 급격한 캐릭터 변화 방지
@@ -65,12 +73,11 @@ def compute_character(axes: dict) -> dict:
       입력: {Formality:5, Energy:85, Intimacy:60, Humor:90, Curiosity:35}
       v = [5, 85, 60, 90, 35]
 
-      tone_casual  = (-0.45×5) + (0.10×85) + (0.15×60) + (0.15×90) + (0×35) + 50
-                   = -2.25 + 8.5 + 9 + 13.5 + 0 + 50 = 78.75 → 79
-      energy_level = (0.05×5) + (0.40×85) + (0.15×60) + (0.10×90) + (0.10×35) + 20
-                   = 0.25 + 34 + 9 + 9 + 3.5 + 20 = 75.75 → 76
-      humor_level  = (0×5) + (0.05×85) + (0.10×60) + (0.50×90) + (0.05×35) + 10
-                   = 0 + 4.25 + 6 + 45 + 1.75 + 10 = 67 → 67
+      tone_casual  = (-1×5) + 100 = 95
+      energy_level = (1×85) = 85
+      humor_level  = (1×90) = 90
+
+      (2026-10-06부터 세 출력 모두 다른 축과 섞이지 않는다 — 위 "재설계" 주석 참고)
 
     Args:
         axes: analyzer.py가 반환한 5축 점수 dict

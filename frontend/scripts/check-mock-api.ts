@@ -8,6 +8,9 @@ function assert(condition: unknown, message: string): asserts condition {
 
 async function main(): Promise<void> {
   resetMockPallyApi();
+  assert((await mockPallyApi.getEnergyBaseline()).status === "disabled", "Mock must not pretend to verify a voice baseline");
+  const baselineClip = new Blob([new Uint8Array([1])], { type: "audio/wav" });
+  await rejects(() => mockPallyApi.registerEnergyBaseline([baselineClip, baselineClip, baselineClip], crypto.randomUUID()), /실제 서버/);
 
   const initialProfile = await mockPallyApi.getProfile();
   assert(!initialProfile.profile.onboarding_completed, "Profile must start before onboarding");

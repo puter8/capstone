@@ -10,6 +10,7 @@ const ERR_NO_MIME = '이 브라우저는 음성 녹음을 지원하지 않아요
 const ERR_MIC_ACCESS = '마이크에 접근할 수 없어요.';
 
 export interface RecorderHandlers {
+  enableTranscript?: boolean;
   onStart: () => void;
   /**
    * blob: recorded audio from MediaRecorder.
@@ -172,9 +173,14 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
     }
 
     streamRef.current = stream;
+    if (discardRecordingRef.current) {
+      startingRef.current = false;
+      cleanupStream();
+      return;
+    }
     chunksRef.current = [];
 
-    const SpeechRecognitionCtor = getDesktopSpeechRecognitionCtor();
+    const SpeechRecognitionCtor = handlers.enableTranscript === false ? null : getDesktopSpeechRecognitionCtor();
     if (SpeechRecognitionCtor) {
       try {
         const recognition = new SpeechRecognitionCtor();

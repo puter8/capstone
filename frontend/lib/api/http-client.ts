@@ -14,6 +14,7 @@ import type {
 import { PallyApiError } from "@/lib/api/contracts";
 import {
   achievementsResponseSchema,
+  energyBaselineResponseSchema,
   deleteAccountResponseSchema,
   billingProductsResponseSchema,
   billingOverviewResponseSchema,
@@ -112,6 +113,13 @@ function queryString(input: Record<string, string | number | undefined>): string
 }
 
 export const httpPallyApi: PallyApi = {
+  getEnergyBaseline: () => apiRequest("/api/energy/baseline", { schema: energyBaselineResponseSchema }),
+
+  registerEnergyBaseline(audio, idempotencyKey) {
+    const body = new FormData();
+    audio.forEach((clip, index) => body.append("audio", clip, `baseline-${index + 1}.wav`));
+    return apiRequest("/api/energy/baseline", { schema: energyBaselineResponseSchema, method: "POST", idempotencyKey, body });
+  },
   getProfile: () => apiRequest("/api/profile", { schema: profileResponseSchema }),
 
   getProfileAvatar: () => apiRequest("/api/profile/avatar", { schema: profileAvatarResponseSchema }),

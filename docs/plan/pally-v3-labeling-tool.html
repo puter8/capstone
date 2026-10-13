@@ -1,0 +1,398 @@
+<title>Pally v3.0 라벨링</title>
+<meta name="description" content="능동학습으로 고른 150개 발화를 Rubric v2.2 기준으로 혼자 채점하는 도구">
+<style>
+  /* layout: 상단 진행바 + 가운데 한 번에 한 항목 카드, 저장은 자동(db) */
+  :root{
+    --bg:#F4F5F8; --surface:#FFFFFF; --surface-2:#EFF1F6;
+    --text:#1B1E27; --text-dim:#5B6072; --border:#E2E5ED;
+    --accent:#33498C; --accent-dim:#E8ECF9;
+    --good:#2F8F6E; --good-dim:#E6F4EE;
+    --warn:#B2562D; --warn-dim:#FBEAE1;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14161C; --surface:#1C1F28; --surface-2:#232732;
+      --text:#ECEEF3; --text-dim:#9CA1B3; --border:#323747;
+      --accent:#8DA0E0; --accent-dim:#232B46;
+      --good:#5FBE9C; --good-dim:#13271F;
+      --warn:#D98A5E; --warn-dim:#2E2015;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14161C; --surface:#1C1F28; --surface-2:#232732;
+    --text:#ECEEF3; --text-dim:#9CA1B3; --border:#323747;
+    --accent:#8DA0E0; --accent-dim:#232B46;
+    --good:#5FBE9C; --good-dim:#13271F;
+    --warn:#D98A5E; --warn-dim:#2E2015;
+    color-scheme: dark;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:'Inter',-apple-system,system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding-inline:16px;
+  }
+  .topbar{
+    position:sticky; top:env(safe-area-inset-top,0px); z-index:5;
+    width:100%; max-width:720px; padding-block:14px 10px; background:var(--bg);
+  }
+  .topbar-row{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;}
+  .topbar h1{font-size:15px; font-weight:700; margin:0;}
+  .topbar .count{font-family:'JetBrains Mono',monospace; font-size:12.5px; color:var(--text-dim);}
+  .bar{height:6px; border-radius:99px; background:var(--surface-2); overflow:hidden;}
+  .bar-fill{height:100%; background:var(--accent); transition:width .25s ease;}
+  main{width:100%; max-width:720px; padding-block:12px 40px; flex:1;}
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:22px 22px 24px; margin-bottom:16px;}
+  .ctx{color:var(--text-dim); font-size:13.5px; margin:0 0 6px; padding-left:10px; border-left:3px solid var(--border);}
+  .target{font-size:18px; line-height:1.55; font-weight:600; margin:0; padding-left:10px; border-left:3px solid var(--accent);}
+  .target-ko{font-size:14px; line-height:1.5; color:var(--text-dim); margin:4px 0 0; padding-left:10px; border-left:3px solid transparent;}
+  .id-tag{font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--text-dim); margin-top:10px;}
+
+  .section-label{font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--text-dim); margin:0 0 8px;}
+  .chip-row{display:flex; flex-wrap:wrap; gap:6px;}
+  .chip{
+    font-size:12.5px; padding:6px 11px; border-radius:99px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text); cursor:pointer; user-select:none;
+  }
+  .chip.on{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .chip.none{opacity:.75;}
+
+  .axis-card{background:var(--surface-2); border-radius:14px; padding:16px 16px 14px; margin-top:10px;}
+  .axis-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
+  .axis-name{font-weight:700; font-size:14px;}
+  .axis-score{font-family:'JetBrains Mono',monospace; font-size:20px; font-weight:700; color:var(--accent); min-width:3ch; text-align:right;}
+  .stepper{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+  .stepper input[type=range]{flex:1; accent-color:var(--accent);}
+  .stepper button{
+    width:30px; height:30px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text); font-size:16px; cursor:pointer; line-height:1;
+  }
+  .anchor-toggle{font-size:11.5px; color:var(--accent); cursor:pointer; background:none; border:none; padding:0; margin-bottom:8px; text-decoration:underline;}
+  .anchor-box{font-size:11.5px; color:var(--text-dim); background:var(--surface); border-radius:8px; padding:8px 10px; margin-bottom:10px; line-height:1.6;}
+  .mini-row{display:flex; gap:16px; flex-wrap:wrap; align-items:center;}
+  .mini-field label{font-size:11px; color:var(--text-dim); display:block; margin-bottom:3px;}
+  select, .note-input{
+    font-family:inherit; font-size:12.5px; padding:5px 8px; border-radius:8px;
+    border:1px solid var(--border); background:var(--surface); color:var(--text);
+  }
+  .note-input{width:100%; margin-top:10px; resize:vertical; min-height:36px;}
+
+  .nav-row{display:flex; gap:10px; margin-top:4px;}
+  .btn{
+    flex:1; padding:13px; border-radius:12px; border:none; font-size:14.5px; font-weight:700;
+    cursor:pointer;
+  }
+  .btn-primary{background:var(--accent); color:#fff;}
+  .btn-ghost{background:var(--surface-2); color:var(--text); border:1px solid var(--border); flex:0 0 72px;}
+  .status-line{font-size:11.5px; color:var(--text-dim); text-align:center; margin-top:8px; min-height:16px;}
+  .status-line.err{color:var(--warn);}
+  .status-line.ok{color:var(--good);}
+
+  .jump-strip{display:flex; flex-wrap:wrap; gap:4px; margin-top:14px;}
+  .jump-dot{
+    width:16px; height:16px; border-radius:4px; border:1px solid var(--border);
+    background:var(--surface-2); cursor:pointer; font-size:0;
+  }
+  .jump-dot.done{background:var(--good); border-color:var(--good);}
+  .jump-dot.current{outline:2px solid var(--accent); outline-offset:1px;}
+
+  .done-screen{text-align:center; padding-top:60px;}
+  .done-screen h2{font-size:22px; margin-bottom:6px;}
+  .done-screen p{color:var(--text-dim); font-size:14px;}
+</style>
+
+<div class="topbar">
+  <div class="topbar-row">
+    <h1>Pally v3.0 라벨링 (1인 · eunheay)</h1>
+    <span class="count" id="countLabel">–/150</span>
+  </div>
+  <div class="bar"><div class="bar-fill" id="barFill" style="width:0%"></div></div>
+</div>
+
+<main id="main"></main>
+
+<script>
+const ITEMS = [{"id": "Bmr019.H.dialogueact1720", "ctx": "Mm- hmm.", "text": "And I I would like to to to say thank you very much, eh, to all people in the group and at ICSI", "ko": "그리고 저는, 어, 그룹과 ICSI의 모든 분들께 정말 감사하다는 말씀을 드리고 싶습니다."}, {"id": "IS1004b.B.dialog-act.dharshi.77", "ctx": "Great.", "text": "Okay so um while uh researching this this topic I first of all just thought of a couple of things that I would like to see in a remote", "ko": "네 그래서 음, 이 주제를 조사하면서 리모컨에서 보고 싶은 몇 가지를 먼저 생각해봤어요."}, {"id": "Bed014.E.dialogueact1055", "ctx": "Mm- hmm.", "text": "I wo I would like I would sort of get a get a notion of what what you guys have in store for me.", "ko": "저는, 음, 여러분이 저를 위해 뭘 준비하고 있는지 대략적인 감을 좀 잡고 싶어요."}, {"id": "Bed014.C.dialogueact1304", "ctx": "Mm- hmm.", "text": "OK, which was that o one of the things I would like to see happen is a paper that was tentatively called \" Towards a formal cognitive semantics\"", "ko": "네, 제가 보고 싶은 것 중 하나는 가칭 '형식적 인지 의미론을 향하여'라는 논문이었어요."}, {"id": "Bmr005.D.dialogueact338", "ctx": "Eh, I I I do I don't need to to to mmm to m to label the the different acoustic", "text": "but I prefer because eh I would like to to study if eh, I I will find eh, eh, a good eh parameters eh to detect overlapping", "ko": "하지만 저는, 어, 겹침을 탐지할 좋은 파라미터를 찾을 수 있을지 연구하고 싶어서 그쪽을 선호해요."}, {"id": "Bmr014.E.dialogueact78", "ctx": "Good.", "text": "And then um, the other thing which I would like to talk about which is a real meta- quest, I think, deal is, uh, agendas.", "ko": "그리고 음, 제가 얘기하고 싶은 또 다른 건, 진짜 메타적인 주제인데, 어, 안건(아젠다)에 관한 거예요."}, {"id": "Bns001.D.dialogueact225", "ctx": "So I would like to to uh split, in principle, the discussions of what kind of application tsk um f far away", "text": "and I would like to more to focus if we have certain kind of vision t concerning these building blocks and the network, Um, What kind of problem we are going to solve.", "ko": "그리고 이 구성 요소들과 네트워크에 대해 어떤 비전이 있는지, 음, 우리가 어떤 문제를 풀려는 건지에 더 집중하고 싶어요."}, {"id": "ES2002b.C.dialog-act.dharshi.11", "ctx": "Um I've had a look at the previous products to see what they offer", "text": "and um I would like to ask you guys for um your ideas about the design at the end of the meeting.", "ko": "그리고 음, 회의 끝에 디자인에 대한 여러분의 아이디어를 여쭤보고 싶어요."}, {"id": "Bns001.D.dialogueact224", "ctx": "and that is not the major focus of um this kind of um this kind of application anyway.", "text": "So I would like to to uh split, in principle, the discussions of what kind of application tsk um f far away", "ko": "그래서 원칙적으로는, 어떤 애플리케이션인지에 대한 논의를 좀 나누고 싶어요."}, {"id": "IS1004c.B.dialog-act.dharshi.83", "ctx": "well they've actually integrated into the into the the coffee machine that uh that we're producing is", "text": "you can say good morning to the coffee machine and it can recognize that phrase and it'll playback good morning, how would you like your coffee?", "ko": "커피머신한테 '굿모닝'이라고 말하면 그 문구를 인식해서 '굿모닝, 커피는 어떻게 드릴까요?'라고 대답해줘요."}, {"id": "TS3007d.B.dialog-act.dharshi.300", "ctx": "Nee.", "text": "As uh as I said a m a c few moments ago, it I would like, myself, to write with a normal pen", "ko": "어, 아까 말씀드렸듯이, 저는 그냥 평범한 펜으로 쓰고 싶어요."}, {"id": "Bns002.C.dialogueact832", "ctx": "Hmm?", "text": "but what I would like to say is that besides the RTS CTS behavior, you need certain kind of additional MAC layer functionality to deal with these packet.", "ko": "하지만 제가 말씀드리고 싶은 건, RTS/CTS 동작 말고도 이런 패킷을 처리하려면 추가적인 MAC 레이어 기능이 필요하다는 거예요."}, {"id": "Bns002.C.dialogueact1451", "ctx": "but without really hard money in the background, it is very hard to come to the initial steps.", "text": "And uh Juan Peire, one of the uh members of this NSA group has uh identified a certain kind of s start money, I would like to say.", "ko": "그리고 어, NSA 그룹 멤버 중 한 명인 Juan Peire가 일종의 초기 자금을 좀 확보했다고 말씀드리고 싶어요."}, {"id": "Bro003.A.dialogueact1631", "ctx": "um", "text": "uh, but we I would like to go through sit down with you about some of these other ones and see if we can move them onto, um, this new disk also.", "ko": "어, 근데 다른 것들도 같이 앉아서 검토해보고, 음, 이 새 디스크로 옮길 수 있는지 보고 싶어요."}, {"id": "TS3011c.A.dialog-act.vkaraisk.16", "ctx": "Oop.", "text": "Um I have some points I would like to uh some some issues I would like to point out.", "ko": "음, 제가 짚고 싶은 포인트가 좀 있어요, 어, 몇 가지 이슈요."}, {"id": "Bmr014.E.dialogueact75", "ctx": "Um. Let's see.", "text": "I guess I would like to have a discussion about you know where we are on uh, recording, transcription", "ko": "녹음이랑 전사 작업이 지금 어디까지 왔는지에 대해 얘기 나누고 싶은 것 같아요."}, {"id": "IS1005c.A.dialog-act.dharshi.10", "ctx": "we will have again three presentation, from all of you", "text": "and uh I hope it will be fast because I would like to have time to for long discussion and and decisions.", "ko": "그리고 어, 빨리 끝났으면 좋겠어요, 왜냐면 긴 논의랑 결정을 할 시간이 필요하거든요."}, {"id": "ES2005c.C.dialog-act.dharshi.303", "ctx": "'Kay.", "text": "and what I would like you guys to do is work on giving me a model in clay.", "ko": "그리고 여러분이 해주셨으면 하는 건, 클레이로 모델을 만들어주시는 거예요."}, {"id": "ES2012b.A.dialog-act.vkaraisk.113", "ctx": "Uh yeah.", "text": "Forty no sorry for forty five to fifty five age group, uh to put myself right in the middle of it, um u use remote controls to a great extent.", "ko": "40, 아니 죄송해요, 45세에서 55세 연령대는, 어, 저도 딱 그 중간쯤인데, 음, 리모컨을 정말 많이 써요."}, {"id": "IB4003.D.dialog-act.s9553330.241", "ctx": "Uh there has been a very long discussion about that.", "text": "I stinct uh this discussion is still vivid, that some of the people, I bel belong to these people, would like to have a mixed room where you can have a reading room for sure, but also meeting room if necessary.", "ko": "이 논의가 아직도 생생한데, 어떤 사람들은, 저도 포함해서, 확실히 독서실도 있고 필요하면 회의실로도 쓸 수 있는 복합 공간을 원해요."}, {"id": "IS1009b.B.dialog-act.dharshi.38", "ctx": "Okay.", "text": "As uh User Interface Designer I did a little research to find out what are the features which a user would like to have on their remote.", "ko": "어, UI 디자이너로서 사용자가 리모컨에 원하는 기능이 뭔지 알아보려고 간단히 조사를 좀 했어요."}, {"id": "Bed005.C.dialogueact44", "ctx": "Yeah.", "text": "Also, um, F both Fey and I will, um, do something of which I may, eh kindly ask you to to do the same thing", "ko": "또, 음, Fey랑 저 둘 다, 음, 뭔가를 할 건데, 어, 여러분도 같은 걸 해주십사 부탁드려도 될까요."}, {"id": "Bed009.F.dialogueact322", "ctx": "There are only three possibilities and the uh", "text": "what one would like is for this uh, knowledge modeling module to add which of those it is and give it to the planner.", "ko": "원하는 건 이 어, 지식 모델링 모듈이 어느 것인지 판단해서 플래너한테 넘겨주는 거예요."}, {"id": "Bed011.C.dialogueact164", "ctx": "Mm- hmm.", "text": "And what w what happened is that um design- wise I 'd sort of n noticed that we can we still get a lot of errors from a lot of points to one of these sub Go- there User Go- there Situation nodes.", "ko": "그리고 무슨 일이 있었냐면, 음, 디자인적으로 보니 여러 지점에서 이 하위 User/Situation 노드 중 하나로 가는 데서 여전히 오류가 많이 발생하더라고요."}, {"id": "Bed013.E.dialogueact774", "ctx": "some stuff gets put in there.", "text": "You know, hopefully you can you can say something like constituents tells you what the construction is made out of, you know, without going into this intense detail.", "ko": "그러니까, 구성 요소들이 그 구조가 뭘로 이루어져 있는지 알려준다고, 세세하게 안 들어가고도 말할 수 있으면 좋겠어요."}, {"id": "ES2007a.B.dialog-act.dharshi.60", "ctx": "Um, oh we've got five minutes left.", "text": "Start breaking up.", "ko": "분위기가 흐트러지기 시작하네요."}, {"id": "ES2009a.A.dialog-act.vkaraisk.213", "ctx": "They'll be like, say something British", "text": "and you're like oh shut up family.", "ko": "그리고 '아 조용히 좀 해, 가족아' 이런 식이죠."}, {"id": "IS1002b.A.dialog-act.s9553330.235", "ctx": "We gotta stop?", "text": "Gotta cut up.", "ko": "끊어야겠어요."}, {"id": "IS1002d.B.dialog-act.dharshi.55", "ctx": "beep beep beep", "text": "be shut up.", "ko": "조용히 해."}, {"id": "ES2002b.A.dialog-act.dharshi.244", "ctx": "Okay.", "text": "'cause things are like fixed.", "ko": "왜냐하면 다 고정돼 있으니까요."}, {"id": "ES2004b.D.dialog-act.s9553330.160", "ctx": "I've not come across that function", "text": "but it sounds wonderful.", "ko": "근데 엄청 좋은 것 같아요."}, {"id": "ES2005c.C.dialog-act.dharshi.297", "ctx": "No.", "text": "It's actually shut down.", "ko": "사실 꺼져 있어요."}, {"id": "ES2006d.B.dialog-act.s9553330.300", "ctx": "I think we'd like to think the ideas were new", "text": "but we've got no way of finding out.", "ko": "근데 알아낼 방법이 없어요."}, {"id": "ES2007b.D.dialog-act.dharshi.22", "ctx": "Bicycle power.", "text": "No 'cause like cha 'cause always changing um um batteries can get like annoying.", "ko": "아뇨 왜냐면 맨날 배터리를 바꾸는 게, 음, 짜증날 수 있어서요."}, {"id": "ES2007c.D.dialog-act.dharshi.2", "ctx": "Oh right okay.", "text": "I cover myself up.", "ko": "저는 몸을 감싸요."}, {"id": "ES2008c.B.dialog-act.vkaraisk.337", "ctx": "and you need some kind of, I dunno, sort of up down kind of button", "text": "Yeah, up down.", "ko": "네, 위아래요."}, {"id": "ES2009b.A.dialog-act.vkaraisk.269", "ctx": "Oh", "text": "to wake up", "ko": "깨우려고요"}, {"id": "ES2012c.B.dialog-act.vkaraisk.244", "ctx": "We actually use the television, okay. Okay, okay, okay.", "text": "things like that usually c pop up on a televi", "ko": "그런 것들이 보통 텔레비전에 뜨잖아요"}, {"id": "ES2015d.D.dialog-act.dharshi.22", "ctx": "A channel.", "text": "Channel up volume up.", "ko": "채널 업, 볼륨 업이요."}, {"id": "IS1000c.A.dialog-act.vkaraisk.202", "ctx": "Anoth another like b", "text": "it flips up", "ko": "위로 젖혀져요"}, {"id": "Bmr023.F.dialogueact530", "ctx": "Right?", "text": "And you don't you there's no way that we 're gonna go back and ask everybody \" do you approve this, uh, you know this document now?\"", "ko": "그리고 우리가 다시 가서 모두한테 '이거 승인하시나요, 어, 이 문서 지금요?' 이렇게 물어볼 방법은 없어요."}, {"id": "IS1006c.C.dialog-act.vkaraisk.129", "ctx": "Mm-hmm.", "text": "if users want more colours they can pay more money to get this uh the shapes and they can have different assembly.", "ko": "사용자가 색상을 더 원하면 돈을 더 내고 이 어, 모양을 얻을 수 있고, 조립 방식도 다르게 할 수 있어요."}, {"id": "TS3004d.D.dialog-act.dharshi.147", "ctx": "Well, I think it is.", "text": "Because because I think I think the scroll wheel, uh it's very handy, but the first time you get this thing in your hands, it's not to use the scroll wheel.", "ko": "왜냐면 제 생각에는 스크롤 휠이, 어, 되게 편리한데, 처음 손에 쥐었을 때는 스크롤 휠을 쓸 생각을 못 해요."}, {"id": "TS3008b.A.dialog-act.dharshi.27", "ctx": "Okay.", "text": "And I'll get this one uh in digital uh form too.", "ko": "그리고 이것도 어, 디지털 형태로 받을게요."}, {"id": "Bmr006.D.dialogueact1287", "ctx": "So when one person is speaking, then wherever they happen to be at the point when they 're speaking, then there's a pretty big maximum right around that point in the l in in the lag.", "text": "So if at whatever angle you are, at some lag corresponding to the time difference between the two there, you get this boost in the in in the cross- correlation value function.", "ko": "그래서 한 사람이 말할 때, 그 사람이 어디 있든 말하는 시점 근처에서, 지연값(lag) 쪽에 꽤 큰 최댓값이 생겨요."}, {"id": "Bmr023.A.dialogueact341", "ctx": "No backs.", "text": "two of the ones who who, um, ha had been putting in a lot of hours up to this point and they 're continuing to put in a a lot of hours", "ko": "지금까지 많은 시간을 투자해온 두 명이, 음, 계속 많은 시간을 투자하고 있어요."}, {"id": "Bro021.C.dialogueact242", "ctx": "Mm- hmm.", "text": "Well, anyway, the sp the portion of speech that ha have high energy are not ch a lot affected by the noises in the Aurora database.", "ko": "아무튼, 에너지가 높은 음성 구간은 Aurora 데이터베이스의 노이즈에 별로 영향을 안 받아요."}, {"id": "ES2008b.A.dialog-act.vkaraisk.133", "ctx": "Um otherwise becomes to complex", "text": "we wanna get this out um very quickly.", "ko": "이걸 음, 아주 빨리 내놓고 싶어요."}, {"id": "IS1000d.A.dialog-act.vkaraisk.408", "ctx": "it's gonna be what we can afford", "text": "and it's looking like we can't afford the L_C_D_ display, there's no way we can get it in there.", "ko": "그리고 LCD 디스플레이는 예산상 안 될 것 같아요, 거기 넣을 방법이 없어요."}, {"id": "TS3011c.C.dialog-act.vkaraisk.201", "ctx": "um we have to know, if you want to use uh these rubber double-curved c uh case, um you must use these push uh push-buttons.", "text": "There's no way you can integrate L_C_D_ displays.", "ko": "LCD 디스플레이를 통합할 방법이 없어요."}, {"id": "Bed002.C.dialogueact497", "ctx": "Right.", "text": "So, th they 're gonna give us some cr uh or We can assume that y you get this crude information.", "ko": "그래서, 저쪽에서 대략적인, 어, 아니면 일단 거친(대략적인) 정보를 받는다고 가정해볼 수 있어요."}, {"id": "Bed011.C.dialogueact741", "ctx": "Alright.", "text": "OK, \" Length\" is um, you wanna get this over with as fast as possible", "ko": "네, 'Length(길이)'는 음, 최대한 빨리 끝내고 싶은 거예요."}, {"id": "Bed012.B.dialogueact97", "ctx": "OK.", "text": "So there is no way of telling it t not to tell us about the EVA values.", "ko": "그래서 EVA 값을 알려주지 말라고 지시할 방법이 없어요."}, {"id": "Bed012.C.dialogueact205", "ctx": "Mm- hmm.", "text": "because there 'd be no way to generate the nodes for every possible sentence.", "ko": "왜냐면 가능한 모든 문장에 대해 노드를 생성할 방법이 없을 테니까요."}, {"id": "Bmr007.H.dialogueact1277", "ctx": "You 'll lose it.", "text": "There's no way around that.", "ko": "그건 피할 방법이 없어요."}, {"id": "Bmr013.G.dialogueact940", "ctx": "Yeah.", "text": "and that's where, we, might wanna have this individual, you know, ha have your pre pre- process input.", "ko": "그리고 그 지점에서, 음, 각자 전처리된 입력값을 갖고 있으면 좋을 것 같아요."}, {"id": "Bmr016.E.dialogueact1951", "ctx": "So you say, \" Seve- seventy eight point two\", or whatever.", "text": "And there's no way of capturing that if you 're putting the numbers off to the side.", "ko": "그리고 숫자를 옆에 따로 적어두면 그걸 포착할 방법이 없어요."}, {"id": "Bmr018.C.dialogueact134", "ctx": "and we do have the time work difference running the right way", "text": "but I still think that there's no way we could start before eleven.", "ko": "그래도 11시 전에는 시작할 방법이 없을 것 같아요."}, {"id": "Bmr019.A.dialogueact1556", "ctx": "but", "text": "There's no way.", "ko": "그건 불가능해요."}, {"id": "Bro003.F.dialogueact1193", "ctx": "I mean", "text": "clearly, there there's no way we can even begin to do an any significant amount here unless we use multiple machines.", "ko": "분명히, 여러 대의 머신을 쓰지 않는 이상 여기서 의미 있는 양을 시작조차 할 방법이 없어요."}, {"id": "IS1004c.D.dialog-act.dharshi.161", "ctx": "A yeah, otherwise it'll be mis means you don't get b any feeling then.", "text": "Maybe li like that.", "ko": "아마 이런 느낌일 거예요."}, {"id": "Bmr003.E.dialogueact15", "ctx": "it is", "text": "oh, maybe it just warmed up?", "ko": "아, 그냥 좀 데워진 거 아닐까요?"}, {"id": "Bmr013.G.dialogueact904", "ctx": "So if they hear a breath and they don't know who breath it is it's better to put it in that channel than to put it in the speaker's channel", "text": "because maybe it was someone else's breath", "ko": "왜냐하면 아마 다른 사람의 숨소리였을 수도 있으니까요"}, {"id": "Bmr016.G.dialogueact1371", "ctx": "but I didn't know wanna change it to something else until I knew.", "text": "Maybe it's \" argh\"?", "ko": "혹시 '아악'인가요?"}, {"id": "ES2003c.C.dialog-act.vkaraisk.85", "ctx": "Um I mean the research did come up with fruit and veg", "text": "so maybe it is important", "ko": "그러니까 아마 중요할 거예요"}, {"id": "ES2004b.A.dialog-act.s9553330.127", "ctx": "I mean look at the mobile.", "text": "but Mm. What we were talking is to make it more rather than like sea-shells", "ko": "근데 음. 저희가 얘기하던 건 조개껍데기 같은 것보다는 좀 더..."}, {"id": "ES2006a.D.dialog-act.s9553330.33", "ctx": "Yeah", "text": "maybe it has some colourful patches, yeah.", "ko": "아마 컬러풀한 패치가 좀 있을 것 같아요, 네."}, {"id": "ES2006d.C.dialog-act.s9553330.44", "ctx": "Six seven eight nine.", "text": "I like that.", "ko": "그거 마음에 들어요."}, {"id": "ES2007c.A.dialog-act.dharshi.45", "ctx": "Yeah.", "text": "Yeah, I like that idea.", "ko": "네, 그 아이디어 좋아요."}, {"id": "ES2008a.C.dialog-act.vkaraisk.49", "ctx": "Mm.", "text": "So we should maybe we should assume that i t it's just a television that we're wanting to control.", "ko": "그러니까 아마 그냥 텔레비전을 제어하려는 거라고 가정해야 할 것 같아요."}, {"id": "ES2008b.B.dialog-act.vkaraisk.162", "ctx": "that's just impossible to use", "text": "or maybe it broke", "ko": "아니면 아마 고장 났을 수도 있고요"}, {"id": "ES2008c.B.dialog-act.vkaraisk.58", "ctx": "Maybe titanium", "text": "maybe some wood.", "ko": "아마 나무 재질이요."}, {"id": "ES2009a.A.dialog-act.vkaraisk.348", "ctx": "I guess we we probably have some time", "text": "maybe we should brainstorm a bit like what we wanna do", "ko": "우리가 뭘 하고 싶은지 좀 브레인스토밍 해봐야 할 것 같아요"}, {"id": "ES2009d.D.dialog-act.vkaraisk.162", "ctx": "I think I was taking notes more often than usual", "text": "just 'cause I liked the pen, yeah.", "ko": "그냥 제가 그 펜이 마음에 들어서요, 네."}, {"id": "ES2009d.D.dialog-act.vkaraisk.192", "ctx": "Yeah.", "text": "I mean maybe it's just me", "ko": "저만 그런 걸 수도 있는데"}, {"id": "ES2011d.B.dialog-act.dharshi.129", "ctx": "I think it was good.", "text": "We knew what we were doing.", "ko": "우리가 뭘 하는지 잘 알고 있었어요."}, {"id": "ES2011d.C.dialog-act.dharshi.137", "ctx": "I dunno if it was just my role", "text": "or maybe it was just the idea that we had.", "ko": "아니면 그냥 저희가 가졌던 아이디어 때문이었을 수도 있고요."}, {"id": "ES2012c.B.dialog-act.vkaraisk.159", "ctx": "Mm-hmm.", "text": "Oh yeah. I like that.", "ko": "아 맞아요. 그거 마음에 들어요."}, {"id": "ES2014c.B.dialog-act.s9553330.172", "ctx": "I've I've got some things to say about possible design things from trend watching.", "text": "Yeah, maybe we should see yours first.", "ko": "네, 아마 당신 것부터 먼저 봐야 할 것 같아요."}, {"id": "ES2015c.C.dialog-act.dharshi.57", "ctx": "Mm.", "text": "Or maybe it's", "ko": "아니면 아마 그건..."}, {"id": "ES2015c.A.dialog-act.dharshi.120", "ctx": "Okay.", "text": "Yeah. I like that idea.", "ko": "네. 그 아이디어 좋아요."}, {"id": "ES2015d.C.dialog-act.dharshi.93", "ctx": "Oh well, potato, mango, fruit and veg.", "text": "We we were we were thinking about", "ko": "저희가, 저희가 생각하고 있던 건..."}, {"id": "IB4003.A.dialog-act.s9553330.39", "ctx": "I I will maybe distribute now documents if you don't have them.", "text": "Maybe it's easier.", "ko": "아마 그게 더 쉬울 거예요."}, {"id": "IS1000a.D.dialog-act.vkaraisk.73", "ctx": "Put it colours.", "text": "Maybe it would help us.", "ko": "아마 그게 저희한테 도움이 될 거예요."}, {"id": "IS1000d.A.dialog-act.vkaraisk.179", "ctx": "Yeah.", "text": "maybe it won't work so well.", "ko": "아마 그렇게 잘 작동하지는 않을 거예요."}, {"id": "IS1002b.A.dialog-act.s9553330.227", "ctx": "Maybe th th th that's just some people that like that.", "text": "I mean there's al there's also remote controls I remember that that worked uh, this hasn't been done in a while I think, but th as a as a watch.", "ko": "그러니까 시계처럼 작동하는 리모컨도 있었던 걸로 기억해요, 어, 요즘엔 안 나온 것 같지만요."}, {"id": "Bed015.F.dialogueact86", "ctx": "it's pro it's often sometimes the case in the first case here that you know what kind of construction it is.", "text": "So for example whatever I have here is gonna be a form of the word \" throw\"", "ko": "그러니까 예를 들어 여기 있는 건 'throw'라는 단어의 한 형태가 될 거예요"}, {"id": "Bsr001.F.dialogueact2019", "ctx": "And the amazing thing is that even even, you know, the entire way through we 're actually using some very, very similar stuff.", "text": "Big endian, little endian?", "ko": "빅 엔디안이요, 리틀 엔디안이요?"}, {"id": "TS3009c.A.dialog-act.s9553330.318", "ctx": "No.", "text": "It's a bit uh bit a pity.", "ko": "좀, 어, 좀 아쉽네요."}, {"id": "ES2003c.B.dialog-act.vkaraisk.202", "ctx": "Um the reason I'm saying that is we're just looking at a a replacement remote control", "text": "something that's stylish", "ko": "스타일리시한 거요"}, {"id": "Bro021.B.dialogueact919", "ctx": "Well, mmm", "text": "I actually don't see how you get that.", "ko": "솔직히 그게 어떻게 나오는 건지 모르겠어요."}, {"id": "Bro012.F.dialogueact637", "ctx": "When's the deadline?", "text": "I think it's the thirteenth of May.", "ko": "5월 13일인 것 같아요."}, {"id": "Bsr001.F.dialogueact1395", "ctx": "XML", "text": "that solves everything.", "ko": "그럼 다 해결되네요."}, {"id": "TS3009c.C.dialog-act.s9553330.361", "ctx": "Tada.", "text": "Mm bit like this.", "ko": "음 이런 느낌이요."}, {"id": "Bmr005.E.dialogueact1412", "ctx": "So I mean, we have two speech meetings, one uh network meeting", "text": "uh Jerry was open to it but I I s", "ko": "어 Jerry는 열려 있었는데 저는, 저는..."}, {"id": "Bmr010.G.dialogueact1503", "ctx": "as with a lot of things, it is not uh, like this, it's not as simple as it sounds.", "text": "And then there's, you know Is it energy? Is it log energy? Is it LPC residual energy? Is it is it is it, uh, delta of those things?", "ko": "그리고, 에너지인가요? 로그 에너지인가요? LPC 잔차 에너지인가요? 아니면, 어, 이것들의 델타값인가요?"}, {"id": "IS1009b.D.dialog-act.dharshi.175", "ctx": "but specifically if y if like elderly people want big buttons then you can't really make a bi big remote controller so maybe specifically you can design a big con remote controller for elderly and for children, like in a different you know.", "text": "What about the electronics? That's not really gonna change much, is it?", "ko": "전자 부품 쪽은요? 그건 별로 안 바뀌겠죠, 그렇죠?"}, {"id": "TS3006d.D.dialog-act.dharshi.350", "ctx": "I think a five. Five.", "text": "What do you say? Easy to use? Five or a six?", "ko": "어떻게 생각하세요? 사용 편의성이요? 5점이요, 6점이요?"}, {"id": "TS3010b.C.dialog-act.s9553330.132", "ctx": "Okay.", "text": "And the other people? What do you think about it?", "ko": "다른 분들은요? 어떻게 생각하세요?"}, {"id": "Bmr007.A.dialogueact588", "ctx": "But.", "text": "I wonder what determines who gets the floor?", "ko": "누가 발언권을 갖는지는 뭐로 정해지는 걸까요?"}, {"id": "Bro024.A.dialogueact426", "ctx": "Um.", "text": "And uh, should I should I explain, uh, more about what what I 'm proposing to do, and s and stuff?", "ko": "그리고 어, 제가 제안하는 게 뭔지 더 설명을 좀 드려야 할까요?"}, {"id": "Bmr030.B.dialogueact528", "ctx": "Oh.", "text": "So when that thing When it stutters like that, is it because there's a delay getting the data off a disk? Or is it because there's a delay in the D to A?", "ko": "그래서 그게 그렇게 끊길 때, 디스크에서 데이터 가져오는 게 지연돼서 그런 건가요? 아니면 D/A 변환에서 지연이 있는 건가요?"}, {"id": "IS1004d.D.dialog-act.dharshi.114", "ctx": "Yeah.", "text": "So? What now? What range?", "ko": "그래서요? 이제 뭐죠? 범위가 어떻게 되나요?"}, {"id": "Bed002.A.dialogueact68", "ctx": "And I think that's about it.", "text": "I mean, should I Do you want me to talk at all about why we 're doing this and what this project is?", "ko": "그러니까, 제가 우리가 왜 이걸 하는지랑 이 프로젝트가 뭔지에 대해 얘기를 좀 할까요?"}, {"id": "Bmr006.E.dialogueact1610", "ctx": "I mean, so so how is that information gonna get labeled anyway?", "text": "How do you mean, who what they 're who they 're talking about?", "ko": "무슨 말씀이세요, 그들이 누구에 대해 얘기하고 있는지요?"}, {"id": "IS1004d.A.dialog-act.dharshi.57", "ctx": "Mm.", "text": "What will be the autonomy? Roughly?", "ko": "자율성(배터리 지속시간)은 어느 정도 될까요? 대략적으로요?"}, {"id": "TS3004d.D.dialog-act.dharshi.64", "ctx": "Yeah, I I thought about one thing.", "text": "Uh the buttons? Uh from which material are they now?", "ko": "어, 버튼이요? 어, 지금은 어떤 재질로 돼 있나요?"}, {"id": "Bro022.G.dialogueact411", "ctx": "So, what w?", "text": "With the with the HTK back- end? What we have for Aurora?", "ko": "HTK 백엔드로요? 저희가 Aurora용으로 가진 거요?"}, {"id": "IS1006c.C.dialog-act.vkaraisk.262", "ctx": "So", "text": "what about location and these things, people are really interesting on those features?", "ko": "위치 같은 건 어때요, 사람들이 그런 기능에 진짜 관심 있나요?"}, {"id": "TS3005b.D.dialog-act.vkaraisk.115", "ctx": "Uh yeah, think so.", "text": "Our main targets' age are? were? Forty five plus, or?", "ko": "저희 주 타겟 연령대가... 였죠? 45세 이상인가요?"}, {"id": "TS3009b.A.dialog-act.s9553330.276", "ctx": "Width.", "text": "Uh format yeah format? Line width? Width?", "ko": "어, 형식이요, 네 형식이요? 선 굵기요? 너비요?"}, {"id": "Bdb001.C.dialogueact116", "ctx": "\" Prosody\"", "text": "right? D? T?", "ko": "맞죠? D요? T요?"}, {"id": "Bed010.E.dialogueact420", "ctx": "OK.", "text": "And um you 're gonna be around? t again, always Tuesdays and Thursdays afternoon- ish? As usual?", "ko": "그리고 음, 계속 계실 거죠? 평소처럼 화요일 목요일 오후쯤에요?"}, {"id": "Bmr031.G.dialogueact1503", "ctx": "We have to do the English synthesis for", "text": "What if we make the system really annoyed?", "ko": "시스템을 진짜 짜증나게 만들면 어떨까요?"}, {"id": "Bro012.A.dialogueact964", "ctx": "Can I ask a, I mean a sort of top- level question", "text": "which is um \" if if most of what the OGI folk are working with is trying to integrate this other other uh spectral subtraction, why are we worrying about it?\"", "ko": "그러니까 음, 'OGI 쪽에서 하는 작업 대부분이 다른 스펙트럼 차감법을 통합하려는 거라면, 우리가 왜 그걸 걱정하죠?' 이런 거예요."}, {"id": "Bro015.D.dialogueact46", "ctx": "Um.", "text": "And and i when they 're talking about it, do you have the impression that they 're talking about a particular VAD which everybody would use?", "ko": "그리고 그들이 그 얘기를 할 때, 모두가 쓸 만한 특정 VAD를 얘기하는 느낌이 드시나요?"}, {"id": "Bro023.C.dialogueact926", "ctx": "But if down the road you 're making use of something as if it is a power spectrum, um, then it can be bad to have something negative.", "text": "Now, the other thing I wonder about actually is, what if you left it negative?", "ko": "그리고 제가 또 궁금한 건, 음수로 그냥 놔두면 어떻게 되나요?"}, {"id": "IS1000c.D.dialog-act.vkaraisk.40", "ctx": "So", "text": "what functionalities do you suggest for that? For facing this problem?", "ko": "그걸 위해 어떤 기능을 제안하시나요? 이 문제를 해결하기 위해서요?"}, {"id": "Bed013.D.dialogueact65", "ctx": "It should be possible to make that system produce questions.", "text": "So if you have the knowledge of how to interpret \" where is X?\" under given conditions, situational, user, discourse and ontological conditions, you should also be able to make that same system ask \" where is X?\"", "ko": "그러니까 특정 상황·사용자·담화·존재론적 조건에서 'X는 어디 있나요?'를 해석하는 지식이 있다면, 같은 시스템이 'X는 어디 있나요?'라고 물을 수도 있어야 해요."}, {"id": "TS3004b.C.dialog-act.vkaraisk.21", "ctx": "Yeah, okay.", "text": "But um how can you remember what uh channel uh connects to what favourite button?", "ko": "근데 음, 어떤 채널이 어떤 즐겨찾기 버튼에 연결돼 있는지 어떻게 기억하나요?"}, {"id": "ES2002d.B.dialog-act.dharshi.4", "ctx": "Well this is the uh final detailed design meeting.", "text": "Um we're gonna discuss the look and feel design, the user interface design, and we're gonna evaluate the product.", "ko": "음, 룩앤필 디자인이랑 UI 디자인을 논의하고, 제품을 평가할 거예요."}, {"id": "ES2002d.B.dialog-act.dharshi.9", "ctx": "So um", "text": "just from from last time to recap", "ko": "지난번 걸 간단히 요약하자면"}, {"id": "ES2004a.B.dialog-act.s9553330.7", "ctx": "She gonna answer me or not?", "text": "Yeah, I've got", "ko": "네, 저 있어요"}, {"id": "ES2004a.B.dialog-act.s9553330.13", "ctx": "Um I'm Sarah", "text": "the Project Manager", "ko": "프로젝트 매니저요"}, {"id": "ES2005a.A.dialog-act.vkaraisk.6", "ctx": "The only the only remote controls I've used usually come with the television", "text": "and they're fairly basic.", "ko": "그리고 그것들은 꽤 기본적이에요."}, {"id": "ES2005a.D.dialog-act.vkaraisk.4", "ctx": "I think the the only ones that I've seen that you buy are the sort of one for all type things", "text": "Yeah the universal ones. Yeah.", "ko": "네 만능 리모컨이요. 네."}, {"id": "ES2005b.C.dialog-act.dharshi.1", "ctx": null, "text": "Um minutes from the last meeting which were essentially that we uh had decided on roles for each of you", "ko": "음, 지난 회의록인데, 기본적으로 각자 역할을 정했었어요"}, {"id": "ES2005b.B.dialog-act.dharshi.15", "ctx": "Yeah.", "text": "Uh, me again, Rajan the Marketing Expert.", "ko": "어, 또 저예요, 마케팅 전문가 Rajan이요."}, {"id": "ES2006a.C.dialog-act.s9553330.11", "ctx": "Mm-hmm.", "text": "Um then we want to practice using some of the tools that we'll be using during the the course of the design project and the meetings", "ko": "음, 그리고 디자인 프로젝트랑 회의 동안 쓸 도구들을 좀 연습해보고 싶어요"}, {"id": "ES2006b.C.dialog-act.s9553330.1", "ctx": null, "text": "All hooked up.", "ko": "다 연결됐어요."}, {"id": "ES2006b.C.dialog-act.s9553330.3", "ctx": "Okay, so", "text": "now we are here at the functional design meeting.", "ko": "이제 기능 설계 회의에 와 있네요."}, {"id": "ES2007a.A.dialog-act.dharshi.18", "ctx": "Hmm.", "text": "Okay, just hang on a second everybody.", "ko": "네, 다들 잠깐만 기다려주세요."}, {"id": "ES2007b.A.dialog-act.dharshi.27", "ctx": "and get things going, get people talking", "text": "and and I'm gonna be making notes and sending them off to the powers that be and stuff basically.", "ko": "그리고 제가 메모해서 윗선 같은 데 보낼 거예요, 기본적으로요."}, {"id": "ES2008a.A.dialog-act.vkaraisk.6", "ctx": "I'm really excited to start this team.", "text": "Um I'm just gonna have a little PowerPoint presentation for us, for our kick-off meeting.", "ko": "음, 저희 킥오프 미팅용으로 짧은 파워포인트 발표를 준비했어요."}, {"id": "ES2009b.A.dialog-act.vkaraisk.6", "ctx": "And then I'm gonna turn over to you guys to make brief presentations um on what you've found", "text": "and then we'll have a bit of discussion.", "ko": "그리고 나서 간단히 논의를 좀 할 거예요."}, {"id": "TS3004b.C.dialog-act.vkaraisk.3", "ctx": "Your surname.", "text": "Uh Abbing. A_ B_ B_ I_ N_ G_.", "ko": "어, Abbing이요. A-B-B-I-N-G요."}, {"id": "Bdb001.C.dialogueact589", "ctx": "Um", "text": "And so so this one would have, um, an ID is link link seventy- four or something like that.", "ko": "그래서 이건, 음, ID가 링크 74 뭐 그런 식일 거예요."}, {"id": "Bed005.D.dialogueact359", "ctx": "Where is the uh", "text": "What are you looking for?", "ko": "뭘 찾고 계세요?"}, {"id": "IS1006d.A.dialog-act.s9553330.131", "ctx": "Oh. Yeah, yeah. Yeah.", "text": "Yeah, but uh uh they're not useful.", "ko": "네, 근데 어, 그건 쓸모가 없어요."}, {"id": "IS1005c.B.dialog-act.dharshi.66", "ctx": "seven to seven centimetres for the board", "text": "which can be spongy but has to be this size", "ko": "말랑말랑해도 되지만 이 크기는 돼야 해요"}, {"id": "TS3005b.D.dialog-act.vkaraisk.309", "ctx": "Yeah.", "text": "Ja, well possible.", "ko": "네, 뭐 가능하죠."}, {"id": "Bed003.A.dialogueact1507", "ctx": "It was actually OK.", "text": "You know, on Boston New York", "ko": "그, 보스턴 뉴욕 구간에서요"}, {"id": "Bmr031.C.dialogueact1392", "ctx": "So we might want to look into that.", "text": "Yeah, I don I don't remember the paper.", "ko": "네, 그 논문이 기억이 안 나요."}, {"id": "IS1008c.C.dialog-act.s9553330.157", "ctx": "Yeah, but we can get a production in, uh, countries like, uh, India", "text": "Cost of living is low.", "ko": "생활비가 저렴해요."}, {"id": "Bmr009.D.dialogueact1280", "ctx": "Right.", "text": "It just And we", "ko": "그냥... 그리고 저희는..."}, {"id": "Bed015.A.dialogueact2224", "ctx": "It's fine.", "text": "One or four.", "ko": "1번이나 4번이요."}, {"id": "Bed006.G.dialogueact1323", "ctx": "Mm- hmm.", "text": "So you would say enter and you 'd say my parent frames are such- and- such", "ko": "그래서 enter라고 말하고, 제 부모 프레임이 이러이러하다고 말하는 거예요"}, {"id": "TS3004c.B.dialog-act.vkaraisk.194", "ctx": "Okay.", "text": "So you can just replace them I think.", "ko": "그냥 교체하면 될 것 같아요."}, {"id": "ES2014d.C.dialog-act.s9553330.63", "ctx": "I don't know whether we're doing it in the wrong order or something or.", "text": "Well, I suppose it's rubber as it is, isn't it.", "ko": "음, 어차피 고무 재질이잖아요, 그렇죠."}, {"id": "Bmr024.D.dialogueact1597", "ctx": "Late July?", "text": "Oh, I think it's July fifteenth.", "ko": "아, 7월 15일인 것 같아요."}];
+
+const FUNCTIONS = [
+  ["inform_describe","사실 전달·묘사"],
+  ["self_disclose","개인 경험·상태 공유"],
+  ["opinion_evaluate","의견·평가"],
+  ["ask_fact_meaning","사실·의미 질문"],
+  ["ask_explain_explore","이유·탐색 질문"],
+  ["confirm_clarify","확인·명료화"],
+  ["request_direct","행동 요청·제안"],
+  ["social_phatic","인사·안부"],
+  ["answer_acknowledge","답변·동의·백채널"],
+  ["express_react","감정·반응 표현"],
+];
+const LANGUAGE_FORMS = [
+  ["standard_or_unmarked","표준/무표"],
+  ["likely_learner_error","학습자 오류로 보임"],
+  ["conventional_nonstandard","관습적 비표준(축약 등)"],
+  ["playful_deviation","의도적 유희 변형"],
+  ["intent_unclear","판정 불가"],
+];
+const CASE_TYPES = [["clear","clear"],["boundary","boundary"],["context_insufficient","context_insufficient"]];
+
+const AXES = [
+  { key:"Formality", label:"Formality", anchor:"0 blunt(직접 명령) · 25 완화 약함 · 50 중립 요청 · 75 상대 편의 고려 · 100 사과+허락+편의 모두" },
+  { key:"Humor", label:"Humor", anchor:"0 문자적·중립 · 25 약한 과장/모호 · 50 명확한 의인화·불일치 · 75 슬랭+과장 결합 · 100 의인화+반전+과장 강하게 결합" },
+  { key:"Curiosity", label:"Curiosity", anchor:"0 탐색 없음 · 25 행동요청/수사질문 · 50 확인질문 · 75 이유·원리 질문 · 100 가정·비교까지 포함한 탐색" },
+];
+
+let state = {}; // id -> label record (in-memory draft, mirrors last saved/pending)
+let doneIds = new Set();
+let idx = 0;
+let db = null;
+
+function emptyRecord(item){
+  return {
+    item_id: item.id,
+    target_utterance: item.text,
+    context_before: item.ctx || null,
+    input_scope: "single_utterance",
+    rubric_version: "v2.2",
+    protocol_version: "v3.0",
+    primary_function: null,
+    secondary_function: null,
+    function_ambiguous: false,
+    language_form: null,
+    scores: { Formality: 50, Humor: 50, Curiosity: 50 },
+    case_type: { Formality: "clear", Humor: "clear", Curiosity: "clear" },
+    confidence: { Formality: 3, Humor: 3, Curiosity: 3 },
+    note: "",
+    annotator_id: "eunheay",
+    label_source: "single_rater_v3_eunheay",
+    updatedAt: 0,
+  };
+}
+
+function fmtPct(n){ return Math.round(n) + "%"; }
+
+async function init(){
+  ITEMS.forEach(it => { if(!state[it.id]) state[it.id] = emptyRecord(it); });
+
+  try{
+    db = await claude.use("db");
+  }catch(e){ db = null; }
+
+  if(db){
+    try{
+      const snap = await db.collection("labels").get();
+      snap.docs.forEach(d => {
+        if(!d.exists) return;
+        const data = d.data();
+        if(data && data.item_id){
+          state[data.item_id] = { ...emptyRecord({id:data.item_id,text:data.target_utterance,ctx:data.context_before}), ...data };
+          doneIds.add(data.item_id);
+        }
+      });
+    }catch(e){ /* fresh db, nothing saved yet */ }
+  }
+
+  idx = ITEMS.findIndex(it => !doneIds.has(it.id));
+  if(idx === -1) idx = ITEMS.length; // all done
+  render();
+}
+
+async function saveCurrent(auto){
+  const item = ITEMS[idx];
+  if(!item) return;
+  const rec = state[item.id];
+  rec.updatedAt = Date.now();
+  const statusEl = document.getElementById("statusLine");
+  if(!db){
+    if(statusEl){ statusEl.textContent = "저장소 연결 안 됨 — 로그인 상태를 확인하세요"; statusEl.className = "status-line err"; }
+    return false;
+  }
+  try{
+    await db.collection("labels").doc(item.id).set(rec);
+    doneIds.add(item.id);
+    if(statusEl){ statusEl.textContent = auto ? "자동 저장됨" : "저장됨"; statusEl.className = "status-line ok"; }
+    return true;
+  }catch(e){
+    if(statusEl){ statusEl.textContent = "저장 실패 — 다시 시도해주세요 (" + (e && e.message ? e.message : e) + ")"; statusEl.className = "status-line err"; }
+    return false;
+  }
+}
+
+function go(delta){
+  idx = Math.max(0, Math.min(ITEMS.length, idx + delta));
+  render();
+}
+function jumpTo(i){ idx = i; render(); }
+
+function render(){
+  const total = ITEMS.length;
+  document.getElementById("countLabel").textContent = `${doneIds.size}/${total}`;
+  document.getElementById("barFill").style.width = fmtPct((doneIds.size/total)*100);
+
+  const main = document.getElementById("main");
+  if(idx >= total){
+    main.innerHTML = `<div class="done-screen"><h2>150개 완료</h2><p>${doneIds.size}/${total}개 저장됨. 이전 항목은 아래에서 다시 열 수 있습니다.</p></div>`;
+    renderJumpStrip(main, null);
+    return;
+  }
+
+  const item = ITEMS[idx];
+  const rec = state[item.id];
+
+  main.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "card";
+
+  card.innerHTML = `
+    ${item.ctx ? `<p class="ctx">${escapeHtml(item.ctx)}</p>` : ""}
+    <p class="target">${escapeHtml(item.text)}</p>
+    ${item.ko ? `<p class="target-ko">${escapeHtml(item.ko)}</p>` : ""}
+    <div class="id-tag">${escapeHtml(item.id)} · ${idx+1}/${total}</div>
+  `;
+
+  // primary function
+  const fnBlock = document.createElement("div");
+  fnBlock.style.marginTop = "18px";
+  fnBlock.innerHTML = `<p class="section-label">주 발화 기능</p>`;
+  const fnRow = document.createElement("div"); fnRow.className = "chip-row";
+  FUNCTIONS.forEach(([key,label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (rec.primary_function===key ? " on" : "");
+    chip.textContent = label;
+    chip.onclick = () => { rec.primary_function = key; render(); };
+    fnRow.appendChild(chip);
+  });
+  fnBlock.appendChild(fnRow);
+  const ambigWrap = document.createElement("label");
+  ambigWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--text-dim);";
+  ambigWrap.innerHTML = `<input type="checkbox" ${rec.function_ambiguous?"checked":""}> 기능 판정 애매함(function_ambiguous)`;
+  ambigWrap.querySelector("input").onchange = (e) => { rec.function_ambiguous = e.target.checked; };
+  fnBlock.appendChild(ambigWrap);
+  card.appendChild(fnBlock);
+
+  // language form
+  const lfBlock = document.createElement("div");
+  lfBlock.style.marginTop = "16px";
+  lfBlock.innerHTML = `<p class="section-label">문법·비표준 상태</p>`;
+  const lfRow = document.createElement("div"); lfRow.className = "chip-row";
+  LANGUAGE_FORMS.forEach(([key,label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (rec.language_form===key ? " on" : "");
+    chip.textContent = label;
+    chip.onclick = () => { rec.language_form = key; render(); };
+    lfRow.appendChild(chip);
+  });
+  lfBlock.appendChild(lfRow);
+  card.appendChild(lfBlock);
+
+  // axes
+  AXES.forEach(axis => {
+    const box = document.createElement("div");
+    box.className = "axis-card";
+    const score = rec.scores[axis.key];
+    box.innerHTML = `
+      <div class="axis-head">
+        <span class="axis-name">${axis.label}</span>
+        <span class="axis-score">${score}</span>
+      </div>
+      <div class="stepper">
+        <button type="button" data-act="dec">−5</button>
+        <input type="range" min="0" max="100" step="5" value="${score}">
+        <button type="button" data-act="inc">+5</button>
+      </div>
+      <button type="button" class="anchor-toggle">앵커 보기</button>
+      <div class="anchor-box" hidden>${axis.anchor}</div>
+      <div class="mini-row">
+        <div class="mini-field">
+          <label>case_type</label>
+          <select data-field="case_type">
+            ${CASE_TYPES.map(([v]) => `<option value="${v}" ${rec.case_type[axis.key]===v?"selected":""}>${v}</option>`).join("")}
+          </select>
+        </div>
+        <div class="mini-field">
+          <label>confidence</label>
+          <select data-field="confidence">
+            ${[0,1,2,3,4].map(v => `<option value="${v}" ${rec.confidence[axis.key]===v?"selected":""}>${v}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+    `;
+    const range = box.querySelector("input[type=range]");
+    const scoreLabel = box.querySelector(".axis-score");
+    const setScore = (v) => {
+      v = Math.max(0, Math.min(100, v));
+      rec.scores[axis.key] = v;
+      range.value = v;
+      scoreLabel.textContent = v;
+    };
+    range.oninput = () => setScore(Number(range.value));
+    box.querySelector('[data-act="dec"]').onclick = () => setScore(rec.scores[axis.key]-5);
+    box.querySelector('[data-act="inc"]').onclick = () => setScore(rec.scores[axis.key]+5);
+    box.querySelector(".anchor-toggle").onclick = (e) => {
+      const el = box.querySelector(".anchor-box");
+      el.hidden = !el.hidden;
+    };
+    box.querySelector('[data-field="case_type"]').onchange = (e) => { rec.case_type[axis.key] = e.target.value; };
+    box.querySelector('[data-field="confidence"]').onchange = (e) => { rec.confidence[axis.key] = Number(e.target.value); };
+    card.appendChild(box);
+  });
+
+  // note
+  const noteWrap = document.createElement("div");
+  noteWrap.style.marginTop = "14px";
+  noteWrap.innerHTML = `<p class="section-label">메모 (선택)</p>`;
+  const noteInput = document.createElement("textarea");
+  noteInput.className = "note-input";
+  noteInput.value = rec.note || "";
+  noteInput.oninput = (e) => { rec.note = e.target.value; };
+  noteWrap.appendChild(noteInput);
+  card.appendChild(noteWrap);
+
+  main.appendChild(card);
+
+  // nav
+  const nav = document.createElement("div");
+  nav.className = "nav-row";
+  nav.innerHTML = `
+    <button type="button" class="btn btn-ghost" id="prevBtn" ${idx===0?"disabled":""}>이전</button>
+    <button type="button" class="btn btn-primary" id="nextBtn">저장하고 다음</button>
+  `;
+  main.appendChild(nav);
+  const status = document.createElement("div");
+  status.className = "status-line"; status.id = "statusLine";
+  main.appendChild(status);
+
+  document.getElementById("prevBtn").onclick = () => go(-1);
+  document.getElementById("nextBtn").onclick = async () => {
+    const ok = await saveCurrent(false);
+    if(ok) go(1);
+  };
+
+  renderJumpStrip(main, idx);
+}
+
+function renderJumpStrip(main, currentIdx){
+  const strip = document.createElement("div");
+  strip.className = "jump-strip";
+  ITEMS.forEach((it, i) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "jump-dot" + (doneIds.has(it.id) ? " done" : "") + (i===currentIdx ? " current" : "");
+    dot.title = `${i+1}. ${it.id}`;
+    dot.onclick = () => jumpTo(i);
+    strip.appendChild(dot);
+  });
+  main.appendChild(strip);
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+init();
+</script>

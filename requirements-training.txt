@@ -1,0 +1,3 @@
+# Optional local transfer-learning experiment; not production dependencies.
+sentence-transformers==6.1.0
+scikit-learn==1.9.1

@@ -1,0 +1,71 @@
+item_id,pool,fhc_partition,meeting_id,speaker,previous_turn,utterance,next_turn,annotation_events
+humor_rescue_000,no_laugh_random_negative_candidate,,IS1000d,B,Well,"Yes I kno undes I understand what you mean, yes.",you know,
+humor_rescue_001,no_laugh_random_negative_candidate,,IB4003,D,Why don't we ask about that?,"Yeah, because You can't put a researcher there.","Okay, I'll try to find out",
+humor_rescue_002,laugh_cooccur_candidate,,IS1007c,C,and have which components was uh available to build a remote control.,"So for energy sources we have we have to choose between the solar energy, hand dynamo and uh kinetic um well uh kinetic uh technique to to store the energy.",We also um we also can put a regular battery in the in the remote control.,laugh
+humor_rescue_003,laugh_cooccur_candidate,protected_final_eval,IS1008b,C,Uh yeah,The marketing comes out.,but uh who who said who said we were,"laugh,laugh"
+humor_rescue_004,laugh_cooccur_candidate,fhc_dev,IS1009b,D,Yes.,You can make a banana shaped one.,Yeah.,laugh
+humor_rescue_005,laugh_cooccur_candidate,,IS1006d,D,Mm-hmm.,"Let's see if this Yeah, if you meet the evaluation criterion.",Yeah.,laugh
+humor_rescue_006,laugh_cooccur_candidate,,ES2008d,B,Well,"we're not, sadly, going to actually be producing this, so.",Oh.,laugh
+humor_rescue_007,no_laugh_random_negative_candidate,,IB4003,A,"Um, okay.","Um, maybe we could s look a bit at the projects.",Do you think it's a good idea to put together in the same room as much as possible people from the same project,
+humor_rescue_008,laugh_cooccur_candidate,,ES2004d,A,Yeah.,But I think it's good,like uh we spent times individually.,laugh
+humor_rescue_009,no_laugh_random_negative_candidate,,ES2008d,B,There might be something that you can do in the circuit board and the chip to make it make a noise or something,but it would take a lot more development than we have this afternoon.,Mm-hmm.,
+humor_rescue_010,laugh_cooccur_candidate,,TS3008d,B,That's one thing for sure.,"I'm the I'm the usability, so",I totally agree.,laugh
+humor_rescue_011,no_laugh_random_negative_candidate,protected_final_eval,IS1008b,D,if it's very easy easy to use,"if it's got simple remote speech remote uh control, like I said, louder, softer, change channel, on, off, remote, it goes beep beep",I can find my my remote without spending half a day looking for it and getting all upset,
+humor_rescue_012,laugh_cooccur_candidate,,ES2009d,D,what kind of coaching is that really?,What if I really needed something.,I so,laugh
+humor_rescue_013,no_laugh_random_negative_candidate,fhc_dev,TS3006d,A,Sixteen Euros.,So we still have three and a half Euro to lose.,We need to lose some buttons.,
+humor_rescue_014,laugh_cooccur_candidate,protected_final_eval,TS3008c,C,Yeah.,It's from your research.,Sorry?,"laugh,laugh"
+humor_rescue_015,laugh_cooccur_candidate,,IS1006d,D,He,Hopefully my daughter will like it.,Okay.,laugh
+humor_rescue_016,laugh_cooccur_candidate,,ES2003b,D,Yeah.,I just used the,it was a mess,laugh
+humor_rescue_017,laugh_cooccur_candidate,,ES2007c,D,"I've always wanted one of these, I really have.",Where do you buy 'em from?,They're.,"laugh,laugh"
+humor_rescue_018,laugh_cooccur_candidate,,ES2009d,D,Nice.,All four of those little containers.,Including the s the multi-coloured wave pattern.,laugh
+humor_rescue_019,laugh_cooccur_candidate,,TS3009a,C,Just save it.,I'll save it alright uh save.,Yeah,"other,laugh"
+humor_rescue_020,laugh_cooccur_candidate,fhc_dev,TS3012c,A,Which is.,how do you draw that again?,"Uh whatever, looks stupid.",laugh
+humor_rescue_021,laugh_cooccur_candidate,fhc_dev,TS3009c,B,"Well, as I said uh earlier I think the uh L_C_D_ screen should be uh positioned at the lower end of the remote.",Um the buttons for screen width and general settings and uh and that kind of stuff,"um we can also do let that kind of functions um be shown in the L_C_D_ screen, uh instead of uh extra buttons.",laugh
+humor_rescue_022,laugh_cooccur_candidate,,TS3003b,A,There's a little adaptation in the air conditioning system.,There's our ghost mouse again.,"That that means that you can have a little trouble with, little trouble with the air conditioning","laugh,laugh"
+humor_rescue_023,no_laugh_random_negative_candidate,fhc_dev,IS1009b,C,Mm-hmm.,"Then it will be like if you switch on your T_V_ through anoth another source, not from through a remote remote controller and you you lost your remote controller maybe you can find with the light.",Mm-hmm.,
+humor_rescue_024,laugh_cooccur_candidate,,TS3009d,B,He saved them all ten.,"Well they they wanted everything we produced, so",Yeah.,laugh
+humor_rescue_025,laugh_cooccur_candidate,,IS1008d,D,"Good luck, Ed.","If it's a flop, it's the marketer.","You look very relaxed, considering h you know, the uh the weight on your shoulders, yeah.","laugh,laugh"
+humor_rescue_026,laugh_cooccur_candidate,fhc_dev,TS3006d,A,Yeah but that but that's the fun part of it.,"I I wanted to go, but I wasn't allowed. So",Oh yeah?,"other,laugh"
+humor_rescue_027,laugh_cooccur_candidate,,ES2012b,B,and then then she's had those for so long that if she hasn't worked that out by now. Um.,'Cause I only remember to charge my cell phone uh when battery dies.,Yeah.,laugh
+humor_rescue_028,laugh_cooccur_candidate,,ES2004a,D,that's the worst yet,it's meant to be an eagle,A seagu,laugh
+humor_rescue_029,no_laugh_random_negative_candidate,,TS3007a,A,and uh it's kinda new.,"So getting used to each other, we can uh have a little fun then",before we uh dig in really to the hard stuff.,
+humor_rescue_030,laugh_cooccur_candidate,fhc_dev,TS3008b,D,It's gonna cost twenty five Euros.,"Ye I think the can opener i is a brilliant idea actually, because television and beer is not a rare combination.","Yeah, but the well, it's already been done.","other,laugh"
+humor_rescue_031,laugh_cooccur_candidate,,TS3003a,A,"It has to be original, trendy, and user friendly.",So these are uh the points why uh we also hired you.,We've got the Marketing Expert for uh the trendy and user friendly look.,laugh
+humor_rescue_032,no_laugh_random_negative_candidate,,TS3009d,C,Well uh they they didn't think of the requirements.,"It's the requirements of the user, uh I guess.",No,
+humor_rescue_033,laugh_cooccur_candidate,,TS3011d,C,I'll make it m,my my mark will be a four.,okay.,laugh
+humor_rescue_034,laugh_cooccur_candidate,,IB4003,C,No.,"So we we invite invite and then we say, okay you can sit with Gisella.",Uh you're here.,"laugh,laugh"
+humor_rescue_035,laugh_cooccur_candidate,,TS3005c,C,Uh got a single curved uh rubber,f uh fancy coloured remote control.,You can't you You can't,"laugh,other"
+humor_rescue_036,laugh_cooccur_candidate,,ES2015b,C,"A multifunctional remote control, which can be used for several entertainment devices.","And a single function remote control, used specifically for the television.",I'm sorry,laugh
+humor_rescue_037,laugh_cooccur_candidate,,IS1008c,C,Y yeah.,Luckily Ed was not.,Wood?,laugh
+humor_rescue_038,laugh_cooccur_candidate,,ES2011d,A,and I think we've come up with a product that's fun and meets all the criteria.,And how was our leadership and teamwork?,I think it was good.,laugh
+humor_rescue_039,laugh_cooccur_candidate,,TS3008d,A,Next to that I kinda miss a zero actually.,"Wait, there's was one thing I wanted to ask.","Uh, there are different ways for remote controls to uh do uh like",laugh
+humor_rescue_040,laugh_cooccur_candidate,fhc_dev,ES2015d,D,Potato's fine. Potato's fine.,"Yeah it is, fruit or vegetable depends on your mood.",yeah.,laugh
+humor_rescue_041,laugh_cooccur_candidate,,IS1008c,C,have to see how kid-friendly it is and and all that,"It's really good if your dog gets ahold of it, they can use it for teething.",They do that anyway with the rubber and plastic,"other,laugh"
+humor_rescue_042,laugh_cooccur_candidate,,TS3009b,C,"Thus it might be uh might be smart to make a a big uh zapping button or something in the middle, so you can reach it with your thumb.",You can zap away. Yeah.,"Yeah, yeah right.","laugh,laugh"
+humor_rescue_043,laugh_cooccur_candidate,fhc_dev,IS1000a,B,Okay. Um,"more interesting for our company of course, p uh profit aim, about fifty million Euro.",So,laugh
+humor_rescue_044,laugh_cooccur_candidate,,IS1003d,B,I'm afraid,Uh thi this remote control will stay a prototype.,'Kay,laugh
+humor_rescue_045,laugh_cooccur_candidate,,TS3005a,B,Yeah,meeting will close in five minutes.,that's good,laugh
+humor_rescue_046,laugh_cooccur_candidate,,TS3011d,C,"Yes, it is.",so we have to round it.,Is it easy to find?,laugh
+humor_rescue_047,laugh_cooccur_candidate,,TS3005d,D,three. We need point three.,That's a scroll wheel.,Uh it's a colour.,laugh
+humor_rescue_048,no_laugh_random_negative_candidate,protected_final_eval,TS3011b,A,Well,maybe maybe like clapping in your hands,like um turning on and off the the the lights.,
+humor_rescue_049,laugh_cooccur_candidate,,ES2008d,B,that's funny.,Is it started as a pear,but then it started looking more and more like a Martian,laugh
+humor_rescue_050,no_laugh_random_negative_candidate,,ES2016b,C,Um and that would only add buttons.,Whereas I think the aim is to take away buttons.,So I think it'd be better maybe to concentrate on maybe just a universal one for T_V_s.,
+humor_rescue_051,laugh_cooccur_candidate,protected_final_eval,TS3008c,A,"but you gotta uh implement it in the T_V_s, and I don't think everyone's gonna buy a Real Reaction T_V_ within a month after the release of our uh remote control.",I really understand you want to make your job more exciting by putting an L_C_D_ in it,but I I really don't think it's a good n goo,laugh
+humor_rescue_052,laugh_cooccur_candidate,,IS1003a,B,I will try.,Kemy is really good at drawing.,I think everybody should do it,laugh
+humor_rescue_053,no_laugh_random_negative_candidate,,IS1000d,A,Yeah.,"I think, unless we can really drive these prices down we need to get rid of the L_C_D_ display.",Okay so we can get rid of it,
+humor_rescue_054,laugh_cooccur_candidate,,ES2016b,D,Like the written language. Or English.,Maybe you could buy like a special left-handed version of the remote. Special order.,Maybe.,laugh
+humor_rescue_055,laugh_cooccur_candidate,,TS3007a,C,It's not an apple.,Must be a dog.,A dog?,laugh
+humor_rescue_056,laugh_cooccur_candidate,,IS1000d,C,and uh it's kind of interesting shape,because um unconsciously people want to s to surf when they see this stuff.,Or browse.,laugh
+humor_rescue_057,no_laugh_random_negative_candidate,,IS1007c,A,Yeah.,"It's just for user customizable, for kids or old people.",Yeah that's right.,
+humor_rescue_058,no_laugh_random_negative_candidate,,ES2011d,D,Um.,I think if each of us gives an opinion then they can be mixed somehow.,"I dunno how it works exactly, I haven't been told.",
+humor_rescue_059,laugh_cooccur_candidate,protected_final_eval,TS3006b,A,Now that that was uh was the end.,That was the end.,Yeah.,laugh
+humor_rescue_060,laugh_cooccur_candidate,fhc_dev,TS3006d,A,"And since it's not kinetic, it doesn't have to flip around that much?",Uh that's easy because plastic is free.,Hmm.,laugh
+humor_rescue_061,no_laugh_random_negative_candidate,,IS1003a,A,So um,we will have to um speak about m the project.,Our project project is to create um a new remote control,
+humor_rescue_062,no_laugh_random_negative_candidate,protected_final_eval,TS3008c,B,With one thing special.,Not a whole package of specialty.,I j uh,
+humor_rescue_063,laugh_cooccur_candidate,,IS1004d,A,Well in fact I I did not know I didn't know really what to say here.,If uh if you have any ideas of what we can we can say.,So,laugh
+humor_rescue_064,no_laugh_random_negative_candidate,protected_final_eval,TS3011b,C,"Well, basically","the characteristics uh the characteristics of clapping is just an increase in the volume, the amplitude of the sound","Yeah, a peak. Yeah.",
+humor_rescue_065,laugh_cooccur_candidate,,ES2006b,B,This is the bit that the email messed up for me,and that's what I was fiddling about with at the beginning of the thing.,"Okay, cool.",laugh
+humor_rescue_066,no_laugh_random_negative_candidate,fhc_dev,TS3012c,A,right?,Uh one on each one on each side.,Yeah.,
+humor_rescue_067,laugh_cooccur_candidate,protected_final_eval,TS3011b,A,we we do have a wise board,so I'm not questioning that.,Uh well yeah,laugh
+humor_rescue_068,no_laugh_random_negative_candidate,protected_final_eval,IS1008b,A,okay,"then uh we can discuss furthermore, okay, with our areas",and uh then we will come back again in the in the next meeting.,
+humor_rescue_069,no_laugh_random_negative_candidate,fhc_dev,TS3012c,B,these are basically the two types we have.,"So if we were to select the L_C_D_ screen, the transmitter here, you can see the light i",Well,

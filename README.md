@@ -1,4 +1,7 @@
 # Pally — CharaShift MVP
+
+> **팀 확정 정책 · 2026-10-14:** 캐릭터 외형 변화는 **대화 세션 종료 후** 누적 결과로 공개한다. 대화 중 외형 유지가 의도된 UX이며 버그·재질문 대상이 아니다. **디자인 변경은 에너지 축 마감까지 보류**하고, 이후 검증된 신뢰도를 바탕으로 5축 매핑을 다시 결정한다. 아래 과거 구현·제안과 충돌하면 [캐릭터 표시 정책](docs/character-display-policy.md)을 우선한다.
+
 ![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=next.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Python_3.11-009688?logo=fastapi&logoColor=white)
@@ -41,7 +44,7 @@
 |:---:|:---:|:---:|
 | ![대화중](assets/screenshots/demo-conversation.png) | ![문법 교정](assets/screenshots/demo-correction.png) | ![Pally 변화](assets/screenshots/demo-pally-change.png) |
 
-> "Yesterday I go to the store" → Pally가 "you went to the store"로 자연스럽게 교정. 세션 종료 후 에너지·호기심 축 상승 → 별 모양 초록 Pally로 변환.
+> "Yesterday I go to the store" → Pally가 "you went to the store"로 자연스럽게 교정. 세션 종료 후 누적 축 결과에 따른 Pally 변화를 공개한다. 구체적인 형태·색 매핑은 에너지 축 마감 후 재결정한다.
 
 ### 데모에서 확인할 수 있는 흐름
 
@@ -85,7 +88,7 @@
 
 - **음성 입력/출력** — 브라우저 마이크 → Google Cloud Speech-to-Text(EN) → Gemini 2.5 Flash → Google Cloud Text-to-Speech(EN) → 즉시 재생
 - **CHARACTER MATRIX 엔진** — 발화 1턴마다 5축 점수를 다시 계산하고, EMA(alpha=0.7)로 부드럽게 누적해 캐릭터 파라미터에 반영
-- **Pally 실시간 변형** — Canvas2D Superformula 도형이 형태·색·표정으로 5축 변화를 시각화
+- **Pally 세션 종료 후 변화** — 대화 중 누적한 5축 결과를 세션 종료 후 공개. 최종 시각 매핑은 에너지 축 마감 후 신뢰도를 바탕으로 재결정
 - **자연스러운 문법 교정** — Gemini가 사용자의 문법/어휘 실수를 직접 지적하지 않고 올바른 표현을 자연스럽게 사용해 응답
 - **세션 종료 컷신** — X 버튼으로 세션 종료 시 누적된 변화가 적용된 최종 Pally를 공개
 - **익명 세션** — Supabase `sessions` / `messages` 테이블에 세션 ID 기반으로 모든 턴·5축·캐릭터 파라미터를 JSONB로 저장. RLS는 `session_id` 기준

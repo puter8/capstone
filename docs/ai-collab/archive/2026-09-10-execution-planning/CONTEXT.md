@@ -1,5 +1,8 @@
 # Pally 5-Axis ML Transition — Shared Context
 
+> **팀 확정 정책 · 2026-10-14:** 캐릭터 외형 변화는 **대화 세션 종료 후** 누적 결과로 공개한다. 대화 중 외형 유지가 의도된 UX이며 버그·재질문 대상이 아니다. **디자인 변경은 에너지 축 마감까지 보류**하고, 이후 검증된 신뢰도를 바탕으로 5축 매핑을 다시 결정한다. 아래 과거 구현·제안과 충돌하면 [캐릭터 표시 정책](../../../character-display-policy.md)을 우선한다.
+
+
 > Claude Code와 Codex가 같은 전제에서 시작하기 위한 공용 컨텍스트 파일.
 > 이 파일은 사실(fact)만 담는다. 진단/제안/의견은 `CLAUDE_REVIEW.md` / `CODEX_REVIEW.md` / `DECISION.md`에 쓴다.
 > 갱신 시점: 2026-09-07 (gold-200 human review 완료 직후)

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { TalkButton } from "@/components/audio/TalkButton";
+import { EnergyBaselineRegistration } from "@/components/audio/EnergyBaselineRegistration";
 import { ChatBubble } from "@/components/chat/ChatBubble";
 import { ConfirmDialog } from "@/components/dialogs/ConfirmDialog";
 import { MobileShell } from "@/components/layout/MobileShell";
@@ -61,6 +62,8 @@ export default function HomePage() {
   const [pendingUserTranscript, setPendingUserTranscript] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [baselineStatus, setBaselineStatus] = useState<"loading" | "required" | "ready" | "disabled">("loading");
+  const baselineAllowsConversation = baselineStatus === "ready" || baselineStatus === "disabled";
 
   useEffect(() => {
     let active = true;
@@ -98,12 +101,14 @@ export default function HomePage() {
         occurred_at: new Date().toISOString(),
       }).catch((error: unknown) => console.error("Activity event failed", error));
 
-      const [usage, completed, detail] = await Promise.all([
+      const [usage, completed, detail, baseline] = await Promise.all([
         usagePromise,
         completedPromise,
         detailPromise,
+        pallyApi.getEnergyBaseline(),
       ]);
       if (!active) return;
+      setBaselineStatus(baseline.status);
 
       if (active) {
         setUsage(usage);
@@ -415,6 +420,7 @@ export default function HomePage() {
       if (completed && completed.warnings.length > 0) {
         setWarning(completed.warnings.map((item) => item.message).join(" "));
       }
+      if (completed?.current_axes) updateFromChatResponse({ axes: completed.current_axes });
       revealAxes();
       setPendingUserTranscript(null);
       conversationIdRef.current = null;
@@ -431,12 +437,12 @@ export default function HomePage() {
       closingRef.current = false;
       setIsClosing(false);
     }
-  }, [recorder, revealAxes, stopPlayback]);
+  }, [recorder, revealAxes, stopPlayback, updateFromChatResponse]);
 
   const handlePressStart = useCallback(() => {
-    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
+    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally || !baselineAllowsConversation) return;
     void recorder.start();
-  }, [hasRestoredPally, isRestoring, quotaExhausted, recorder]);
+  }, [baselineAllowsConversation, hasRestoredPally, isRestoring, quotaExhausted, recorder]);
 
   // Must run inside a user gesture so mobile browsers allow TTS playback afterwards.
   const unlockAudio = useCallback(() => {
@@ -459,7 +465,7 @@ export default function HomePage() {
   }, [recorder, unlockAudio]);
 
   const handleStartConversation = useCallback(async () => {
-    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
+    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally || !baselineAllowsConversation) return;
     unlockAudio();
     const requestId = openerRequestRef.current + 1;
     openerRequestRef.current = requestId;
@@ -497,7 +503,7 @@ export default function HomePage() {
         message: error instanceof Error ? error.message : "Pally가 말을 걸지 못했어요. 다시 시도해 주세요.",
       });
     }
-  }, [hasRestoredPally, isRestoring, playTts, quotaExhausted, stopPlayback, unlockAudio]);
+  }, [baselineAllowsConversation, hasRestoredPally, isRestoring, playTts, quotaExhausted, stopPlayback, unlockAudio]);
 
   const handleToggleHistory = useCallback(() => {
     if (!state.historyOpen) {
@@ -529,6 +535,10 @@ export default function HomePage() {
         <PageLoader />
       </MobileShell>
     );
+  }
+
+  if (baselineStatus === "required") {
+    return <MobileShell minHeight={640}><EnergyBaselineRegistration onReady={() => setBaselineStatus("ready")} /><BottomNav /></MobileShell>;
   }
 
   return (
@@ -581,7 +591,7 @@ export default function HomePage() {
               <p className="mt-1 text-body text-text-tertiary">소리를 켜고 시작해 주세요 <span aria-hidden="true">🔊</span></p>
               <button
                 className="mt-4 h-20 w-[304px] max-w-full rounded-full bg-primary-soft p-2 transition-transform duration-150 active:scale-95 disabled:opacity-50"
-                disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted}
+                disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted || !baselineAllowsConversation}
                 onClick={() => { void handleStartConversation(); }}
                 type="button"
               >
@@ -592,7 +602,7 @@ export default function HomePage() {
             </div>
           ) : (
             <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${showChatBubble ? "top-[690px]" : "top-[calc(649px_+_min(0px,_100%_-_874px))]"}`}>
-              <TalkButton disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
+              <TalkButton disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted || !baselineAllowsConversation} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
             </div>
           )}
         </>

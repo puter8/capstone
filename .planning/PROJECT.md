@@ -1,8 +1,11 @@
 # Pally — CharaShift MVP
 
+> **팀 확정 정책 · 2026-10-14:** 캐릭터 외형 변화는 **대화 세션 종료 후** 누적 결과로 공개한다. 대화 중 외형 유지가 의도된 UX이며 버그·재질문 대상이 아니다. **디자인 변경은 에너지 축 마감까지 보류**하고, 이후 검증된 신뢰도를 바탕으로 5축 매핑을 다시 결정한다. 아래 과거 구현·제안과 충돌하면 [캐릭터 표시 정책](../docs/character-display-policy.md)을 우선한다.
+
+
 ## What This Is
 
-한국인 영어 학습자가 모바일 웹에서 음성으로 AI 캐릭터 "Pally"와 영어 회화를 연습하는 서비스. 사용자의 영어 발화를 5개 축(Formality, Energy, Intimacy, Humor, Curiosity)으로 분석해 Pally의 외형/색/표정과 응답 말투를 실시간으로 변화시키고, 대화 중 인라인 한국어 힌트/피드백을 제공한다. 캡스톤 산학 트랙 MVP로, 2026-06-07 데모를 목표로 한다.
+한국인 영어 학습자가 모바일 웹에서 음성으로 AI 캐릭터 "Pally"와 영어 회화를 연습하는 서비스. 사용자의 영어 발화를 5개 축(Formality, Energy, Intimacy, Humor, Curiosity)으로 분석해 Pally의 응답 말투에 반영하고, 외형/색/표정 변화는 세션 종료 후 누적 결과로 공개하며, 대화 중 인라인 한국어 힌트/피드백을 제공한다. 캡스톤 산학 트랙 MVP로, 2026-06-07 데모를 목표로 한다.
 
 ## Core Value
 
@@ -31,7 +34,7 @@
 - [ ] **VOICE-01**: 사용자가 rec 버튼을 누르면 브라우저에서 마이크 권한 요청 → 녹음 Blob 생성 → FastAPI `/api/chat`로 전달 → Google Cloud Speech-to-Text로 영어 발화를 텍스트화한다
 - [ ] **VOICE-02**: Gemini 2.5 Flash가 영어 응답을 생성하고 Google Cloud Text-to-Speech가 음성으로 변환해 클라이언트에서 재생한다
 - [ ] **ENGINE-01**: 발화 텍스트 → rule-based 5축 분석 → CHARACTER MATRIX → EMA 보정(alpha=0.7 for demo) → 캐릭터 파라미터 계산 흐름이 서버 계약으로 동작한다
-- [ ] **PALLY-01**: Pally는 Canvas2D Superformula 도형으로 렌더링되며 Formality / Energy / Intimacy / Humor / Curiosity 기반 캐릭터 파라미터에 따라 형태·색·표정이 실시간 변화한다
+- [ ] **PALLY-01**: Pally는 Canvas2D Superformula 도형으로 렌더링되며 Formality / Energy / Intimacy / Humor / Curiosity 기반 캐릭터 파라미터에 따라 형태·색·표정 변화는 대화 세션 종료 후 누적 결과로 공개된다
 - [ ] **PALLY-02**: 응답 생성 중 Pally가 thinking/loading 애니메이션을 표시한다
 - [ ] **CHAT-01**: 대화 화면에서 직전 발화/응답을 말풍선으로 미리 보여주고, 토글로 전체 대화 스크립트(SMS 스타일, 사용자=노란색, Pally=흰색)를 볼 수 있다
 - [ ] **FB-01**: 대화 중 사용자의 어색한 영어 발화를 Gemini가 감지하면 한국어 힌트를 메인 화면 안의 작은 UI 요소로 즉시 표시한다

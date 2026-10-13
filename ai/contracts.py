@@ -91,6 +91,36 @@ class FeedbackItem(BaseModel):
     only covers the AI-generated fields.
     """
 
-    original: str
-    corrected: str
-    explanation_ko: str
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    original: str = Field(min_length=1)
+    corrected: str = Field(min_length=1)
+    explanation_ko: str = Field(min_length=1)
+
+    @field_validator("original", "corrected", "explanation_ko")
+    @classmethod
+    def require_nonblank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("feedback text must not be blank")
+        return value
+
+
+class FeedbackTurn(BaseModel):
+    """A saved user/reply pair supplied by the session completion worker.
+
+    turn_id is stable across retries. pally_text is the final delivered answer
+    after reply shaping, not an earlier model draft.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    turn_id: str = Field(min_length=1)
+    user_transcript: str = Field(min_length=1)
+    pally_text: str = Field(min_length=1)
+
+    @field_validator("turn_id", "user_transcript", "pally_text")
+    @classmethod
+    def require_nonblank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("feedback turn fields must not be blank")
+        return value

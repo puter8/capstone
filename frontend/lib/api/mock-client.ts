@@ -185,6 +185,10 @@ export function resetMockPallyApi(): void {
 }
 
 export const mockPallyApi: PallyApi = {
+  async getEnergyBaseline() { return { status: "disabled", baseline: null }; },
+  async registerEnergyBaseline() {
+    throw new PallyApiError(503, "service_unavailable", "음성 등록은 실제 서버 연결이 필요해요.");
+  },
   async getProfile() {
     await delay();
     ensureActiveAccount();
