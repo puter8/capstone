@@ -371,7 +371,8 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
         assert audio_ready.is_set()
         review_generation.assert_not_called()
         review_generation.assert_not_awaited()
-        assert result["pally"] == {"text": reply, "audio": "bXAz"}
+        # segments 는 색칠용 조각. 이 테스트는 평문 폴백 경로라 None 이다.
+        assert result["pally"] == {"text": reply, "audio": "bXAz", "segments": None}
         assert result["user"]["transcript"] == "she want cookies"
         assert result["feedback"] == []
         assert result["feedback_pending"] is True
