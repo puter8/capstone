@@ -39,6 +39,7 @@ from ai.analyzer import analyze_utterance
 from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
 from ai.matrix_engine import apply_ema, compute_character, describe_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
+from ai import reply_segments
 from ai.reply_shaping import shape_reply
 from lib import billing, kakaopay, session_feedback
 
@@ -914,6 +915,78 @@ async def _call_gemini_chat(
     return shape_reply(reply)
 
 
+# 구조화 응답을 몇 번까지 다시 시도할지. 실측(40회) 기준 한 번에 92% 성공이라
+# 두 번이면 사실상 다 걸리고, 그래도 안 되면 평문으로 내려간다 — 한 턴을
+# 통째로 잃는 것보다 색이 없는 답이 낫다.
+_SEGMENT_ATTEMPTS = 2
+
+
+async def _call_gemini_chat_segments(
+    utterance: str,
+    history: list,
+    character_name: str,
+    level: str,
+    axes: Dict[str, int],
+) -> tuple:
+    """Pally 응답을 색칠 가능한 조각으로 받는다. 반환: (text, segments|None).
+
+    조각은 교정(correction) / Pally 자신의 말(own_remark) / 새 표현(new_expr) /
+    질문(question) 으로 나뉘고, 프론트가 그대로 색을 입힌다.
+
+    모델이 계약을 깨면 segments 없이 기존 평문 경로로 내려간다. 조각을 추측해
+    채우지 않는 이유는, 틀린 구간에 색을 칠하면 사용자가 Pally 가 하지도 않은
+    교정을 배우기 때문이다.
+    """
+    system_prompt = reply_segments.system_prompt(
+        character_name=character_name,
+        level_guide=_LEVEL_GUIDE.get(level, _LEVEL_GUIDE["B1"]),
+        persona=persona_prompt(axes),
+    )
+
+    contents = []
+    for msg in (history or [])[-10:]:
+        role = "user" if msg.role == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": msg.content}]})
+    contents.append({"role": "user", "parts": [{"text": utterance}]})
+
+    payload = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 0.85,
+            "maxOutputTokens": 512,
+            "thinkingConfig": {"thinkingBudget": 0},
+            "responseMimeType": "application/json",
+            "responseSchema": reply_segments.RESPONSE_SCHEMA,
+        },
+    }
+
+    for attempt in range(1, _SEGMENT_ATTEMPTS + 1):
+        try:
+            resp = await app.state.http_client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
+                json=payload,
+                timeout=30.0,
+            )
+            if resp.status_code != 200:
+                raise RuntimeError(f"Gemini segments error {resp.status_code}")
+            candidate = resp.json()["candidates"][0]
+            raw = " ".join(
+                p["text"] for p in candidate["content"]["parts"] if not p.get("thought", False)
+            )
+            built = reply_segments.build_reply(reply_segments.parse_payload(raw))
+            if built:
+                return built.text, built.segments
+            logging.warning("segment reply rejected (attempt %d)", attempt)
+        except Exception as exc:
+            # 키가 섞인 URL 이 로그에 남지 않도록 예외 타입만 남긴다.
+            logging.warning("segment reply failed (attempt %d): %s", attempt, type(exc).__name__)
+
+    reply = await _call_gemini_chat(utterance, history, character_name, level, axes)
+    return reply, None
+
+
 _HINT_KO_SYSTEM_PROMPT = """\
 You are a Korean-speaking English tutor assistant. Given the user's English utterance and Pally's reply,
 identify whether Pally implicitly corrected a grammar or vocabulary mistake (by naturally using the correct form).
@@ -1609,11 +1682,15 @@ async def create_conversation_opener(
     return {"text": text, "audio": audio, "warnings": warnings}
 
 
-def _paired_reply(sb, session_id: str, user_created_at: str) -> str:
-    """dedup 재반환용: 해당 user turn 뒤에 저장된 pally 응답 텍스트를 찾는다."""
+def _paired_reply(sb, session_id: str, user_created_at: str) -> tuple:
+    """dedup 재반환용: 해당 user turn 뒤에 저장된 pally 응답을 찾는다.
+
+    반환: (transcript, segments). 중복 요청으로 재반환될 때도 처음과 같은 색이
+    보여야 하므로 조각까지 함께 읽는다.
+    """
     r = (
         sb.table("messages")
-        .select("transcript")
+        .select("transcript, segments")
         .eq("session_id", session_id)
         .eq("role", "pally")
         .gte("created_at", user_created_at)
@@ -1621,7 +1698,9 @@ def _paired_reply(sb, session_id: str, user_created_at: str) -> str:
         .limit(1)
         .execute()
     )
-    return r.data[0]["transcript"] if r.data else ""
+    if not r.data:
+        return "", None
+    return r.data[0]["transcript"], r.data[0].get("segments")
 
 
 async def _gen_feedback(utterance: str, reply: str, level: str) -> list:
@@ -1807,6 +1886,7 @@ def _is_unique_violation(e: Exception) -> bool:
 def _replayed_turn(sb, conversation_id: str, u: dict) -> dict:
     """이미 저장된 turn(user 행 u)을 replayed 응답으로. dedup·동시중복 진 쪽 공용.
     feedback_pending: 저장된 feedback 이 null(생성 실패/미완)인지 → [] (교정 없음) 와 구분."""
+    _paired_text, _paired_segments = _paired_reply(sb, conversation_id, u["created_at"])
     return {
         "conversation_id": conversation_id,
         "turn_id": u["id"],
@@ -1814,7 +1894,7 @@ def _replayed_turn(sb, conversation_id: str, u: dict) -> dict:
         "replayed": True,
         "created_at": u["created_at"],
         "user": {"transcript": u["transcript"]},
-        "pally": {"text": _paired_reply(sb, conversation_id, u["created_at"]), "audio": None},
+        "pally": {"text": _paired_text, "audio": None, "segments": _paired_segments},
         "axes": u.get("axes"),
         "character": u.get("character"),
         "feedback": u.get("feedback") or [],
@@ -1922,9 +2002,12 @@ async def create_turn(
     character = compute_character(smoothed)
 
     # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패) — latency 측정
+    #    segments 는 색칠용 조각. 모델이 계약을 깨면 None 이고, 그때는 평문으로 보인다.
     gemini_t0 = time.perf_counter()
     try:
-        reply = await _call_gemini_chat(transcript, history, session["character_name"], session["level"], smoothed)
+        reply, segments = await _call_gemini_chat_segments(
+            transcript, history, session["character_name"], session["level"], smoothed
+        )
     except Exception as e:
         logging.warning(f"turn Gemini failed: {e}")
         _release_turn(sb, user_id)
@@ -1980,6 +2063,7 @@ async def create_turn(
                 "transcript": reply,
                 "axes": None,
                 "character": character,
+                "segments": segments,
             },
         ]).execute()
     except Exception as e:
@@ -2041,7 +2125,8 @@ async def create_turn(
         "replayed": False,
         "created_at": turn_created,
         "user": {"transcript": transcript},
-        "pally": {"text": reply, "audio": tts_audio},  # audio = base64 inline (signed URL 미구현)
+        # segments: 색칠용 조각. null 이면 프론트는 text 를 그대로 평문으로 그린다.
+        "pally": {"text": reply, "audio": tts_audio, "segments": segments},  # audio = base64 inline (signed URL 미구현)
         "axes": smoothed,
         "character": character,
         "feedback": [],
@@ -2317,7 +2402,7 @@ async def get_conversation(
     sb = get_supabase()
     session = _owned_session(sb, conversation_id, user_id)
 
-    q = sb.table("messages").select("id, role, transcript, feedback, axes, created_at").eq("session_id", conversation_id)
+    q = sb.table("messages").select("id, role, transcript, feedback, axes, segments, created_at").eq("session_id", conversation_id)
     if cursor:
         q = q.gt("created_at", cursor)
     try:
@@ -2397,6 +2482,9 @@ def _turn_detail(user_msg: Optional[dict], pally_msg: Optional[dict], seq: int) 
         "status": "completed",
         "user_transcript": user_msg["transcript"] if user_msg else None,
         "pally_text": pally_msg["transcript"] if pally_msg else None,
+        # 색칠용 조각. null 이면 프론트는 pally_text 를 평문으로 그린다
+        # (이 기능 이전의 대화, 또는 모델이 계약을 깬 턴).
+        "pally_segments": (pally_msg.get("segments") if pally_msg else None),
         "feedback": (user_msg.get("feedback") if user_msg else None) or [],
         "feedback_pending": (user_msg.get("feedback") is None) if user_msg else False,
         "created_at": (user_msg or pally_msg)["created_at"],

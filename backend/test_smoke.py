@@ -472,6 +472,7 @@ def test_conversation_turns_restore_user_before_pally_for_equal_timestamps():
             "status": "completed",
             "user_transcript": "just working on my project",
             "pally_text": "That's great you're focused on your project!",
+            "pally_segments": None,
             "feedback": [],
             "feedback_pending": False,
             "created_at": "2026-09-06T10:00:00+00:00",
@@ -955,4 +956,66 @@ def test_in_turn_order_puts_the_user_message_before_its_reply_at_the_same_time()
 
     assert ordered == [
         ("pally", "opener"), ("user", "say 1"), ("pally", "reply 1"), ("user", "say 2"), ("pally", "reply 2"),
+    ]
+
+
+# ── Pally 응답 조각 — 색칠용 segments 가 턴 경로를 타고 나가는지 ──────────────
+
+
+def test_turn_falls_back_to_a_plain_reply_when_segments_break(monkeypatch):
+    """모델이 계약을 깨면 segments 없이 기존 평문 응답으로 내려간다.
+
+    색이 없는 답이 턴을 통째로 잃는 것보다 낫다.
+    """
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    calls = []
+
+    async def failing_post(*_args, **_kwargs):
+        calls.append(1)
+        return SimpleNamespace(status_code=500, text="boom")
+
+    monkeypatch.setattr(main.app.state, "http_client", SimpleNamespace(post=failing_post), raising=False)
+    plain = AsyncMock(return_value="Oh, you are on a diet? What do you eat?")
+    monkeypatch.setattr(main, "_call_gemini_chat", plain)
+
+    text, segments = asyncio.run(
+        main._call_gemini_chat_segments("I'm diet", [], "Pally", "A2", dict(main._INITIAL_AXES))
+    )
+
+    assert text == "Oh, you are on a diet? What do you eat?"
+    assert segments is None
+    assert len(calls) == main._SEGMENT_ATTEMPTS  # 포기 전에 재시도한다
+    plain.assert_awaited_once()
+
+
+def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
+    """조각이 성립하면 text 와 함께 색칠용 구간이 나간다."""
+    import asyncio
+    import json
+    from types import SimpleNamespace
+
+    payload = {
+        "reaction": "Oh, you're on a diet?", "own_remark": "I skip lunch sometimes too.",
+        "new_expr": "skip lunch", "question": "What do you eat for dinner?",
+    }
+
+    async def ok_post(*_args, **_kwargs):
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
+        )
+
+    monkeypatch.setattr(main.app.state, "http_client", SimpleNamespace(post=ok_post), raising=False)
+
+    text, segments = asyncio.run(
+        main._call_gemini_chat_segments("I'm diet", [], "Pally", "A2", dict(main._INITIAL_AXES))
+    )
+
+    assert text == "Oh, you're on a diet? I skip lunch sometimes too. What do you eat for dinner?"
+    assert "".join(s["text"] for s in segments) == text
+    assert [s["kind"] for s in segments if s["kind"] != "plain"] == [
+        "correction", "own_remark", "new_expr", "own_remark", "question",
     ]
