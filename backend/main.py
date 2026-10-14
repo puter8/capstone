@@ -70,23 +70,34 @@ try:
 except Exception:
     generate_feedback = None  # type: ignore
 
-# 5축 분석 어댑터 (rule|ml|hybrid, env PALLY_AXIS_ANALYZER, 기본 rule).
-# 한 번만 생성해 재사용(ml/hybrid 모델 재로딩 방지). 실패하면 기존 rule 함수로 폴백.
+# 5축 분석 어댑터 (rule|ml|hybrid|researched, env PALLY_AXIS_ANALYZER, 기본 rule).
+# 한 번만 생성해 재사용(모델 재로딩 방지). rule/ml/hybrid는 실패 시 기존 rule 함수로
+# 폴백하지만, researched(F/H/C 운영 모델)는 실패를 숨기지 않고 그대로 올린다.
+_AXIS_ANALYZER_KIND = os.getenv("PALLY_AXIS_ANALYZER", "rule").strip().lower()
 try:
     from ai.analyzers import get_axis_analyzer
     _axis_analyzer = get_axis_analyzer()
+    if _AXIS_ANALYZER_KIND == "researched":
+        # Load torch and the encoder at boot; lazily this took ~19s on the first user turn.
+        _axis_analyzer.analyze("Hello, how was your day?")
 except Exception as _axis_e:
+    if _AXIS_ANALYZER_KIND == "researched":
+        raise
     logging.warning(f"axis analyzer init failed → analyze_utterance(rule) fallback: {_axis_e}")
     _axis_analyzer = None
 
 
 def _analyze_axes(text: str) -> Dict[str, int]:
-    """5축 dict. 어댑터(rule/ml/hybrid) 사용, 실패 시 기존 rule 함수로 폴백."""
+    """5축 dict. researched 모드는 모델 실패를 그대로 올리고, 그 외에는 rule 함수로 폴백."""
     if _axis_analyzer is not None:
         try:
             return _axis_analyzer.analyze(text).model_dump()
         except Exception as e:
+            if _AXIS_ANALYZER_KIND == "researched":
+                raise
             logging.warning(f"axis analyzer.analyze failed → rule fallback: {e}")
+    if _AXIS_ANALYZER_KIND == "researched":
+        raise RuntimeError("Configured researched axis analyzer is unavailable")
     return analyze_utterance(text)
 
 
