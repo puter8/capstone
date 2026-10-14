@@ -81,6 +81,9 @@ _AXIS_ANALYZER_KIND = os.getenv("PALLY_AXIS_ANALYZER", "rule").strip().lower()
 try:
     from ai.analyzers import get_axis_analyzer
     _axis_analyzer = get_axis_analyzer()
+    if _AXIS_ANALYZER_KIND == "researched":
+        # Load torch and the encoder at boot; lazily this took ~19s on the first user turn.
+        _axis_analyzer.analyze("Hello, how was your day?")
 except Exception as _axis_e:
     if _AXIS_ANALYZER_KIND == "researched":
         raise

@@ -6,3 +6,11 @@ python-dotenv>=1.0.0
 pydantic>=2.0.0
 supabase>=2.3.0
 librosa==1.0.0
+
+# F/H/C release model (PALLY_AXIS_ANALYZER=researched). CPU-only torch keeps the image small;
+# the MiniLM encoder is downloaded at build time by scripts/fetch_fhc_encoder.py.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+sentence-transformers==6.1.0
+transformers==5.19.0
+scikit-learn==1.9.1

@@ -15,8 +15,10 @@ class SelectedFHCModel:
                 raise ValueError('Invalid selected model component')
         if bundle.get('rule_code_sha256') and any(bundle['components'][key]['family'] == 'embedding_rules' for key in bundle['axis_routing'].values()):
             import hashlib
-            actual = hashlib.sha256((ROOT / 'ai/analyzer.py').read_bytes()).hexdigest()
-            if actual != bundle['rule_code_sha256']:
+            # The bundle was hashed on a Windows checkout (CRLF); Linux deploys check out LF.
+            lf = (ROOT / 'ai/analyzer.py').read_bytes().replace(b'\r\n', b'\n')
+            variants = {hashlib.sha256(b).hexdigest() for b in (lf, lf.replace(b'\n', b'\r\n'))}
+            if bundle['rule_code_sha256'] not in variants:
                 raise ValueError('Linguistic rule source changed since selected model training')
         self.bundle, self.encoder = bundle, encoder
         p = Path(encoder_path or bundle['encoder_path'])
