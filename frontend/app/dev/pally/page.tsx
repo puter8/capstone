@@ -27,7 +27,7 @@ const AXIS_META: Record<keyof Axes, { low: string; high: string; visual: string 
   Humor:     { low: '진지',   high: '유머/밈',  visual: '전신 움직임 (비활성·고정)' },
   Formality: { low: '슬랭',   high: '격식체',  visual: '눈' },
   Energy:    { low: '차분',   high: '활발',    visual: '몸 모양' },
-  Intimacy:  { low: '거리감', high: '친밀',    visual: '눈썹' },
+  Intimacy:  { low: '거리감', high: '친밀',    visual: '입' },
   Curiosity: { low: '선언적', high: '탐구적',  visual: '몸 색상 (연속)' },
 };
 
@@ -45,7 +45,7 @@ function tierLabel(axis: keyof Axes, v: number): string {
     Humor:     ['고정 bob', '고정 bob', '고정 bob'],
     Formality: ['단순한 점', '흰자+동공', '반짝이는 눈'],
     Energy:    ['원', '둥근 사각', '8각 별'],
-    Intimacy:  ['한쪽만 올린 눈썹', '부드러운 아치', '반듯한 일자'],
+    Intimacy:  ['ㅅ자 입', '작은 미소', '활짝 웃는 입'],
     Curiosity: ['파랑', '노랑', '빨강'],
   };
   return map[axis][t];

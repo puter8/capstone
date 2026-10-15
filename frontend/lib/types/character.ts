@@ -45,7 +45,7 @@ export const DEFAULT_AXES: Axes = {
 // matrix_engine.py compute_character() 반환값 + 시각 디자인 스펙 확장
 //
 // 시각 매핑 — 최종 (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14, PallyCanvas.tsx가 기준):
-//   Intimacy  → 눈썹: 0~33=한쪽만 올린 눈썹(acquaint), 34~66=부드러운 아치(buddy), 67~100=반듯한 일자(bestie)
+//   Intimacy  → 입: 0~33=ㅅ자 입(acquaint), 34~66=작은 미소(buddy), 67~100=활짝 웃는 입(bestie)
 //   Energy    → 몸 모양: 0~33=원(calm), 34~66=둥근 사각(lively), 67~100=8각 별(energetic)
 //   Curiosity → 몸 색상, 연속: 파랑(0) → 노랑(50) → 빨강(100)
 //   Formality → 눈: 0~33=단순한 점(blunt), 34~66=흰자+동공(casual), 67~100=반짝이는 눈(formal)

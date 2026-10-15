@@ -112,7 +112,7 @@ export default function PallyCanvas({
     ctx.clearRect(0, 0, size, size);
 
     // Final mapping (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14):
-    // Intimacy=eyebrows, Energy=body shape, Curiosity=body colour (continuous),
+    // Intimacy=mouth, Energy=body shape, Curiosity=body colour (continuous),
     // Formality=eyes, Humor=whole-body motion (inactive: fixed calm bob).
     const oY = Math.sin(t * 0.9) * 4;
 
@@ -216,29 +216,33 @@ export default function PallyCanvas({
       ctx.restore();
     }
 
-    // ── 눈썹 (Intimacy → acquaint=한쪽만 올린 눈썹 → buddy=부드러운 아치 → bestie=반듯한 일자) ──
+    // ── 입 (Intimacy → acquaint=ㅅ자 입 → buddy=작은 미소 → bestie=활짝 웃는 입) ──
     const iT     = tier(ax.Intimacy);
-    const browY  = eyeBaseY - bs * 0.3;
-    const browHw = bs * 0.12;
-    ctx.strokeStyle = '#3a2a1a';
+    const mouthY = eyeBaseY + bs * 0.27;
+    ctx.strokeStyle = '#1a1a1a';
     ctx.lineCap     = 'round';
-    ctx.lineWidth   = bs * (iT === 2 ? 0.055 : 0.045);
-    for (const side of [-1, 1]) {
-      const bx = side * eyeSpcX;
-      ctx.beginPath();
-      if (iT === 0 && side === 1) {
-        // the right brow is raised and tilted up toward the outside
-        ctx.moveTo(bx - browHw, browY - bs * 0.02);
-        ctx.lineTo(bx + browHw, browY - bs * 0.12);
-      } else if (iT === 1) {
-        ctx.moveTo(bx - browHw, browY);
-        ctx.quadraticCurveTo(bx, browY - bs * 0.1, bx + browHw, browY);
-      } else {
-        ctx.moveTo(bx - browHw, browY);
-        ctx.lineTo(bx + browHw, browY);
-      }
-      ctx.stroke();
+    ctx.lineJoin    = 'round';
+    ctx.lineWidth   = bs * 0.035;
+    ctx.beginPath();
+    if (iT === 0) {
+      // 'ㅅ'-shaped mouth: both corners down, peak in the middle
+      const w = bs * 0.09;
+      ctx.moveTo(-w, mouthY + bs * 0.035);
+      ctx.lineTo(0, mouthY - bs * 0.03);
+      ctx.lineTo(w, mouthY + bs * 0.035);
+    } else if (iT === 1) {
+      const w = bs * 0.08;
+      ctx.moveTo(-w, mouthY);
+      ctx.quadraticCurveTo(0, mouthY + bs * 0.1, w, mouthY);
+    } else {
+      const w = bs * (sT === 2 ? 0.36 : 0.48); // narrower inside the star's inner valleys
+      const top = mouthY - bs * 0.04;
+      ctx.moveTo(-w - bs * 0.05, top - bs * 0.05);
+      ctx.lineTo(-w, top);
+      ctx.quadraticCurveTo(0, top + bs * 0.42, w, top);
+      ctx.lineTo(w + bs * 0.05, top - bs * 0.05);
     }
+    ctx.stroke();
 
     ctx.restore();
   }, [size]);
