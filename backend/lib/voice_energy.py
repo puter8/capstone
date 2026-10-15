@@ -100,6 +100,25 @@ def process_pending(get_db, limit: int = 1) -> dict:
     return counts
 
 
+def warm_up() -> None:
+    """librosa/numba 의 JIT 컴파일을 부팅 때 끝내 둔다.
+
+    실측: 첫 측정 7.9초, 이후 2.7초. 미리 돌리지 않으면 그 차이를 온보딩에서
+    목소리를 처음 등록하는 사용자가 기다린다. 실패해도 무시한다 — 예열이 안
+    됐을 뿐이고 측정 자체는 그때 하면 된다.
+    """
+    try:
+        silence = BytesIO()
+        with wave.open(silence, "wb") as target:
+            target.setnchannels(1)
+            target.setsampwidth(2)
+            target.setframerate(SAMPLE_RATE)
+            target.writeframes(bytes(2 * SAMPLE_RATE))
+        measure_wav(silence.getvalue())
+    except Exception as exc:
+        logging.warning("Voice Energy warm-up skipped: %s", type(exc).__name__)
+
+
 async def worker(get_db, stop: asyncio.Event) -> None:
     while not stop.is_set():
         await asyncio.to_thread(process_pending, get_db)

@@ -42,7 +42,7 @@ from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
 from lib import billing, kakaopay, session_feedback, voice_energy
-from ai.voice_energy import MAX_WAV_BYTES
+from ai.voice_energy import MAX_SECONDS, MAX_WAV_BYTES, MIN_BASELINE_SECONDS
 
 
 def _voice_energy_enabled() -> bool:
@@ -143,6 +143,10 @@ async def lifespan(application: FastAPI):
                     session_feedback.worker(get_supabase, stop, _conversation_turns),
                 )
             if _voice_energy_enabled():
+                # librosa/numba 는 첫 호출에서 JIT 컴파일을 한다 — 실측 7.9초.
+                # 부팅 때 한 번 돌려두지 않으면 그 시간을 온보딩에서 기준을 등록하는
+                # 첫 사용자가 고스란히 기다린다.
+                asyncio.create_task(asyncio.to_thread(voice_energy.warm_up))
                 energy_task = asyncio.create_task(voice_energy.worker(get_supabase, stop))
             yield
         finally:
@@ -1381,21 +1385,37 @@ def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
     }
 
 
+# 기준 녹음용 질문. 자기 얘기라 대본 없이 5~15초가 자연스럽게 나오고, 답이
+# 길어지지 않는 것으로 고른다. 측정에 필요한 발화를 끌어내는 장치라 측정 쪽에
+# 둔다 — 화면의 한국어 보조 문구는 FE 카피다.
+_BASELINE_PROMPTS = [
+    "How was your day today?",
+    "What's your favorite food, and why?",
+    "What do you want to do this week?",
+]
+
+
 def _baseline_payload(row: dict | None) -> dict:
-    """등록 안 됨 / 등록됨 두 상태만 프론트에 알린다. 측정 원값은 내보내지 않는다."""
+    """등록 안 됨 / 등록됨 두 상태만 프론트에 알린다. 측정 원값은 내보내지 않는다.
+
+    prompts 와 길이 제한을 함께 준다. 화면이 질문을 하드코딩하면 문항을 바꿀 때마다
+    프론트를 배포해야 하고, 클립 수(3)·길이 규칙이 서버와 어긋날 수 있다.
+    """
+    limits = {"clips": 3, "min_seconds": int(MIN_BASELINE_SECONDS), "max_seconds": MAX_SECONDS}
     if row is None:
-        return {"status": "required", "baseline": None}
+        return {"status": "required", "baseline": None,
+                "prompts": list(_BASELINE_PROMPTS), "limits": limits}
     return {"status": "ready", "baseline": {
         "range_st": row["range_st"], "valid_clips": 3,
         "method_version": row["method"],
-    }}
+    }, "prompts": list(_BASELINE_PROMPTS), "limits": limits}
 
 
 @app.get("/api/energy/baseline")
 async def get_energy_baseline(user_id: str = Depends(get_current_user_id)):
     """기능이 꺼져 있으면 disabled. 프론트는 이때 등록 화면을 띄우지 않는다."""
     if not _voice_energy_enabled():
-        return {"status": "disabled", "baseline": None}
+        return {"status": "disabled", "baseline": None, "prompts": [], "limits": None}
     try:
         return _baseline_payload(voice_energy.get_baseline(get_supabase(), user_id))
     except Exception as exc:
@@ -1437,12 +1457,17 @@ async def register_energy_baseline(
             raise AppError(422, "invalid_audio", "같은 파일 대신 각각 녹음한 목소리 3개를 등록해 주세요.")
         clip_hashes.add(digest)
         try:
-            measured = await asyncio.to_thread(measure_wav, payload)
+            measured = await asyncio.to_thread(measure_wav, payload, require_min_duration=True)
         except Exception as exc:
             logging.error("energy baseline measurement failed: %s", type(exc).__name__)
             raise AppError(503, "service_unavailable", "목소리를 분석하지 못했어요. 다시 시도해 주세요.")
         if measured.range_st is None:
-            raise AppError(422, "invalid_audio", "각 녹음에 충분한 목소리가 담겨야 해요. 다시 녹음해 주세요.",
+            # 화면은 reason 으로 분기한다. 짧은 것과 목소리가 안 담긴 것은 사용자가
+            # 해야 할 행동이 달라서 같은 문구로 묶으면 안 된다.
+            message = ("5초 이상 편안하게 이야기한 뒤 다시 녹음해 주세요."
+                       if measured.missing_reason == "clip_too_short"
+                       else "녹음에 목소리가 충분히 담기지 않았어요. 조용한 곳에서 다시 녹음해 주세요.")
+            raise AppError(422, "invalid_audio", message,
                            {"clip_index": len(measurements) + 1, "reason": measured.missing_reason})
         measurements.append(measured)
     try:

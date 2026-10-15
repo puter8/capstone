@@ -221,3 +221,66 @@ def test_invalid_completion_snapshot_is_not_reported_as_success(monkeypatch, ene
         asyncio.run(main.complete_conversation("conversation-1", tasks, "user-1", "key"))
     assert caught.value.code == "persistence_failed"
     assert tasks.tasks == []
+
+
+# ── 온보딩 목소리 등록 — 화면이 필요로 하는 계약 ─────────────────────────────
+
+
+def test_baseline_get_hands_the_screen_its_prompts_and_limits(monkeypatch):
+    """질문과 길이 규칙을 서버가 준다. 화면이 하드코딩하면 문항을 바꿀 때마다
+    프론트를 배포해야 하고, 클립 수·길이 규칙이 서버와 어긋날 수 있다."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(main.voice_energy, "get_baseline", Mock(return_value=None))
+    body = TestClient(main.app).get("/api/energy/baseline", headers={"Authorization": "Bearer t"}).json()
+
+    assert body["status"] == "required"
+    assert len(body["prompts"]) == body["limits"]["clips"] == 3
+    assert all(p.strip().endswith("?") for p in body["prompts"])
+    assert body["limits"] == {"clips": 3, "min_seconds": 5, "max_seconds": 30}
+
+
+def test_a_clip_under_five_seconds_is_told_apart_from_a_silent_one(monkeypatch):
+    """화면은 reason 으로 분기한다. 짧게 말한 것과 목소리가 안 담긴 것은 사용자가
+    해야 할 행동이 달라서 같은 문구로 묶으면 안 된다."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(main.voice_energy, "get_baseline", Mock(return_value=None))
+    client = TestClient(main.app)
+
+    for reason, expected in (("clip_too_short", "5초 이상"), ("insufficient_voiced_frames", "목소리가 충분히")):
+        monkeypatch.setattr(main, "measure_wav", Mock(return_value=core.missing_clip(reason)), raising=False)
+        monkeypatch.setattr(core, "measure_wav", Mock(return_value=core.missing_clip(reason)))
+        response = client.post(
+            "/api/energy/baseline",
+            headers={"Authorization": "Bearer t", "Idempotency-Key": "k"},
+            files=[("audio", (f"{i}.wav", pcm_wav(), "audio/wav")) for i in range(3)],
+        )
+        assert response.status_code == 422, response.text
+        detail = response.json()["error"]
+        assert detail["details"] == {"clip_index": 1, "reason": reason}
+        assert expected in detail["message"]
+
+
+def test_baseline_measurement_enforces_the_minimum_length(monkeypatch):
+    """5초 규칙은 기준 등록에서만 쓴다. 대화 턴 측정까지 걸면 짧게 답한 발화가
+    통째로 버려진다."""
+    short = core.measure_wav(pcm_wav(), require_min_duration=True)
+    assert short.range_st is None and short.missing_reason == "clip_too_short"
+
+    # 같은 1초 클립이라도 턴 경로에서는 길이로 거르지 않는다
+    assert core.measure_wav(pcm_wav()).missing_reason != "clip_too_short"
+
+
+def test_warm_up_runs_the_measurement_once_and_never_raises(monkeypatch):
+    """부팅 때 JIT 컴파일을 끝내 둔다(실측 첫 호출 7.9초, 이후 2.7초).
+    실패해도 서버 기동을 막지 않는다 — 예열이 안 됐을 뿐이다."""
+    from lib import voice_energy as worker_module
+
+    called = Mock(return_value=core.missing_clip("empty_audio"))
+    monkeypatch.setattr(worker_module, "measure_wav", called)
+    worker_module.warm_up()
+    called.assert_called_once()
+
+    monkeypatch.setattr(worker_module, "measure_wav", Mock(side_effect=RuntimeError("librosa missing")))
+    worker_module.warm_up()  # 예외가 밖으로 나가면 서버가 못 뜬다
