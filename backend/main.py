@@ -41,7 +41,14 @@ from ai.matrix_engine import apply_ema, compute_character, describe_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
-from lib import billing, kakaopay, session_feedback
+from lib import billing, kakaopay, session_feedback, voice_energy
+from ai.voice_energy import MAX_WAV_BYTES
+
+
+def _voice_energy_enabled() -> bool:
+    """음성 기반 Energy 축. 기본 꺼짐 — 켜면 턴마다 원음이 작업 큐에 쌓이고
+    worker 가 CPU 를 쓰므로, 운영 지연·적체를 확인한 뒤에만 켠다."""
+    return os.getenv("PALLY_VOICE_ENERGY_ENABLED", "false").lower() == "true"
 
 
 class BillingAccessFilter(logging.Filter):
@@ -119,6 +126,7 @@ async def lifespan(application: FastAPI):
         stop = asyncio.Event()
         task = None
         feedback_task = None
+        energy_task = None
         try:
             if os.getenv("BILLING_PROVIDER") == "kakaopay" and os.getenv("BILLING_WORKER_ENABLED") == "true":
                 task = asyncio.create_task(billing.worker(get_supabase, stop))
@@ -127,9 +135,13 @@ async def lifespan(application: FastAPI):
                 feedback_task = asyncio.create_task(
                     session_feedback.worker(get_supabase, stop, _conversation_turns),
                 )
+            if _voice_energy_enabled():
+                energy_task = asyncio.create_task(voice_energy.worker(get_supabase, stop))
             yield
         finally:
             stop.set()
+            if energy_task is not None:
+                await energy_task
             try:
                 if task is not None:
                     await task
@@ -1362,6 +1374,78 @@ def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
     }
 
 
+def _baseline_payload(row: dict | None) -> dict:
+    """등록 안 됨 / 등록됨 두 상태만 프론트에 알린다. 측정 원값은 내보내지 않는다."""
+    if row is None:
+        return {"status": "required", "baseline": None}
+    return {"status": "ready", "baseline": {
+        "range_st": row["range_st"], "valid_clips": 3,
+        "method_version": row["method"],
+    }}
+
+
+@app.get("/api/energy/baseline")
+async def get_energy_baseline(user_id: str = Depends(get_current_user_id)):
+    """기능이 꺼져 있으면 disabled. 프론트는 이때 등록 화면을 띄우지 않는다."""
+    if not _voice_energy_enabled():
+        return {"status": "disabled", "baseline": None}
+    try:
+        return _baseline_payload(voice_energy.get_baseline(get_supabase(), user_id))
+    except Exception as exc:
+        logging.error("energy baseline read failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to load voice baseline")
+
+
+@app.post("/api/energy/baseline")
+async def register_energy_baseline(
+    audio: list[UploadFile] = File(...),
+    user_id: str = Depends(get_current_user_id),
+    _idem: str = Depends(require_idempotency_key),
+):
+    """평소 목소리 3개로 개인 기준을 한 번 등록한다. 이후 Energy 는 이 기준
+    대비 억양 폭 변화로 계산하므로, 사람마다 다른 목소리 높이에 영향받지 않는다.
+
+    이미 등록돼 있으면 덮어쓰지 않는다 — 기준이 바뀌면 과거 점수와 비교가 끊긴다.
+    """
+    if not _voice_energy_enabled():
+        raise AppError(503, "service_unavailable", "Voice Energy is not enabled")
+    if len(audio) != 3:
+        raise AppError(422, "invalid_audio", "평소 목소리로 녹음한 파일 3개가 필요해요.")
+    sb = get_supabase()
+    try:
+        existing = voice_energy.get_baseline(sb, user_id)
+    except Exception as exc:
+        logging.error("energy baseline read failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to load voice baseline")
+    if existing is not None:
+        return _baseline_payload(existing)
+    from ai.voice_energy import measure_wav
+    measurements = []
+    clip_hashes: set = set()
+    for clip in audio:
+        payload = await clip.read(MAX_WAV_BYTES + 1)
+        digest = hashlib.sha256(payload).hexdigest()
+        # 같은 파일 3번은 기준이 아니라 한 번 잰 값이다.
+        if digest in clip_hashes:
+            raise AppError(422, "invalid_audio", "같은 파일 대신 각각 녹음한 목소리 3개를 등록해 주세요.")
+        clip_hashes.add(digest)
+        try:
+            measured = await asyncio.to_thread(measure_wav, payload)
+        except Exception as exc:
+            logging.error("energy baseline measurement failed: %s", type(exc).__name__)
+            raise AppError(503, "service_unavailable", "목소리를 분석하지 못했어요. 다시 시도해 주세요.")
+        if measured.range_st is None:
+            raise AppError(422, "invalid_audio", "각 녹음에 충분한 목소리가 담겨야 해요. 다시 녹음해 주세요.",
+                           {"clip_index": len(measurements) + 1, "reason": measured.missing_reason})
+        measurements.append(measured)
+    try:
+        saved = voice_energy.save_baseline(sb, user_id, measurements)
+    except Exception as exc:
+        logging.error("energy baseline save failed: %s", type(exc).__name__)
+        raise AppError(503, "persistence_failed", "Failed to save voice baseline")
+    return _baseline_payload(saved)
+
+
 @app.post("/api/onboarding")
 async def onboarding(
     req: OnboardingRequest,
@@ -1958,9 +2042,24 @@ async def create_turn(
         return _replayed_turn(sb, conversation_id, dup.data[0])
 
     # 3. 오디오
-    audio_bytes = await audio.read()
+    # 음성 Energy 를 켜면 원음이 작업 입력으로 잠시 저장되므로 크기를 제한한다.
+    audio_bytes = await audio.read(MAX_WAV_BYTES + 1) if _voice_energy_enabled() else await audio.read()
     if not audio_bytes:
         raise AppError(400, "invalid_audio", "Empty audio file")
+    energy_input = None
+    if _voice_energy_enabled():
+        try:
+            registered_baseline = voice_energy.get_baseline(sb, user_id)
+        except Exception as exc:
+            logging.error("energy baseline read failed: %s", type(exc).__name__)
+            raise AppError(503, "persistence_failed", "Failed to load voice baseline")
+        # 개인 기준이 없으면 억양 폭 변화를 잴 수 없다 — 추측해서 점수를 내지 않는다.
+        if registered_baseline is None:
+            raise AppError(409, "energy_baseline_required", "대화를 시작하기 전에 평소 목소리 3개를 등록해 주세요.")
+        try:
+            energy_input = voice_energy.pending_audio(audio_bytes)
+        except ValueError:
+            raise AppError(422, "invalid_audio", "30초 이하의 WAV 녹음이 필요해요.")
 
     # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
     #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
@@ -2010,6 +2109,16 @@ async def create_turn(
     # 6. 5축 → EMA → character (분석 어댑터: rule|ml|hybrid, 기본 rule)
     raw_axes = _analyze_axes(transcript)
     smoothed = apply_ema(current_axes, raw_axes) if current_axes else raw_axes
+    if _voice_energy_enabled():
+        # 음성 Energy 는 세션 종료 시 확정된다. 턴 중에는 직전 확정값을 유지해,
+        # 아직 측정되지 않은 값이 텍스트 EMA 로 흔들리지 않게 한다.
+        try:
+            previous_voice = voice_energy.latest_snapshot(sb, user_id)
+        except Exception as e:
+            logging.error(f"voice energy snapshot read failed: {e}")
+            _release_turn(sb, user_id)
+            raise AppError(503, "persistence_failed", "Failed to load voice energy state")
+        smoothed["Energy"] = previous_voice["current_axes"]["Energy"] if previous_voice else 50
     character = compute_character(smoothed)
 
     # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패) — latency 측정
@@ -2067,6 +2176,10 @@ async def create_turn(
                 "character": character,
                 "idempotency_key": idem_key,
                 "feedback": None,
+                # 원음은 작업 입력으로 잠시 저장되고 측정이 끝나면 worker 가 지운다.
+                **({"voice_energy": energy_input,
+                    "voice_energy_epoch": session.get("reopen_count") or 0}
+                   if _voice_energy_enabled() else {}),
             },
             {
                 "session_id": conversation_id,
@@ -2275,6 +2388,22 @@ def _latest_user_axes(messages: list) -> dict:
     return dict(_INITIAL_AXES)
 
 
+def _session_display_axes(sb, session: dict, messages: list) -> dict:
+    """그 대화가 끝났을 때의 Pally 모습. 음성 Energy 를 켜면 종료 시 확정된
+    스냅샷이 정답이고, 꺼져 있으면 마지막 발화의 축을 쓴다."""
+    if _voice_energy_enabled():
+        try:
+            rows = (sb.table("voice_energy_snapshots").select("current_axes")
+                    .eq("session_id", session["id"])
+                    .order("epoch", desc=True).limit(1).execute()).data
+            if rows:
+                return rows[0]["current_axes"]
+        except Exception as exc:
+            logging.error("energy snapshot read failed: %s", type(exc).__name__)
+            raise AppError(503, "persistence_failed", "Failed to load final Pally state")
+    return _latest_user_axes(messages)
+
+
 # 마이페이지 성향 태그. 축마다 캐릭터 렌더러(frontend PallyCanvas tier)와 같은
 # 0~33 / 34~66 / 67~100 구간 라벨을 쓴다 → 태그와 Pally 모습이 항상 같은 기준.
 # 순서가 곧 표시 순서다(기존 seed: bestie·ridiculous·lively·curious·blunt 와 같은 축 순서).
@@ -2393,7 +2522,7 @@ async def list_conversations(
             "last_turn_at": ms[-1]["created_at"] if ms else None,
             "completed_at": s.get("ended_at"),
             "turn_count": len(user_msgs),
-            "current_axes": _latest_user_axes(ms),
+            "current_axes": _session_display_axes(sb, s, ms),
             "feedback_count": sum(len(m.get("feedback") or []) for m in user_msgs),
             "preview": _truncate(user_msgs[-1]["transcript"], 120) if user_msgs else None,
         })
@@ -2438,7 +2567,7 @@ async def get_conversation(
         "reopened_at": session.get("reopened_at"),
         "reopen_count": session.get("reopen_count", 0),
         "turn_count": len(user_msgs),
-        "current_axes": _latest_user_axes(ms),
+        "current_axes": _session_display_axes(sb, session, ms),
     }
     return {"conversation": conv, "turns": page, "next_cursor": next_cursor}
 
@@ -2520,7 +2649,9 @@ async def complete_conversation(
 
     was_active = not session.get("ended_at")
     try:
-        res = sb.rpc("complete_conversation_with_feedback", {
+        # 음성 Energy 를 켜면 종료와 Energy 확정을 한 트랜잭션에서 처리하는 RPC 를 쓴다.
+        rpc_name = "complete_conversation_with_energy" if _voice_energy_enabled() else "complete_conversation_with_feedback"
+        res = sb.rpc(rpc_name, {
             "p_conversation_id": conversation_id,
             "p_user_id": user_id,
             "p_expected_reopen_count": session.get("reopen_count") or 0,
@@ -2528,6 +2659,16 @@ async def complete_conversation(
         if (not isinstance(res.data, dict) or res.data.get("id") != conversation_id
                 or not res.data.get("ended_at")):
             raise ValueError("Session completion RPC returned an invalid session")
+        if _voice_energy_enabled():
+            # 화면에 공개되는 축이라 RPC 결과를 믿지 않고 모양까지 확인한다.
+            final_axes, energy_result = res.data.get("current_axes"), res.data.get("energy")
+            if (not isinstance(final_axes, dict) or set(final_axes) != set(_INITIAL_AXES)
+                    or any(type(v) is not int or not 0 <= v <= 100 for v in final_axes.values())
+                    or not isinstance(energy_result, dict)
+                    or energy_result.get("status") not in ("ready", "retained")
+                    or energy_result.get("score") != final_axes["Energy"]
+                    or "reason" not in energy_result):
+                raise ValueError("Voice Energy completion returned an invalid snapshot")
         session = res.data
     except Exception as exc:
         if "conversation_changed" in str(exc):
@@ -2536,6 +2677,11 @@ async def complete_conversation(
             raise AppError(404, "not_found", "Conversation not found")
         logging.error("complete_conversation failed: %s", type(exc).__name__)
         raise AppError(503, "persistence_failed", "Failed to complete conversation")
+    # 측정이 안 끝났거나 유효 발화가 부족하면 이전 Energy 를 유지한다 — 늦은 결과로
+    # 확정된 세션 점수를 다시 바꾸지 않는다.
+    if _voice_energy_enabled() and session.get("energy", {}).get("status") != "ready":
+        warnings.append({"code": "energy_unavailable",
+                         "message": "음성 정보가 부족하거나 분석이 끝나지 않아 이번 대화의 에너지는 갱신하지 않았어요."})
     if was_active:
         if not _refresh_profile_traits(sb, user_id, conversation_id):
             warnings.append({"code": "traits_update_failed",
@@ -2556,7 +2702,10 @@ async def complete_conversation(
         "id": session["id"],
         "status": "completed",
         "completed_at": session.get("ended_at"),
-    }, "warnings": warnings}
+    }, "warnings": warnings,
+        # 음성 Energy 를 켤 때만 확정된 5축과 측정 상태를 함께 공개한다.
+        **({"current_axes": session["current_axes"], "energy": session["energy"]}
+           if _voice_energy_enabled() else {})}
 
 
 def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
@@ -2574,6 +2723,9 @@ def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
         if not msgs.data:
             return True
         axes = msgs.data[0]["axes"]
+        if _voice_energy_enabled():
+            # 종료 시 확정된 Energy 가 포함된 축이 Pally 의 현재 모습이다.
+            axes = _session_display_axes(sb, {"id": conversation_id}, msgs.data)
         sb.table("profiles").update({
             "traits": _axes_to_traits(axes), "current_axes": axes, "updated_at": _now_iso(),
         }).eq("id", user_id).execute()
