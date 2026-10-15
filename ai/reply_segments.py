@@ -2,8 +2,15 @@
 """
 reply_segments
 --------------
-Pally's turn reply, built from four labelled pieces instead of one blob, so the
-app can colour what it means: the correction orange, what Pally offers mint.
+Pally's turn reply, built from labelled pieces instead of one blob, so the app
+can colour what it means: the expression Pally corrected orange, what Pally
+offers mint.
+
+Both coloured spans are substrings the model copied from its own sentences -
+`corrected_expr` inside `reaction`, `new_expr` inside `own_remark` - so we paint
+only the words that carry the meaning, never a whole sentence. The user said
+"I'm diet" and Pally says "Oh, you're on a diet?": the orange is
+"you're on a diet", not the "Oh," in front of it.
 
 Why pieces and not span tagging: asking the model to compose a natural A2 reply
 AND then mark spans inside it is two jobs, and it drops one. Measured over 12
@@ -57,6 +64,10 @@ RESPONSE_SCHEMA = {
             "type": "STRING",
             "description": "React to the user's point, re-saying it with the grammar fixed.",
         },
+        "corrected_expr": {
+            "type": "STRING",
+            "description": "The exact phrase inside reaction that fixes the user's mistake. Empty when they made none.",
+        },
         "own_remark": {
             "type": "STRING",
             "description": "One short sentence Pally says about itself on the same topic.",
@@ -70,8 +81,8 @@ RESPONSE_SCHEMA = {
             "description": "One short question that keeps the conversation going.",
         },
     },
-    "required": ["reaction", "own_remark", "new_expr", "question"],
-    "propertyOrdering": ["reaction", "own_remark", "new_expr", "question"],
+    "required": ["reaction", "corrected_expr", "own_remark", "new_expr", "question"],
+    "propertyOrdering": ["reaction", "corrected_expr", "own_remark", "new_expr", "question"],
 }
 
 _PROMPT = """You are {character_name}, the user's English conversation friend. A FRIEND, not a teacher.
@@ -87,32 +98,57 @@ Build your reply from exactly these four short pieces.
    re-saying it with the grammar fixed. Pick only ONE idea; never repeat
    everything they said. If their sentence was already correct, react warmly.
 
-2. "own_remark" (UNDER 35 characters) - ONE short sentence about yourself on
+2. "corrected_expr" - The exact phrase copied from reaction, word for word, that
+   fixes what the user got WRONG. Just the words that changed and what they need
+   to make sense - not the whole sentence, not the greeting in front of it.
+
+   Leave this EMPTY unless the user's own words were actually incorrect English.
+   These are NOT corrections, so leave it empty for all of them:
+   - saying "your" where they said "my" (you are echoing them, not fixing them)
+   - picking different words that mean the same thing ("very much" -> "a lot")
+   - shortening or rewording a sentence that was already correct
+   Marking a phrase they got right teaches them a mistake they never made.
+
+3. "own_remark" (UNDER 35 characters) - ONE short sentence about yourself on
    their topic. You are sharing, not teaching.
 
-3. "new_expr" - The exact useful phrase copied from own_remark, word for word.
+4. "new_expr" - The exact useful phrase copied from own_remark, word for word.
 
-4. "question" (UNDER 30 characters) - One short question to keep talking.
+5. "question" (UNDER 30 characters) - One short question to keep talking.
 
 Examples:
 
 User: "I had no lunch I'm diet"
 reaction: "Oh, you're on a diet?"
+corrected_expr: "you're on a diet"
 own_remark: "I skip lunch sometimes too."
 new_expr: "skip lunch"
 question: "What do you eat for dinner?"
 
 User: "Yesterday I go to park with my friend"
 reaction: "You went to the park?"
+corrected_expr: "went to the park"
 own_remark: "I love a long walk outside."
 new_expr: "a long walk"
 question: "Was the weather nice?"
 
 User: "She don't like coffee"
 reaction: "She doesn't like coffee?"
+corrected_expr: "doesn't like"
 own_remark: "I can't start my day without it."
 new_expr: "start my day"
 question: "What does she drink?"
+
+User: "I went to the beach last weekend."
+reaction: "You went to the beach?"
+corrected_expr: ""
+
+User: "My cat sleeps all day."
+reaction: "Your cat sleeps all day?"
+corrected_expr: ""
+own_remark: "I love the sound of waves."
+new_expr: "the sound of waves"
+question: "Did you swim?"
 
 Stay in character as {character_name} at all times. Never break the fourth wall."""
 
@@ -177,10 +213,15 @@ def build_reply(payload: Optional[dict]) -> Optional[ReplyParts]:
         return None
 
     reaction = _clean(payload.get("reaction"))
+    corrected_expr = _clean(payload.get("corrected_expr"))
     own_remark = _clean(payload.get("own_remark"))
     new_expr = _clean(payload.get("new_expr"))
     question = _clean(payload.get("question"))
     if not (reaction and own_remark and new_expr and question):
+        return None
+    # corrected_expr 는 비어 있을 수 있다 — 사용자가 틀리지 않은 경우다. 그때
+    # 주황을 칠하면 하지도 않은 교정을 배우게 되므로 reaction 전체가 plain 이다.
+    if corrected_expr and corrected_expr not in reaction:
         return None
 
     # new_expr must be a span of own_remark; otherwise there is nothing to
@@ -204,7 +245,14 @@ def build_reply(payload: Optional[dict]) -> Optional[ReplyParts]:
         ("new_expr", new_expr),
         ("own_remark", own_remark[end:]),
     ]
-    segments = [{"kind": "correction", "text": reaction}, {"kind": "plain", "text": " "}]
+    reaction_spans = [("plain", reaction)]
+    if corrected_expr:
+        start = reaction.find(corrected_expr)
+        end = start + len(corrected_expr)
+        reaction_spans = [("plain", reaction[:start]), ("correction", corrected_expr),
+                          ("plain", reaction[end:])]
+    segments = [{"kind": kind, "text": part} for kind, part in reaction_spans if part]
+    segments += [{"kind": "plain", "text": " "}]
     segments += [{"kind": kind, "text": part} for kind, part in remark_spans if part]
     segments += [{"kind": "plain", "text": " "}, {"kind": "question", "text": question}]
 

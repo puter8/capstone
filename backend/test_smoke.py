@@ -998,7 +998,8 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
     from types import SimpleNamespace
 
     payload = {
-        "reaction": "Oh, you're on a diet?", "own_remark": "I skip lunch sometimes too.",
+        "reaction": "Oh, you're on a diet?", "corrected_expr": "you're on a diet",
+        "own_remark": "I skip lunch sometimes too.",
         "new_expr": "skip lunch", "question": "What do you eat for dinner?",
     }
 
@@ -1016,6 +1017,8 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
 
     assert text == "Oh, you're on a diet? I skip lunch sometimes too. What do you eat for dinner?"
     assert "".join(s["text"] for s in segments) == text
+    # 주황은 고쳐준 표현만 덮는다 — reaction 앞의 "Oh, " 는 plain 이다.
     assert [s["kind"] for s in segments if s["kind"] != "plain"] == [
         "correction", "own_remark", "new_expr", "own_remark", "question",
     ]
+    assert [s["text"] for s in segments if s["kind"] == "correction"] == ["you're on a diet"]
