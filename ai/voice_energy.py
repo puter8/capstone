@@ -19,6 +19,9 @@ SAMPLE_RATE = 16000
 FRAME_LENGTH = 1024
 HOP_LENGTH = 160
 MIN_VOICED_FRAMES = 50
+# 기준 녹음의 최소 길이. 짧게 말하면 억양 폭이 그 사람의 평소 범위가 아니라
+# 한두 음절의 우연에 좌우된다. 온보딩 화면도 "5초 이상" 으로 안내한다.
+MIN_BASELINE_SECONDS = 5.0
 BASELINE_CLIPS = 3
 MIN_SESSION_CLIPS = 5
 MAX_SECONDS = 30
@@ -107,7 +110,7 @@ def missing_clip(reason: str, *, duration_seconds: float = 0,
     return ClipMeasurement(None, voiced_frames, total_frames, duration_seconds, None, 0, reason)
 
 
-def measure_wav(wav_bytes: bytes) -> ClipMeasurement:
+def measure_wav(wav_bytes: bytes, *, require_min_duration: bool = False) -> ClipMeasurement:
     """Measure bounded mono PCM16 16 kHz WAV bytes; reject other formats explicitly.
 
     Dependencies load only after cheap input validation. Unexpected computation
@@ -132,6 +135,9 @@ def measure_wav(wav_bytes: bytes) -> ClipMeasurement:
     if not frames:
         return missing_clip("empty_audio")
     duration = frames / SAMPLE_RATE
+    if require_min_duration and duration < MIN_BASELINE_SECONDS:
+        # 측정을 돌리기 전에 거른다. 길이는 파일만 보면 알 수 있다.
+        return missing_clip("clip_too_short", duration_seconds=duration)
     if frames < FRAME_LENGTH:
         return missing_clip("insufficient_voiced_frames", duration_seconds=duration)
     import numpy as np
