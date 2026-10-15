@@ -50,7 +50,14 @@ data/fixtures/santa_barbara_ambiguous_informal_candidates.jsonl
 data/fixtures/pally_purpose_v1_ambiguousinformal_40.jsonl
 data/fixtures/pally_purpose_v1_items_100.jsonl
 data/fixtures/pally_purpose_v1_scoring_slot*.xlsx
+data/fixtures/**/pally_purpose_v1_scoring_slot*.xlsx
+data/fixtures/pally_purpose_v3_combined_train.jsonl
+data/fixtures/pally_purpose_v3_train_dev_split_train.jsonl
+data/fixtures/pally_purpose_v3_train_dev_split_dev.jsonl
 data/fixtures/~$*.xlsx
+
+# Private voice baseline and validation recordings (all formats).
+data/fixtures/녹음 결과/
 
 # trained model artifacts (regenerate from scripts/train_purpose_axis_models.py)
 data/models/
