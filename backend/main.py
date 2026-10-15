@@ -51,6 +51,13 @@ def _voice_energy_enabled() -> bool:
     return os.getenv("PALLY_VOICE_ENERGY_ENABLED", "false").lower() == "true"
 
 
+def _voice_baseline_required() -> bool:
+    """켜져 있으면(기본) 평소 목소리 미등록 사용자의 턴을 409 로 막는다. 등록 화면이
+    앱에 연결되기 전에는 false 로 두어, 미등록 사용자는 Energy 측정만 건너뛰고 대화한다
+    (세션 종료 시 DB 가 baseline_missing 으로 이전 Energy 를 유지)."""
+    return os.getenv("PALLY_VOICE_BASELINE_REQUIRED", "true").lower() == "true"
+
+
 class BillingAccessFilter(logging.Filter):
     def filter(self, record):
         if isinstance(record.args, tuple) and len(record.args) == 5:
@@ -2054,12 +2061,13 @@ async def create_turn(
             logging.error("energy baseline read failed: %s", type(exc).__name__)
             raise AppError(503, "persistence_failed", "Failed to load voice baseline")
         # 개인 기준이 없으면 억양 폭 변화를 잴 수 없다 — 추측해서 점수를 내지 않는다.
-        if registered_baseline is None:
+        if registered_baseline is None and _voice_baseline_required():
             raise AppError(409, "energy_baseline_required", "대화를 시작하기 전에 평소 목소리 3개를 등록해 주세요.")
-        try:
-            energy_input = voice_energy.pending_audio(audio_bytes)
-        except ValueError:
-            raise AppError(422, "invalid_audio", "30초 이하의 WAV 녹음이 필요해요.")
+        if registered_baseline is not None:
+            try:
+                energy_input = voice_energy.pending_audio(audio_bytes)
+            except ValueError:
+                raise AppError(422, "invalid_audio", "30초 이하의 WAV 녹음이 필요해요.")
 
     # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
     #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
