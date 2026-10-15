@@ -13,3 +13,7 @@ torch==2.14.1+cpu
 sentence-transformers==6.1.0
 transformers==5.19.0
 scikit-learn==1.9.1
+
+# Voice Energy (PALLY_VOICE_ENERGY_ENABLED=true). librosa.pyin 으로 발화의 음높이를
+# 뽑아 억양 폭을 잰다. 기능이 꺼져 있으면 import 되지 않는다(지연 import).
+librosa==1.0.0
