@@ -22,7 +22,8 @@ function tier(v: number): 0 | 1 | 2 {
   return 2;
 }
 
-function intimacyRgb(v: number): [number, number, number] {
+// Curiosity → body colour, continuous blue → yellow → red (final mapping, 2026-10-14).
+function curiosityRgb(v: number): [number, number, number] {
   const t = Math.max(0, Math.min(100, v)) / 100;
   let h: number, s: number, l: number;
   if (t <= 0.5) {
@@ -110,39 +111,26 @@ export default function PallyCanvas({
     const cy  = size / 2;
     ctx.clearRect(0, 0, size, size);
 
-    // Humor → 움직임(bob/bounce/wiggle): serious=거의 정지, ridiculous=활발한 wiggle
-    const mT = tier(ax.Humor);
-    let oY = 0, oX = 0;
-    if      (mT === 0) { oY = Math.sin(t * 0.9) * 4; }
-    else if (mT === 1) { oY = Math.sin(t * 1.8) * 8; }
-    else               { oY = Math.sin(t * 3.2) * 7; oX = Math.cos(t * 3.2) * 5; }
+    // Final mapping (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14):
+    // Intimacy=eyebrows, Energy=body shape, Curiosity=body colour (continuous),
+    // Formality=eyes, Humor=whole-body motion (inactive: fixed calm bob).
+    const oY = Math.sin(t * 0.9) * 4;
 
     ctx.save();
-    ctx.translate(cx + oX, cy + oY);
+    ctx.translate(cx, cy + oY);
 
-    const [r, g, b] = intimacyRgb(ax.Intimacy);
-    // Energy → 몸통 모양(calm=사각 → lively=별 → energetic=선버스트)
+    const [r, g, b] = curiosityRgb(ax.Curiosity);
+    // Energy → body shape: calm=circle → lively=rounded square → energetic=8-point star
     const sT = tier(ax.Energy);
-    // Formality → 모서리 둥글기: blunt(낮음)=둥긂 → formal(높음)=각짐
-    const fT = tier(ax.Formality);
 
     ctx.shadowColor = `rgba(${r},${g},${b},0.45)`;
     ctx.shadowBlur  = 20;
 
-    if (sT === 0) {
-      const rectR = [bs * 0.75, bs * 0.18, 0][fT];
-      ctx.beginPath();
-      ctx.roundRect(-bs, -bs, bs * 2, bs * 2, rectR);
-    } else if (sT === 1) {
-      const outerR = bs * 1.15;
-      const innerR = bs * 0.63;
-      const tipR   = [24, 10, 0][fT];
-      drawStar(ctx, 8, outerR, innerR, tipR);
+    if (sT === 2) {
+      drawStar(ctx, 8, bs * 1.15, bs * 0.63, 10);
     } else {
-      const outerR = bs * 1.28;
-      const innerR = bs * 0.52;
-      const tipR   = [16, 6, 0][fT];
-      drawStar(ctx, 12, outerR, innerR, tipR);
+      ctx.beginPath();
+      ctx.roundRect(-bs, -bs, bs * 2, bs * 2, sT === 0 ? bs : bs * 0.3);
     }
 
     const grad = ctx.createRadialGradient(-bs * 0.15, -bs * 0.2, bs * 0.05, 0, 0, bs);
@@ -152,10 +140,10 @@ export default function PallyCanvas({
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // ── 눈 (Curiosity → indifferent=단순한 점 → curious → Inquisitive=화려한 눈) ──
-    const eT       = tier(ax.Curiosity);
-    const eyeSpcX  = sT > 0 ? bs * 0.25 : bs * 0.34;
-    const eyeBaseY = sT > 0 ? bs * 0.08 : -bs * 0.04;
+    // ── 눈 (Formality → blunt=단순한 점 → casual=흰자+동공 → formal=반짝이는 눈) ──
+    const eT       = tier(ax.Formality);
+    const eyeSpcX  = sT === 2 ? bs * 0.25 : bs * 0.34;
+    const eyeBaseY = sT === 2 ? bs * 0.08 : -bs * 0.04;
     const blink    = Math.sin(t * 0.4) > 0.98;
     const scaleY   = blink ? 0.08 : 1;
     // 0 = center, 1 = fully up-right
@@ -226,6 +214,30 @@ export default function PallyCanvas({
       }
 
       ctx.restore();
+    }
+
+    // ── 눈썹 (Intimacy → acquaint=한쪽만 올린 눈썹 → buddy=부드러운 아치 → bestie=반듯한 일자) ──
+    const iT     = tier(ax.Intimacy);
+    const browY  = eyeBaseY - bs * 0.3;
+    const browHw = bs * 0.12;
+    ctx.strokeStyle = '#3a2a1a';
+    ctx.lineCap     = 'round';
+    ctx.lineWidth   = bs * (iT === 2 ? 0.055 : 0.045);
+    for (const side of [-1, 1]) {
+      const bx = side * eyeSpcX;
+      ctx.beginPath();
+      if (iT === 0 && side === 1) {
+        // the right brow is raised and tilted up toward the outside
+        ctx.moveTo(bx - browHw, browY - bs * 0.02);
+        ctx.lineTo(bx + browHw, browY - bs * 0.12);
+      } else if (iT === 1) {
+        ctx.moveTo(bx - browHw, browY);
+        ctx.quadraticCurveTo(bx, browY - bs * 0.1, bx + browHw, browY);
+      } else {
+        ctx.moveTo(bx - browHw, browY);
+        ctx.lineTo(bx + browHw, browY);
+      }
+      ctx.stroke();
     }
 
     ctx.restore();

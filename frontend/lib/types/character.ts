@@ -44,12 +44,14 @@ export const DEFAULT_AXES: Axes = {
 // 캐릭터 시각 파라미터 (CharacterParams)
 // matrix_engine.py compute_character() 반환값 + 시각 디자인 스펙 확장
 //
-// 시각 매핑 스펙 (PM Frame 254 이미지 기준, 2026-08-15 PallyCanvas.tsx와 동기화):
-//   Energy    → spikiness (몸통 모양): 0~33=사각(calm), 34~66=별(lively), 67~100=선버스트(energetic)
-//   Formality → borderRadius: 0~33=둥긂(blunt, radius 100), 34~66=중간(casual, radius 40), 67~100=각짐(formal, radius 0)
-//   Curiosity → eyeType: 'small'(indifferent, 0~33) | 'large'(curious, 34~66) | 'glowing'(Inquisitive, 67~100)
-//   Intimacy  → bodyColor: 파랑(0) → 노랑(50) → 빨강(100)
-//   Humor     → animationSpeed: 'slow'(serious, 0~33) | 'medium'(funny, 34~66) | 'fast'(ridiculous, 67~100)
+// 시각 매핑 — 최종 (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14, PallyCanvas.tsx가 기준):
+//   Intimacy  → 눈썹: 0~33=한쪽만 올린 눈썹(acquaint), 34~66=부드러운 아치(buddy), 67~100=반듯한 일자(bestie)
+//   Energy    → 몸 모양: 0~33=원(calm), 34~66=둥근 사각(lively), 67~100=8각 별(energetic)
+//   Curiosity → 몸 색상, 연속: 파랑(0) → 노랑(50) → 빨강(100)
+//   Formality → 눈: 0~33=단순한 점(blunt), 34~66=흰자+동공(casual), 67~100=반짝이는 눈(formal)
+//   Humor     → 전신 움직임: 비활성(고정 bob)
+// 아래 axesToCharacterParams 의 필드 이름(spikiness/borderRadius/eyeType/...)은 예전 매핑 기준이며
+// 렌더러는 이 함수를 쓰지 않는다.
 // ---------------------------------------------------------------------------
 
 export interface CharacterParams {
