@@ -4,6 +4,7 @@ from ai.reply_segments import MAX_REPLY_CHARS, build_reply, parse_payload
 
 GOOD = {
     "reaction": "Oh, you're on a diet?",
+    "corrected_expr": "you're on a diet",
     "own_remark": "I skip lunch sometimes too.",
     "new_expr": "skip lunch",
     "question": "What do you eat for dinner?",
@@ -20,8 +21,36 @@ def test_pieces_become_spans_that_cover_the_whole_reply():
     assert built.text == "Oh, you're on a diet? I skip lunch sometimes too. What do you eat for dinner?"
     assert "".join(segment["text"] for segment in built.segments) == built.text
     assert [segment["kind"] for segment in built.segments] == [
-        "correction", "plain", "own_remark", "new_expr", "own_remark", "plain", "question",
+        "plain", "correction", "plain", "plain", "own_remark", "new_expr", "own_remark",
+        "plain", "question",
     ]
+
+
+def test_only_the_corrected_words_are_marked_not_the_whole_sentence():
+    """주황은 고쳐준 표현만 덮는다. 문장 전체를 칠하면 사용자가 어디를 틀렸는지
+    알 수 없고, 인사말("Oh,")까지 교정으로 보이게 된다."""
+    built = build_reply(GOOD)
+    marked = [s["text"] for s in built.segments if s["kind"] == "correction"]
+
+    assert marked == ["you're on a diet"]
+    assert "Oh, " not in marked[0]
+    # reaction 의 나머지는 평범한 말이다
+    plain_before = built.segments[0]
+    assert plain_before["kind"] == "plain" and plain_before["text"] == "Oh, "
+
+
+def test_a_correct_sentence_gets_no_orange_at_all():
+    """사용자가 틀리지 않았으면 교정 구간이 없다 — 칠하면 하지도 않은 교정을 배운다."""
+    built = build_reply({**GOOD, "reaction": "You went to the beach?", "corrected_expr": ""})
+
+    assert not [s for s in built.segments if s["kind"] == "correction"]
+    assert "".join(s["text"] for s in built.segments) == built.text
+
+
+def test_a_correction_the_model_did_not_actually_say_is_rejected():
+    """corrected_expr 는 reaction 안의 구간이어야 한다. 아니면 Pally 가 말하지
+    않은 표현에 색이 칠해진다."""
+    assert build_reply({**GOOD, "corrected_expr": "you are on a diet"}) is None
 
 
 def test_new_expression_is_marked_inside_pallys_own_sentence():
@@ -61,7 +90,8 @@ def test_missing_braces_are_recovered_but_nameless_values_are_not():
     않는다 — 조용히 엉뚱한 구간에 색이 칠해진다.
     """
     recovered = parse_payload(
-        '"reaction": "You are tired?",\n"own_remark": "I feel tired today too.",\n'
+        '"reaction": "You are tired?",\n"corrected_expr": "You are tired",\n'
+        '"own_remark": "I feel tired today too.",\n'
         '"new_expr": "feel tired",\n"question": "Did you sleep well?"'
     )
 
