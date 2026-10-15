@@ -22,7 +22,6 @@ export function EnergyBaselineRegistration({ onReady }: { onReady: () => void })
   const requestKey = useRef<string | null>(null);
 
   const recorder = useRecorder({
-    enableTranscript: false,
     onStart: () => { setRecording(true); setBusy(false); },
     onStop: (blob) => {
       if (!mounted.current) return;

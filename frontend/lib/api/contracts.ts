@@ -51,7 +51,7 @@ export interface FeedbackItem {
   replacement?: string;
 }
 
-export type ApiWarningCode = "tts_failed" | "feedback_failed" | "traits_update_failed";
+export type ApiWarningCode = "tts_failed" | "feedback_failed" | "traits_update_failed" | "energy_unavailable";
 
 export interface ApiWarning {
   code: ApiWarningCode;
@@ -112,7 +112,15 @@ export interface OpenerResponse {
 
 export interface ConversationCompleteResponse extends ConversationMutationResponse {
   warnings: ApiWarning[];
+  // 음성 Energy 를 켰을 때만 온다. 꺼져 있으면 서버가 아예 보내지 않는다.
+  current_axes?: Axes;
+  energy?: { status: string; score: number | null; reason: string | null };
 }
+
+// 평소 목소리 기준 등록 상태. disabled 면 기능이 꺼진 서버라 등록 화면을 띄우지 않는다.
+export type EnergyBaselineResponse =
+  | { status: "ready"; baseline: { range_st: number; valid_clips: 3; method_version: string } }
+  | { status: "required" | "disabled"; baseline: null };
 
 export interface ConversationListResponse {
   items: ConversationListItem[];
@@ -311,6 +319,8 @@ export interface GetConversationInput {
 }
 
 export interface PallyApi {
+  getEnergyBaseline(): Promise<EnergyBaselineResponse>;
+  registerEnergyBaseline(audio: [Blob, Blob, Blob], idempotencyKey: string): Promise<EnergyBaselineResponse>;
   getProfile(): Promise<ProfileResponse>;
   getProfileAvatar(): Promise<ProfileAvatarResponse>;
   onboard(input: OnboardingInput): Promise<ProfileResponse>;
