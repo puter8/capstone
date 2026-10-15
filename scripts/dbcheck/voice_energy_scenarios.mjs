@@ -129,7 +129,37 @@ const marked = await q(
   [full]);
 check('기존 피드백 표시 로직이 그대로 돈다', marked[0].n === 5, JSON.stringify(marked));
 
-console.log('\n6. 타인 접근');
+console.log('\n6. 사용자 단위 직렬화 (advisory lock)');
+// 같은 사용자의 서로 다른 대화가 동시에 끝나면 둘 다 같은 "직전 Energy" 를 읽고
+// 각자 스냅샷을 쓸 수 있다. 세션 락은 대화가 다르면 소용없어 사용자 키로 잠근다.
+const lockKey = (await q(`select hashtextextended($1,0) as k`, [USER]))[0].k;
+const sameKey = (await q(`select hashtextextended($1,0) as k`, [USER]))[0].k;
+const otherKey = (await q(`select hashtextextended($1,0) as k`, [OTHER]))[0].k;
+check('같은 사용자는 같은 락 키로 줄 선다', lockKey === sameKey, `${lockKey} vs ${sameKey}`);
+check('다른 사용자는 서로 막지 않는다', lockKey !== otherKey, `${lockKey} vs ${otherKey}`);
+// profiles 를 잠그는 대안이 왜 안전하지 않은지: 온보딩 전에는 행이 없어 0건이 잠긴다.
+const noProfile = '33333333-3333-3333-3333-333333333333';
+const wouldLock = await q(`select id from public.profiles where id=$1 for update`, [noProfile]);
+check('프로필이 없는 사용자도 직렬화된다 (advisory 라 행이 필요 없다)',
+  wouldLock.length === 0,
+  `profiles 행 ${wouldLock.length}개 — for update 였다면 아무것도 잠기지 않았을 조건`);
+const twoSessions = [await newSession(USER), await newSession(USER)];
+for (const s of twoSessions) {
+  for (const r of [4.90, 4.91, 4.92, 4.93, 4.94]) {
+    const id = await addTurn(s, USER, AXES, pending(r));
+    const c = await q(`select voice_energy->>'claim_token' as token from public.claim_voice_energy_job()`);
+    await q(`select public.finish_voice_energy_job($1,$2,$3::jsonb)`, [id, c[0].token, JSON.stringify(ready(r))]);
+  }
+}
+const scores = [];
+for (const s of twoSessions) {
+  scores.push((await q(`select public.complete_conversation_with_energy($1,$2,0) as row`, [s, USER]))[0].row.energy.score);
+}
+const snaps = (await q(
+  `select count(*)::int as n from public.voice_energy_snapshots where session_id = any($1)`, [twoSessions]))[0].n;
+check('같은 사용자의 두 대화를 종료하면 스냅샷이 각각 하나씩', snaps === 2, `스냅샷 ${snaps}개 / 점수 ${scores}`);
+
+console.log('\n7. 타인 접근');
 const stolen = await db.query(`select public.complete_conversation_with_energy($1,$2,0)`, [full, OTHER])
   .then(() => null).catch((e) => e.message);
 check('남의 대화는 종료할 수 없음', String(stolen).includes('conversation_not_found'), String(stolen));

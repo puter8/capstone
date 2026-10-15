@@ -99,7 +99,13 @@ begin
   return to_jsonb(s)||jsonb_build_object('current_axes',snap.current_axes,'energy',snap.energy);
  end if;
  -- Serialize per-user baseline/snapshot decisions across concurrently closed sessions.
- perform 1 from auth.users where id=p_user_id for update;
+ -- The session row lock above does not cover this: two different sessions of the
+ -- same user read the same "previous Energy" below. An advisory lock keys on the
+ -- user without touching auth.users, whose rows Supabase Auth updates on sign-in
+ -- and token refresh - holding those would stall authentication for that user.
+ -- It also needs no row to exist, unlike locking profiles, which is absent until
+ -- onboarding completes and would silently serialize nothing.
+ perform pg_advisory_xact_lock(hashtextextended(p_user_id::text,0));
  select (current_axes->>'Energy')::integer into previous from public.voice_energy_snapshots
  where user_id=p_user_id order by created_at desc,session_id desc limit 1;
  previous:=coalesce(previous,50);
