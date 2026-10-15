@@ -48,10 +48,38 @@ W = [
 #   humor_level  기본값 10 → 기본적으로 진지한 상태
 BIAS = [50, 20, 10]
 
-# EMA 스무딩 계수 (0 < alpha <= 1)
-# alpha=0.3: 새 발화 30% + 이전 누적 70% → 급격한 캐릭터 변화 방지
-# → 사용자가 한 번 슬랭을 써도 캐릭터가 갑자기 바뀌지 않고 서서히 적응
+# EMA 스무딩 계수 (0 < alpha <= 1). alpha=0.7: 새 발화 70% + 이전 누적 30%.
+# 레거시 /api/chat·/api/feedback 경로만 쓴다. 대화 턴의 5축은 apply_cumulative 를 쓴다.
 DEFAULT_ALPHA = 0.7
+
+# "닮아가는 Pally" 누적 (2026-10-15 확정). 대화 하나가 한 표: 대화 안에서는 발화 점수를
+# 평균하고, 대화 사이에서는 Pally ← Pally + α·(대화 평균 − Pally) 로 누적한다.
+# α = max(1/(n+2), 0.2), n = 이전에 끝낸 대화 수 → 첫 대화 1/2, 둘째 1/3, … 이후 20%.
+# 초반에는 빨리 따라오고, 쌓이면 튀는 대화 하나에 크게 흔들리지 않는다.
+CUMULATIVE_FLOOR = 0.2
+
+
+def cumulative_alpha(completed_conversations: int) -> float:
+    """이번 대화가 Pally 에 반영되는 비율."""
+    if completed_conversations < 0:
+        raise ValueError(f"completed_conversations must be >= 0, got {completed_conversations}")
+    return max(1 / (completed_conversations + 2), CUMULATIVE_FLOOR)
+
+
+def apply_cumulative(state: dict, conversation_turns: list, completed_conversations: int) -> dict:
+    """대화 시작 시점의 Pally(state)에 이번 대화 발화 점수들의 평균을 α 만큼 반영한다.
+
+    대화 도중에는 지금까지의 발화로 계산한 값이 말투(persona)에 쓰이고, 대화가 끝나면
+    마지막 발화 시점의 값이 곧 다음 대화의 state 가 된다.
+    """
+    if not conversation_turns:
+        raise ValueError("at least one turn is required")
+    alpha = cumulative_alpha(completed_conversations)
+    keys = ["Formality", "Energy", "Intimacy", "Humor", "Curiosity"]
+    return {
+        k: round(state[k] + alpha * (sum(t[k] for t in conversation_turns) / len(conversation_turns) - state[k]))
+        for k in keys
+    }
 
 
 def compute_character(axes: dict) -> dict:

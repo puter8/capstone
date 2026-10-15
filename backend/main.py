@@ -37,7 +37,8 @@ if BACKEND_DIR not in sys.path:
 
 from ai.analyzer import analyze_utterance
 from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
-from ai.matrix_engine import apply_ema, compute_character, describe_character
+from ai.intimacy import compute_intimacy_from_access_days
+from ai.matrix_engine import apply_cumulative, apply_ema, compute_character, describe_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
@@ -2125,23 +2126,23 @@ async def create_turn(
     # The history sent to the AI must alternate user→reply; see _in_turn_order.
     prior_rows = _in_turn_order(prior.data or [])
     history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
-    current_axes = None
-    for m in reversed(prior_rows):
-        if m["role"] == "user" and m.get("axes"):
-            current_axes = m["axes"]
-            break
-    # 이 대화의 첫 발화면 직전에 끝낸 대화의 최종 5축에서 이어간다(대화 간 EMA 연결).
-    # 새 대화마다 백지에서 시작하면 "대화할수록 닮아간다"가 대화 사이에서 끊긴다.
-    if current_axes is None:
-        try:
-            current_axes = _carried_over_axes(sb, user_id)
-        except AppError:
-            _release_turn(sb, user_id)
-            raise
+    # 닮아가는 Pally: 대화 시작 시점의 Pally(지금까지 끝낸 대화의 누적)에 이번 대화
+    # 발화 평균을 α 만큼 반영한다(ai/matrix_engine.apply_cumulative). 끝낸 대화가 없으면
+    # 첫 Pally 와 같은 _INITIAL_AXES 에서 시작한다.
+    try:
+        state = _carried_over_axes(sb, user_id) or dict(_INITIAL_AXES)
+        completed = _completed_conversation_count(sb, user_id, conversation_id)
+        intimacy = _intimacy_from_access_days(sb, user_id)
+    except AppError:
+        _release_turn(sb, user_id)
+        raise
 
-    # 6. 5축 → EMA → character (분석 어댑터: rule|ml|hybrid, 기본 rule)
+    # 6. 5축 → 누적 → character (분석 어댑터: rule|ml|hybrid|researched, 기본 rule)
+    # 이번 대화의 앞선 발화도 같은 분석기로 다시 점수를 낸다(원점수는 저장하지 않으므로).
     raw_axes = _analyze_axes(transcript)
-    smoothed = apply_ema(current_axes, raw_axes) if current_axes else raw_axes
+    earlier = [_analyze_axes(m["transcript"]) for m in prior_rows if m["role"] == "user" and m.get("transcript")]
+    smoothed = apply_cumulative(state, earlier + [raw_axes], completed)
+    smoothed["Intimacy"] = intimacy
     if _voice_energy_enabled():
         # 음성 Energy 는 세션 종료 시 확정된다. 턴 중에는 직전 확정값을 유지해,
         # 아직 측정되지 않은 값이 텍스트 EMA 로 흔들리지 않게 한다.
@@ -2467,10 +2468,46 @@ def _axes_to_traits(axes: dict) -> list:
     return [labels[_axis_tier(axes[axis])] for axis, labels in _TRAIT_TIERS]
 
 
+def _completed_conversation_count(sb, user_id: str, conversation_id: str) -> int:
+    """이번 대화를 뺀, 이미 끝낸 대화 수 — 누적 가중치 α 를 정한다."""
+    try:
+        res = (sb.table("sessions").select("id", count="exact").eq("user_id", user_id)
+               .not_.is_("ended_at", "null").neq("id", conversation_id).execute())
+    except Exception as e:
+        logging.error(f"completed conversation count failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load conversation history")
+    if res.count is None:
+        raise AppError(503, "persistence_failed", "Failed to load conversation history")
+    return res.count
+
+
+def _intimacy_from_access_days(sb, user_id: str) -> int:
+    """친밀도 = 앱에 접속한 날짜 수(KST 하루 1번, 2026-10-15 확정).
+
+    홈이 열릴 때마다 쌓이는 app_session_started 를 날짜로 묶어 새로고침이 점수를
+    부풀리지 않게 한다. 서버가 받은 시각(received_at)을 기준으로 센다.
+    """
+    days, start, page = set(), 0, 1000
+    while True:
+        try:
+            res = (sb.table("activity_events").select("received_at").eq("user_id", user_id)
+                   .eq("event_type", "app_session_started").order("received_at")
+                   .range(start, start + page - 1).execute())
+        except Exception as e:
+            logging.error(f"access day read failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to load account activity")
+        if res.data is None:
+            raise AppError(503, "persistence_failed", "Failed to load account activity")
+        days.update(datetime.fromisoformat(r["received_at"]).astimezone(_KST).date() for r in res.data)
+        if len(res.data) < page:
+            return compute_intimacy_from_access_days(len(days))
+        start += page
+
+
 def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
     """Pally 의 현재 모습 = 가장 최근에 끝낸 대화의 최종 5축 (profiles.current_axes).
 
-    홈이 그리는 Pally, 마이페이지 태그, 다음 대화의 EMA 출발점이 모두 이 값을 쓴다 —
+    홈이 그리는 Pally, 마이페이지 태그, 다음 대화의 누적 출발점이 모두 이 값을 쓴다 —
     기준이 하나라 세 화면이 어긋나지 않는다. 대화를 끝낼 때 저장하므로(태그와 같은
     시점, _refresh_profile_traits) 지난 대화를 이어 하는 동안에도 값이 바뀌지 않는다.
     예전처럼 끝난 대화에서 매번 다시 계산하면, 방금 끝낸 대화를 이어 하는 순간 그
@@ -2744,7 +2781,7 @@ async def complete_conversation(
 def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
     """방금 끝낸 대화의 최종 5축으로 마이페이지 성향 태그와 Pally 의 현재 모습을 갱신한다.
 
-    대화 간 EMA 가 이어지므로 이 값이 곧 지금까지의 누적 상태다. 태그와 모습은 같은
+    대화 간 누적(apply_cumulative)이 이어지므로 이 값이 곧 지금까지의 누적 상태다. 태그와 모습은 같은
     요청으로 함께 저장해 서로 어긋나지 않는다. 발화가 없는 대화는 갱신하지 않는다.
     대화 종료 자체는 이미 성공했으므로 실패해도 종료를 되돌리지 않고 False 를 돌려
     응답 warnings 로 알린다(에러 로그는 남긴다).
