@@ -109,6 +109,9 @@ def install_turn(monkeypatch, baseline=BASELINE):
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
     monkeypatch.setattr(main, "_reserve_turn", Mock(return_value=1))
     monkeypatch.setattr(main, "_analyze_axes", Mock(return_value={**AXES, "Energy": 100}))
+    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
+    monkeypatch.setattr(main, "_completed_conversation_count", lambda *_: 0)
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: AXES["Intimacy"])
     monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("I like this conversation", 1)))
     monkeypatch.setattr(main, "_call_gemini_chat", AsyncMock(return_value="What do you like about it?"))
     monkeypatch.setattr(main, "_call_google_tts", AsyncMock(return_value="audio"))
@@ -284,3 +287,16 @@ def test_warm_up_runs_the_measurement_once_and_never_raises(monkeypatch):
 
     monkeypatch.setattr(worker_module, "measure_wav", Mock(side_effect=RuntimeError("librosa missing")))
     worker_module.warm_up()  # 예외가 밖으로 나가면 서버가 못 뜬다
+
+
+def test_intimacy_counts_kst_days_not_page_loads():
+    events = query()
+    events.range.return_value = events
+    # 23:00 KST on 10-14, then 01:00 and 11:00 KST on 10-15 -> two access days
+    events.execute.return_value = SimpleNamespace(data=[
+        {"received_at": "2026-10-14T14:00:00+00:00"},
+        {"received_at": "2026-10-14T16:00:00+00:00"},
+        {"received_at": "2026-10-15T02:00:00+00:00"}])
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"activity_events": events}[name]
+    assert main._intimacy_from_access_days(sb, "user-1") == 15  # 100*2/12 = 16.7 -> 15
