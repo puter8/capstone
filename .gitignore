@@ -61,3 +61,7 @@ data/models/
 data/fixtures/pally_purpose_v1_blind_eval_slot*.xlsx
 data/fixtures/pally_purpose_v1_blind_eval_mapping.json
 data/fixtures/pally_purpose_v1_responses.jsonl
+
+# 마이그레이션 검증용 로컬 의존성 (scripts/dbcheck/README.md 참고)
+scripts/dbcheck/node_modules/
+scripts/dbcheck/package*.json
