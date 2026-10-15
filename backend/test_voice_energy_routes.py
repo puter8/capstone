@@ -147,6 +147,15 @@ def test_missing_baseline_stops_before_stt_quota_or_insert(monkeypatch):
     messages.insert.assert_not_called()
 
 
+def test_missing_baseline_is_allowed_when_not_required(monkeypatch):
+    monkeypatch.setenv("PALLY_VOICE_BASELINE_REQUIRED", "false")
+    _, messages = install_turn(monkeypatch, baseline=None)
+    asyncio.run(main.create_turn("conversation-1", Request({"type": "http"}), upload(pcm_wav()), "user-1", "key"))
+    user, _ = messages.insert.call_args.args[0]
+    assert user["voice_energy"] is None  # no baseline -> nothing queued for pitch measurement
+    main._reserve_turn.assert_called_once()
+
+
 @pytest.mark.parametrize("energy", [{"status": "ready", "score": 75, "reason": None},
     {"status": "retained", "score": 75, "reason": "insufficient_valid_clips"}])
 def test_complete_uses_atomic_energy_rpc_and_returns_immutable_final_snapshot(monkeypatch, energy):
