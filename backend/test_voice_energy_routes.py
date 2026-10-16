@@ -42,7 +42,7 @@ def pcm_wav():
 
 def query():
     result = Mock()
-    for method in ("select", "eq", "order", "insert", "limit", "update", "is_"):
+    for method in ("select", "eq", "order", "insert", "limit", "update", "is_", "range"):
         getattr(result, method).return_value = result
     result.not_ = result
     return result
@@ -109,8 +109,7 @@ def install_turn(monkeypatch, baseline=BASELINE):
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
     monkeypatch.setattr(main, "_reserve_turn", Mock(return_value=1))
     monkeypatch.setattr(main, "_analyze_axes", Mock(return_value={**AXES, "Energy": 100}))
-    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
-    monkeypatch.setattr(main, "_completed_conversation_count", lambda *_: 0)
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
     monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: AXES["Intimacy"])
     monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("I like this conversation", 1)))
     monkeypatch.setattr(main, "_call_gemini_chat", AsyncMock(return_value="What do you like about it?"))
@@ -132,6 +131,7 @@ def test_turn_durably_inserts_pending_audio_without_pitch_inference_and_preserve
     user, pally = messages.insert.call_args.args[0]
     assert user["axes"]["Energy"] == 75
     assert user["voice_energy_epoch"] == 2
+    assert user["raw_axes"] == {**AXES, "Energy": 100}  # the vote uses the analyzer score, not the display
     pending = user["voice_energy"]
     assert pending["status"] == "pending"
     assert pending["audio_sha256"] == hashlib.sha256(audio).hexdigest()
@@ -167,7 +167,10 @@ def test_complete_uses_atomic_energy_rpc_and_returns_immutable_final_snapshot(mo
     sb = Mock()
     sb.rpc.return_value.execute.return_value = SimpleNamespace(data=closed)
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
-    monkeypatch.setattr(main, "_owned_session", Mock(side_effect=[opened, closed]))
+    voted = {**closed, "axes_contribution": {"mean": AXES, "turns": 1, "first_completed_at": "now"}}
+    monkeypatch.setattr(main, "_owned_session", Mock(side_effect=[opened, voted]))
+    record = Mock(return_value=1)
+    monkeypatch.setattr(main, "_record_vote", record)
     refresh = Mock(return_value=True)
     monkeypatch.setattr(main, "_refresh_profile_traits", refresh)
     measure = Mock(side_effect=AssertionError("No extraction during completion"))
@@ -182,32 +185,100 @@ def test_complete_uses_atomic_energy_rpc_and_returns_immutable_final_snapshot(mo
     asyncio.run(run())
     for call in sb.rpc.call_args_list:
         assert call.args == ("complete_conversation_with_energy", {"p_conversation_id": "conversation-1", "p_user_id": "user-1", "p_expected_reopen_count": 2})
-    refresh.assert_called_once_with(sb, "user-1", "conversation-1")
+    # first close only: before closing (recoverable) and after (exact); the retry does not vote again
+    assert record.call_args_list == [((sb, "user-1", "conversation-1", None),)] * 2
+    refresh.assert_called_once_with(sb, "user-1")
     measure.assert_not_called()
 
 
-def test_history_carryover_and_profile_traits_use_same_final_axes(monkeypatch):
-    """세션 종료 시 확정된 축이 History 표시·마이페이지 태그·다음 대화 출발점에
-    모두 같은 값으로 쓰여야 한다.
+def vote(x, at):
+    return {"mean": {k: x for k in AXES}, "turns": 1, "first_completed_at": at}
 
-    출발점은 profiles.current_axes 한 곳에서 읽으므로(기준이 하나), 확정 스냅샷은
-    종료 시 거기에 기록돼야 세 화면이 어긋나지 않는다. 마지막 발화의 텍스트 축
-    (Energy 5)이 아니라 확정값(Energy 75)이 쓰이는지 확인한다.
-    """
-    snapshots, messages, profiles = query(), query(), query()
-    snapshots.execute.return_value = SimpleNamespace(data=[{"current_axes": AXES}])
-    messages.execute.return_value = SimpleNamespace(data=[{"axes": {**AXES, "Energy": 5}}])
-    profiles.execute.return_value = SimpleNamespace(data=[{"current_axes": AXES}])
+
+def test_record_vote_is_the_raw_mean_and_keeps_a_reopened_conversations_slot():
+    messages, sessions = query(), query()
+    messages.range.return_value = messages
+    messages.execute.return_value = SimpleNamespace(data=[
+        {"id": "m1", "transcript": "a", "raw_axes": {**AXES, "Humor": 0}},
+        {"id": "m2", "transcript": "b", "raw_axes": {**AXES, "Humor": 100}}])
+    sessions.execute.return_value = SimpleNamespace(data=[{"id": "conversation-1"}])
     sb = Mock()
-    sb.table.side_effect = lambda name: {"voice_energy_snapshots": snapshots, "messages": messages, "profiles": profiles}[name]
-    monkeypatch.setattr(main.voice_energy, "latest_snapshot", Mock(return_value={"current_axes": AXES}))
+    sb.table.side_effect = lambda name: {"messages": messages, "sessions": sessions}[name]
+    previous = vote(0, "2026-10-01T00:00:00+00:00")
+    assert main._record_vote(sb, "user-1", "conversation-1", previous) == 2
+    recorded = sessions.update.call_args.args[0]["axes_contribution"]
+    assert recorded == {"mean": {**AXES, "Humor": 50.0}, "turns": 2, "first_completed_at": previous["first_completed_at"]}
 
-    assert main._session_display_axes(sb, {"id": "conversation-1"}, [{"role": "user", "axes": {**AXES, "Energy": 5}}]) == AXES
-    assert main._refresh_profile_traits(sb, "user-1", "conversation-1") is True
-    stored = profiles.update.call_args.args[0]
-    assert stored["current_axes"] == AXES          # 확정값이 기준에 기록된다
-    assert stored["traits"] == main._axes_to_traits(AXES)
-    assert main._carried_over_axes(sb, "user-1") == AXES  # 다음 대화도 같은 값에서 출발
+
+def test_record_vote_that_matches_no_row_is_a_failure_not_a_silent_success():
+    messages, sessions = query(), query()
+    messages.range.return_value = messages
+    messages.execute.return_value = SimpleNamespace(data=[])
+    sessions.execute.return_value = SimpleNamespace(data=[])
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"messages": messages, "sessions": sessions}[name]
+    with pytest.raises(main.AppError) as caught:
+        main._record_vote(sb, "user-1", "conversation-1", None)
+    assert caught.value.code == "persistence_failed"
+
+
+def completed_sessions(rows):
+    sessions = query()
+    sessions.range.return_value = sessions
+    sessions.execute.return_value = SimpleNamespace(data=rows)
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"sessions": sessions}[name]
+    return sb
+
+
+def test_cumulative_state_replays_votes_in_first_completed_order():
+    sb = completed_sessions([
+        {"id": "open", "ended_at": None, "axes_contribution": {"mean": {k: 100 for k in AXES}, "turns": 1,
+                                                               "first_completed_at": None}},
+        {"id": "b", "ended_at": "x", "axes_contribution": vote(100, "2026-10-02T00:00:00+00:00")},
+        {"id": "a", "ended_at": "x", "axes_contribution": vote(0, "2026-10-01T00:00:00+00:00")},
+        {"id": "empty", "ended_at": "2026-10-03T00:00:00+00:00",
+         "axes_contribution": {"mean": None, "turns": 0, "first_completed_at": None}}])
+    # a(0) with α=1/2, b(100) with α=1/3; the empty conversation moves nothing
+    first = {k: round(v / 2) for k, v in main._INITIAL_AXES.items()}
+    assert main._cumulative_state(sb, "user-1") == {k: round(first[k] + (100 - first[k]) / 3) for k in first}
+    # a new conversation goes last, after the empty one: n=3 -> α=1/5
+    then = main._cumulative_state(sb, "user-1", ("new", {k: 0 for k in AXES}, None))
+    assert then == {k: round(v * 4 / 5) for k, v in main._cumulative_state(sb, "user-1").items()}
+
+
+def test_reopened_conversation_is_replayed_in_its_original_slot_not_counted_twice():
+    rows = [{"id": "a", "ended_at": "x", "axes_contribution": vote(0, "2026-10-01T00:00:00+00:00")},
+            *[{"id": f"z{i}", "ended_at": "x", "axes_contribution": vote(0, f"2026-10-0{i + 2}T00:00:00+00:00")}
+              for i in range(3)],
+            {"id": "e", "ended_at": "x", "axes_contribution": vote(100, "2026-10-09T00:00:00+00:00")}]
+    final = main._cumulative_state(completed_sessions(rows), "user-1")
+    # Reopen "a" without changing its mean: the turn preview must equal the completed state.
+    others = [r for r in rows if r["id"] != "a"]
+    preview = main._cumulative_state(completed_sessions(others), "user-1",
+                                     ("a", {k: 0 for k in AXES}, "2026-10-01T00:00:00+00:00"))
+    assert preview == final
+
+
+def test_profile_refresh_rewrites_until_it_matches_the_latest_votes(monkeypatch):
+    """동시에 끝낸 다른 대화가 표를 더한 경우: 쓴 뒤 다시 계산한 값이 다르면 다시 쓴다."""
+    stale, fresh = {**AXES, "Formality": 25}, {**AXES, "Formality": 50}
+    monkeypatch.setattr(main, "_profile_axes", Mock(side_effect=[stale, fresh, fresh]))
+    profiles = query()
+    profiles.execute.return_value = SimpleNamespace(data=[{"id": "user-1"}])
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"profiles": profiles}[name]
+    assert main._refresh_profile_traits(sb, "user-1") is True
+    writes = [c.args[0] for c in profiles.update.call_args_list]
+    assert [w["current_axes"] for w in writes] == [stale, fresh]
+    assert writes[-1]["traits"] == main._axes_to_traits(fresh)
+
+
+def test_profile_axes_use_votes_access_days_and_latest_confirmed_energy(monkeypatch):
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: {**AXES, "Energy": 5, "Intimacy": 99})
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 35)
+    monkeypatch.setattr(main.voice_energy, "latest_snapshot", Mock(return_value={"current_axes": AXES}))
+    assert main._profile_axes(Mock(), "user-1") == {**AXES, "Intimacy": 35}
 
 
 @pytest.mark.parametrize("energy", [None, {"status": "ready", "score": 0, "reason": None}])
@@ -218,6 +289,7 @@ def test_invalid_completion_snapshot_is_not_reported_as_success(monkeypatch, ene
         **opened, "ended_at": "now", "current_axes": AXES, "energy": energy,
     })
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=1))
     monkeypatch.setattr(main, "_owned_session", Mock(return_value=opened))
     tasks = BackgroundTasks()
     with pytest.raises(main.AppError) as caught:
@@ -300,3 +372,60 @@ def test_intimacy_counts_kst_days_not_page_loads():
     sb = Mock()
     sb.table.side_effect = lambda name: {"activity_events": events}[name]
     assert main._intimacy_from_access_days(sb, "user-1") == 15  # 100*2/12 = 16.7 -> 15
+
+
+def test_axis_analysis_failure_refunds_the_turn_and_saves_nothing(monkeypatch):
+    _, messages = install_turn(monkeypatch)
+    monkeypatch.setattr(main, "_analyze_axes", Mock(side_effect=RuntimeError("model down")))
+    release = Mock()
+    monkeypatch.setattr(main, "_release_turn", release)
+    with pytest.raises(main.AppError) as caught:
+        asyncio.run(main.create_turn("conversation-1", Request({"type": "http"}), upload(pcm_wav()), "user-1", "key"))
+    assert caught.value.code == "analysis_failed"
+    release.assert_called_once()
+    messages.insert.assert_not_called()
+
+
+def test_reopening_keeps_the_first_completion_time_as_the_vote_slot(monkeypatch):
+    session = {"id": "conversation-1", "user_id": "user-1", "ended_at": "2026-10-01T00:00:00+00:00",
+               "reopen_count": 0, "axes_contribution": {"mean": AXES, "turns": 1, "first_completed_at": None}}
+    sessions = query()
+    sessions.execute.return_value = SimpleNamespace(data=[{**session, "ended_at": None}])
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"sessions": sessions}[name]
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_owned_session", lambda *_: session)
+    asyncio.run(main.reopen_conversation("conversation-1", "user-1", "key"))
+    update = sessions.update.call_args.args[0]
+    assert update["ended_at"] is None
+    assert update["axes_contribution"]["first_completed_at"] == "2026-10-01T00:00:00+00:00"
+
+
+def test_another_reopened_conversation_still_counts_while_it_is_open():
+    reopened = {"id": "a", "ended_at": None, "axes_contribution": vote(0, "2026-10-01T00:00:00+00:00")}
+    closed = {"id": "a", "ended_at": "2026-10-05T00:00:00+00:00", "axes_contribution": reopened["axes_contribution"]}
+    assert main._cumulative_state(completed_sessions([reopened]), "user-1") == \
+        main._cumulative_state(completed_sessions([closed]), "user-1")
+
+
+def test_reopening_a_legacy_conversation_without_a_vote_keeps_its_slot(monkeypatch):
+    session = {"id": "conversation-1", "user_id": "user-1", "ended_at": "2026-10-01T00:00:00+00:00",
+               "reopen_count": 0, "axes_contribution": None}
+    sessions = query()
+    sessions.execute.return_value = SimpleNamespace(data=[{**session, "ended_at": None}])
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"sessions": sessions}[name]
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_owned_session", lambda *_: session)
+    asyncio.run(main.reopen_conversation("conversation-1", "user-1", "key"))
+    assert sessions.update.call_args.args[0]["axes_contribution"] == {
+        "mean": None, "turns": 0, "first_completed_at": "2026-10-01T00:00:00+00:00"}
+
+
+def test_profile_refresh_that_matches_no_row_is_reported(monkeypatch):
+    monkeypatch.setattr(main, "_profile_axes", lambda *_: dict(AXES))
+    profiles = query()
+    profiles.execute.return_value = SimpleNamespace(data=[])
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"profiles": profiles}[name]
+    assert main._refresh_profile_traits(sb, "user-1") is False
