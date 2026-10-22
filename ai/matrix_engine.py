@@ -70,16 +70,40 @@ def apply_cumulative(state: dict, conversation_turns: list, completed_conversati
     """대화 시작 시점의 Pally(state)에 이번 대화 발화 점수들의 평균을 α 만큼 반영한다.
 
     대화 도중에는 지금까지의 발화로 계산한 값이 말투(persona)에 쓰이고, 대화가 끝나면
-    마지막 발화 시점의 값이 곧 다음 대화의 state 가 된다.
+    그 대화의 평균이 한 표로 기록된다(replay_cumulative).
     """
     if not conversation_turns:
         raise ValueError("at least one turn is required")
+    return _step(state, conversation_mean(conversation_turns), completed_conversations)
+
+
+def conversation_mean(conversation_turns: list) -> dict:
+    """한 대화의 표 = 발화 원점수 평균(반올림 전). 대화 하나가 몇 턴이든 한 표다."""
+    if not conversation_turns:
+        raise ValueError("at least one turn is required")
+    return {k: sum(t[k] for t in conversation_turns) / len(conversation_turns) for k in AXIS_KEYS}
+
+
+def replay_cumulative(initial: dict, votes: list) -> tuple:
+    """끝낸 대화의 표(votes, 처음 끝낸 순서)를 차례로 반영한 Pally 와 끝낸 대화 수.
+
+    None 은 발화가 없는 대화다 — 끝낸 대화 수에는 들지만 모습은 바꾸지 않는다.
+    매번 처음부터 다시 계산하므로, 다시 연 대화는 자기 자리의 표만 바뀌고
+    동시에 끝낸 두 대화가 서로의 반영을 덮어쓰지 않는다.
+    """
+    state = dict(initial)
+    for n, vote in enumerate(votes):
+        if vote is not None:
+            state = _step(state, vote, n)
+    return state, len(votes)
+
+
+AXIS_KEYS = ("Formality", "Energy", "Intimacy", "Humor", "Curiosity")
+
+
+def _step(state: dict, mean: dict, completed_conversations: int) -> dict:
     alpha = cumulative_alpha(completed_conversations)
-    keys = ["Formality", "Energy", "Intimacy", "Humor", "Curiosity"]
-    return {
-        k: round(state[k] + alpha * (sum(t[k] for t in conversation_turns) / len(conversation_turns) - state[k]))
-        for k in keys
-    }
+    return {k: round(state[k] + alpha * (mean[k] - state[k])) for k in AXIS_KEYS}
 
 
 def compute_character(axes: dict) -> dict:

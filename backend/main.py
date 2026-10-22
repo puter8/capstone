@@ -38,7 +38,7 @@ if BACKEND_DIR not in sys.path:
 from ai.analyzer import analyze_utterance
 from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
 from ai.intimacy import compute_intimacy_from_access_days
-from ai.matrix_engine import apply_cumulative, apply_ema, compute_character, describe_character
+from ai.matrix_engine import apply_ema, conversation_mean, replay_cumulative, compute_character, describe_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
@@ -2055,7 +2055,7 @@ async def create_turn(
 
     # 1. conversation 소유권 (타인 소유는 존재 숨김 → 404)
     try:
-        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count").eq("id", conversation_id).execute()
+        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution").eq("id", conversation_id).execute()
     except Exception as e:
         logging.error(f"turn session read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read conversation")
@@ -2118,31 +2118,42 @@ async def create_turn(
 
     # 5. 이전 이력 + 누적 axes 로드
     try:
-        prior = sb.table("messages").select("id, role, transcript, axes, created_at").eq("session_id", conversation_id).order("created_at").execute()
-    except Exception as e:
-        logging.error(f"turn history read failed: {e}")
-        _release_turn(sb, user_id)
-        raise AppError(503, "persistence_failed", "Failed to load history")
-    # The history sent to the AI must alternate user→reply; see _in_turn_order.
-    prior_rows = _in_turn_order(prior.data or [])
-    history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
-    # 닮아가는 Pally: 대화 시작 시점의 Pally(지금까지 끝낸 대화의 누적)에 이번 대화
-    # 발화 평균을 α 만큼 반영한다(ai/matrix_engine.apply_cumulative). 끝낸 대화가 없으면
-    # 첫 Pally 와 같은 _INITIAL_AXES 에서 시작한다.
-    try:
-        state = _carried_over_axes(sb, user_id) or dict(_INITIAL_AXES)
-        completed = _completed_conversation_count(sb, user_id, conversation_id)
-        intimacy = _intimacy_from_access_days(sb, user_id)
+        prior = _all_rows(
+            lambda a, b: (sb.table("messages").select("id, role, transcript, axes, raw_axes, created_at")
+                          .eq("session_id", conversation_id).order("created_at").order("id")
+                          .range(a, b).execute()),
+            "Failed to load history")
     except AppError:
         _release_turn(sb, user_id)
         raise
-
+    # The history sent to the AI must alternate user→reply; see _in_turn_order.
+    prior_rows = _in_turn_order(prior)
+    history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
     # 6. 5축 → 누적 → character (분석 어댑터: rule|ml|hybrid|researched, 기본 rule)
-    # 이번 대화의 앞선 발화도 같은 분석기로 다시 점수를 낸다(원점수는 저장하지 않으므로).
-    raw_axes = _analyze_axes(transcript)
-    earlier = [_analyze_axes(m["transcript"]) for m in prior_rows if m["role"] == "user" and m.get("transcript")]
-    smoothed = apply_cumulative(state, earlier + [raw_axes], completed)
-    smoothed["Intimacy"] = intimacy
+    # 앞선 발화는 저장된 원점수를 쓰고, 원점수 저장 전에 남긴 발화만 다시 분석한다.
+    try:
+        raw_axes = _analyze_axes(transcript)
+        earlier = [m.get("raw_axes") or _analyze_axes(m["transcript"])
+                   for m in prior_rows if m["role"] == "user" and m.get("transcript")]
+    except Exception:
+        logging.exception("turn axis analysis failed")
+        _release_turn(sb, user_id)
+        raise AppError(502, "analysis_failed", "Failed to analyze the speech style")
+    # 닮아가는 Pally: 끝낸 대화들의 표에 이번 대화의 표(지금까지 발화 평균)를 제자리에 넣어
+    # 다시 계산한다(_cumulative_state). 친밀도는 접속일 수로 덮는다.
+    previous_vote = session.get("axes_contribution")
+    try:
+        smoothed = _cumulative_state(sb, user_id, (
+            conversation_id, conversation_mean(earlier + [raw_axes]),
+            previous_vote["first_completed_at"] if previous_vote else None))
+        smoothed["Intimacy"] = _intimacy_from_access_days(sb, user_id)
+    except AppError:
+        _release_turn(sb, user_id)
+        raise
+    except Exception:
+        logging.exception("cumulative state failed")
+        _release_turn(sb, user_id)
+        raise AppError(503, "persistence_failed", "Failed to load Pally state")
     if _voice_energy_enabled():
         # 음성 Energy 는 세션 종료 시 확정된다. 턴 중에는 직전 확정값을 유지해,
         # 아직 측정되지 않은 값이 텍스트 EMA 로 흔들리지 않게 한다.
@@ -2207,6 +2218,7 @@ async def create_turn(
                 "role": "user",
                 "transcript": transcript,
                 "axes": smoothed,
+                "raw_axes": raw_axes,
                 "character": character,
                 "idempotency_key": idem_key,
                 "feedback": None,
@@ -2234,7 +2246,8 @@ async def create_turn(
             _release_turn(sb, user_id)
             try:
                 ex = sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute()
-            except Exception:
+            except Exception as reread_error:
+                logging.error("duplicate turn reread failed: %s", type(reread_error).__name__)
                 ex = None
             if ex and ex.data:
                 return _replayed_turn(sb, conversation_id, ex.data[0])
@@ -2468,17 +2481,100 @@ def _axes_to_traits(axes: dict) -> list:
     return [labels[_axis_tier(axes[axis])] for axis, labels in _TRAIT_TIERS]
 
 
-def _completed_conversation_count(sb, user_id: str, conversation_id: str) -> int:
-    """이번 대화를 뺀, 이미 끝낸 대화 수 — 누적 가중치 α 를 정한다."""
+def _all_rows(fetch, message: str) -> list:
+    """PostgREST 는 한 번에 최대 1000행만 돌려준다 — 끝까지 나눠 읽는다. fetch(start, end) 는 실행된 결과."""
+    rows, start, page = [], 0, 1000
+    while True:
+        try:
+            res = fetch(start, start + page - 1)
+        except Exception as e:
+            logging.error(f"{message}: {e}")
+            raise AppError(503, "persistence_failed", message)
+        if res.data is None:
+            raise AppError(503, "persistence_failed", message)
+        rows += res.data
+        if len(res.data) < page:
+            return rows
+        start += page
+
+
+def _cumulative_state(sb, user_id: str, current: Optional[tuple] = None) -> dict:
+    """닮아가는 Pally: 끝낸 대화의 표(sessions.axes_contribution)를 처음 끝낸 순서대로
+    다시 계산한 5축. 표가 없는 끝낸 대화(발화 없음)도 순서(누적 가중치 α 의 n)에는 든다.
+
+    current = (진행 중인 대화 id, 지금까지의 표, 처음 끝낸 시각 | None). 다시 연 대화는 자기
+    자리에서 표만 바뀌고, 처음 하는 대화는 맨 뒤에 놓인다 — 같은 대화가 두 번 반영되지 않는다.
+    """
+    rows = _all_rows(
+        lambda a, b: (sb.table("sessions").select("id, ended_at, axes_contribution")
+                      .eq("user_id", user_id).order("id").range(a, b).execute()),
+        "Failed to load conversation history")
+    # 한 번이라도 끝낸 대화: 지금 끝나 있거나, 다시 열면서 처음 끝낸 시각을 남긴 대화.
+    # 다시 연 다른 대화의 표도 그 대화가 끝날 때까지 그대로 센다.
+    votes = [(_vote_time(r), r["axes_contribution"]["mean"] if r["axes_contribution"] else None)
+             for r in rows if _was_completed(r) and (current is None or r["id"] != current[0])]
+    if current is not None:
+        _, mean, first_completed_at = current
+        votes.append((datetime.fromisoformat(first_completed_at) if first_completed_at
+                      else datetime.max.replace(tzinfo=timezone.utc), mean))
+    votes.sort(key=lambda v: v[0])
+    state, _ = replay_cumulative(_INITIAL_AXES, [mean for _, mean in votes])
+    return state
+
+
+def _was_completed(row: dict) -> bool:
+    return bool(row["ended_at"] or (row["axes_contribution"] and row["axes_contribution"]["first_completed_at"]))
+
+
+def _vote_time(row: dict) -> datetime:
+    # 다시 연 적 없는 대화는 DB 가 찍은 종료 시각이 곧 처음 끝낸 시각이다.
+    contribution = row["axes_contribution"]
+    first = contribution["first_completed_at"] if contribution else None
+    return datetime.fromisoformat(first or row["ended_at"])
+
+
+def _record_vote(sb, user_id: str, conversation_id: str, previous: Optional[dict]) -> int:
+    """이 대화의 표(발화 원점수 평균)를 기록하고 발화 수를 돌려준다. 종료 RPC 전에 부른다 —
+    실패하면 대화가 끝나지 않으므로 /complete 재시도로 그대로 복구된다. 처음 끝낸 시각은
+    종료 RPC 가 찍는 ended_at 을 쓰고, 다시 열 때 그 값을 first_completed_at 으로 옮긴다."""
+    msgs = _all_rows(
+        lambda a, b: (sb.table("messages").select("id, transcript, raw_axes")
+                      .eq("session_id", conversation_id).eq("role", "user")
+                      .order("created_at").order("id").range(a, b).execute()),
+        "Failed to load conversation turns")
     try:
-        res = (sb.table("sessions").select("id", count="exact").eq("user_id", user_id)
-               .not_.is_("ended_at", "null").neq("id", conversation_id).execute())
+        # 원점수를 저장하기 전에 남긴 발화만 다시 분석한다.
+        turns = [m["raw_axes"] or _analyze_axes(m["transcript"]) for m in msgs if m["transcript"]]
+    except Exception:
+        logging.exception("vote axis analysis failed")
+        raise AppError(502, "analysis_failed", "Failed to analyze the speech style")
+    vote = {"mean": conversation_mean(turns) if turns else None, "turns": len(turns),
+            "first_completed_at": previous["first_completed_at"] if previous else None}
+    try:
+        res = (sb.table("sessions").update({"axes_contribution": vote})
+               .eq("id", conversation_id).eq("user_id", user_id).execute())
     except Exception as e:
-        logging.error(f"completed conversation count failed: {e}")
-        raise AppError(503, "persistence_failed", "Failed to load conversation history")
-    if res.count is None:
-        raise AppError(503, "persistence_failed", "Failed to load conversation history")
-    return res.count
+        logging.error(f"conversation vote write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to record the conversation")
+    if not res.data:
+        logging.error("conversation vote write matched no row")
+        raise AppError(503, "persistence_failed", "Failed to record the conversation")
+    return len(turns)
+
+
+def _profile_axes(sb, user_id: str) -> dict:
+    """홈 Pally·마이페이지 태그·오프너가 쓰는 현재 모습 — 턴과 같은 규칙으로 계산한다:
+    표 누적 + 접속일 친밀도 + (음성 Energy 를 켜면) 마지막 확정 Energy."""
+    axes = _cumulative_state(sb, user_id)
+    axes["Intimacy"] = _intimacy_from_access_days(sb, user_id)
+    if _voice_energy_enabled():
+        try:
+            snapshot = voice_energy.latest_snapshot(sb, user_id)
+        except Exception as e:
+            logging.error(f"voice energy snapshot read failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to load voice energy state")
+        axes["Energy"] = snapshot["current_axes"]["Energy"] if snapshot else 50
+    return axes
 
 
 def _intimacy_from_access_days(sb, user_id: str) -> int:
@@ -2487,31 +2583,21 @@ def _intimacy_from_access_days(sb, user_id: str) -> int:
     홈이 열릴 때마다 쌓이는 app_session_started 를 날짜로 묶어 새로고침이 점수를
     부풀리지 않게 한다. 서버가 받은 시각(received_at)을 기준으로 센다.
     """
-    days, start, page = set(), 0, 1000
-    while True:
-        try:
-            res = (sb.table("activity_events").select("received_at").eq("user_id", user_id)
-                   .eq("event_type", "app_session_started").order("received_at")
-                   .range(start, start + page - 1).execute())
-        except Exception as e:
-            logging.error(f"access day read failed: {e}")
-            raise AppError(503, "persistence_failed", "Failed to load account activity")
-        if res.data is None:
-            raise AppError(503, "persistence_failed", "Failed to load account activity")
-        days.update(datetime.fromisoformat(r["received_at"]).astimezone(_KST).date() for r in res.data)
-        if len(res.data) < page:
-            return compute_intimacy_from_access_days(len(days))
-        start += page
+    rows = _all_rows(
+        lambda a, b: (sb.table("activity_events").select("received_at").eq("user_id", user_id)
+                      .eq("event_type", "app_session_started").order("received_at")
+                      .range(a, b).execute()),
+        "Failed to load account activity")
+    days = {datetime.fromisoformat(r["received_at"]).astimezone(_KST).date() for r in rows}
+    return compute_intimacy_from_access_days(len(days))
 
 
 def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
     """Pally 의 현재 모습 = 가장 최근에 끝낸 대화의 최종 5축 (profiles.current_axes).
 
-    홈이 그리는 Pally, 마이페이지 태그, 다음 대화의 누적 출발점이 모두 이 값을 쓴다 —
-    기준이 하나라 세 화면이 어긋나지 않는다. 대화를 끝낼 때 저장하므로(태그와 같은
-    시점, _refresh_profile_traits) 지난 대화를 이어 하는 동안에도 값이 바뀌지 않는다.
-    예전처럼 끝난 대화에서 매번 다시 계산하면, 방금 끝낸 대화를 이어 하는 순간 그
-    대화가 "끝난 대화"에서 빠져 Pally 가 이전 대화의 모습으로 바뀐다.
+    홈이 그리는 Pally, 마이페이지 태그, 새 대화의 오프너가 이 값을 쓴다. 대화를 끝낼 때
+    표에서 다시 계산해 저장한 캐시다(_refresh_profile_traits). 턴은 이 캐시 대신
+    _cumulative_state 로 매번 다시 계산한다 — 다시 연 대화가 자기 표를 두 번 쓰지 않게.
 
     말을 한 대화를 끝낸 적이 없으면 None (첫 발화 원점수로 시작).
     """
@@ -2718,6 +2804,11 @@ async def complete_conversation(
     warnings: list = []
 
     was_active = not session.get("ended_at")
+    # 닫기 전에 표를 남긴다 — 실패하면 닫지 않으므로 재시도로 복구된다. 예전에 표 없이
+    # 끝난 대화는 다시 끝낼 때 채운다.
+    needs_vote = was_active or session.get("axes_contribution") is None
+    if needs_vote:
+        _record_vote(sb, user_id, conversation_id, session.get("axes_contribution"))
     try:
         # 음성 Energy 를 켜면 종료와 Energy 확정을 한 트랜잭션에서 처리하는 RPC 를 쓴다.
         rpc_name = "complete_conversation_with_energy" if _voice_energy_enabled() else "complete_conversation_with_feedback"
@@ -2752,8 +2843,18 @@ async def complete_conversation(
     if _voice_energy_enabled() and session.get("energy", {}).get("status") != "ready":
         warnings.append({"code": "energy_unavailable",
                          "message": "음성 정보가 부족하거나 분석이 끝나지 않아 이번 대화의 에너지는 갱신하지 않았어요."})
-    if was_active:
-        if not _refresh_profile_traits(sb, user_id, conversation_id):
+    turn_count = 0
+    if needs_vote:
+        # 닫힌 대화에는 턴이 더 들어오지 않는다 — 닫기 직전에 저장된 턴까지 담아 다시 기록한다.
+        # 실패해도 닫기 전 표가 남아 있으니 종료는 그대로 두고 경고만 준다.
+        try:
+            turn_count = _record_vote(sb, user_id, conversation_id, session.get("axes_contribution"))
+        except AppError:
+            warnings.append({"code": "traits_update_failed",
+                             "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
+    # 발화가 없는 대화는 모습을 바꾸지 않는다.
+    if turn_count:
+        if not _refresh_profile_traits(sb, user_id):
             warnings.append({"code": "traits_update_failed",
                              "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
 
@@ -2778,31 +2879,34 @@ async def complete_conversation(
            if _voice_energy_enabled() else {})}
 
 
-def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
-    """방금 끝낸 대화의 최종 5축으로 마이페이지 성향 태그와 Pally 의 현재 모습을 갱신한다.
+def _refresh_profile_traits(sb, user_id: str) -> bool:
+    """누적을 표에서 다시 계산해 마이페이지 성향 태그와 Pally 의 현재 모습
+    (profiles.current_axes, 캐시)을 같은 요청으로 갱신한다.
 
-    대화 간 누적(apply_cumulative)이 이어지므로 이 값이 곧 지금까지의 누적 상태다. 태그와 모습은 같은
-    요청으로 함께 저장해 서로 어긋나지 않는다. 발화가 없는 대화는 갱신하지 않는다.
     대화 종료 자체는 이미 성공했으므로 실패해도 종료를 되돌리지 않고 False 를 돌려
-    응답 warnings 로 알린다(에러 로그는 남긴다).
+    응답 warnings 로 알린다(에러 로그는 남긴다). 표는 남아 있으므로 다음 종료 때 바로잡힌다.
     """
     try:
-        msgs = (sb.table("messages").select("axes").eq("session_id", conversation_id)
-                .eq("role", "user").not_.is_("axes", "null")
-                .order("created_at", desc=True).limit(1).execute())
-        if not msgs.data:
-            return True
-        axes = msgs.data[0]["axes"]
-        if _voice_energy_enabled():
-            # 종료 시 확정된 Energy 가 포함된 축이 Pally 의 현재 모습이다.
-            axes = _session_display_axes(sb, {"id": conversation_id}, msgs.data)
-        sb.table("profiles").update({
-            "traits": _axes_to_traits(axes), "current_axes": axes, "updated_at": _now_iso(),
-        }).eq("id", user_id).execute()
+        axes = _profile_axes(sb, user_id)
+        # 동시에 끝낸 다른 대화가 더 오래된 표로 계산한 값을 나중에 쓸 수 있다 — 쓰고 나서
+        # 다시 계산해 같을 때까지 반복한다. 마지막으로 확인한 쪽이 모든 표를 본다.
+        for _ in range(3):
+            res = sb.table("profiles").update({
+                "traits": _axes_to_traits(axes), "current_axes": axes, "updated_at": _now_iso(),
+            }).eq("id", user_id).execute()
+            if not res.data:
+                raise RuntimeError("profile update matched no row")
+            # ponytail: 3번 안에 같아지지 않으면 False(경고)로 끝난다. 사용자별 잠금이 필요할 만큼
+            # 동시 종료가 잦아지면 DB 함수로 옮긴다.
+            latest = _profile_axes(sb, user_id)
+            if latest == axes:
+                return True
+            axes = latest
     except Exception as e:
         logging.error(f"profile traits refresh failed: {e}")
         return False
-    return True
+    logging.error("profile traits refresh did not settle after 3 writes")
+    return False
 
 
 @app.post("/api/conversations/{conversation_id}/reopen")
@@ -2819,10 +2923,14 @@ async def reopen_conversation(
         raise AppError(409, "conversation_already_active", "Conversation is already active")
 
     try:
+        vote = session.get("axes_contribution")
         res = sb.table("sessions").update({
             "ended_at": None,
             "reopened_at": _now_iso(),
             "reopen_count": (session.get("reopen_count") or 0) + 1,
+            # 지워지는 종료 시각을 표의 자리(처음 끝낸 시각)로 남긴다.
+            "axes_contribution": ({**vote, "first_completed_at": vote["first_completed_at"] or session["ended_at"]}
+                                  if vote else {"mean": None, "turns": 0, "first_completed_at": session["ended_at"]}),
         }).eq("id", conversation_id).eq("user_id", user_id).execute()
     except Exception as e:
         logging.error(f"reopen_conversation failed: {e}")
