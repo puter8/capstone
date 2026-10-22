@@ -1009,7 +1009,7 @@ async def _call_gemini_chat_segments(
             raw = " ".join(
                 p["text"] for p in candidate["content"]["parts"] if not p.get("thought", False)
             )
-            built = reply_segments.build_reply(reply_segments.parse_payload(raw))
+            built = reply_segments.build_reply(reply_segments.parse_payload(raw), utterance)
             if built:
                 return built.text, built.segments
             logging.warning("segment reply rejected (attempt %d)", attempt)
