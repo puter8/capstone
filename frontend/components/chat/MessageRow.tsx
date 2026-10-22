@@ -1,13 +1,22 @@
+import type { PallySegment } from '@/lib/api/contracts';
+import { cn } from '@/lib/utils';
+
 type Speaker = 'you' | 'pally';
 
 type MessageRowProps = {
   speaker: Speaker;
   transcript: string;
+  segments?: PallySegment[] | null;
   state?: 'default' | 'thinking' | 'listening';
   compact?: boolean;
 };
 
-export function MessageRow({ speaker, transcript, state = 'default' }: MessageRowProps) {
+export function MessageRow({
+  speaker,
+  transcript,
+  segments,
+  state = 'default',
+}: MessageRowProps) {
   const isPally = speaker === 'pally';
 
   if (state === 'listening') {
@@ -23,7 +32,10 @@ export function MessageRow({ speaker, transcript, state = 'default' }: MessageRo
   return (
     <div className="flex flex-col items-center gap-1 w-full text-center">
       <p
-        className={`font-sans text-[20px] font-bold leading-7 ${isPally ? 'text-accent' : 'text-primary'}`}
+        className={cn(
+          'font-sans text-[20px] font-bold leading-7',
+          isPally ? 'text-accent' : 'text-primary',
+        )}
       >
         {isPally ? 'Pally' : 'YOU'}
       </p>
@@ -31,9 +43,25 @@ export function MessageRow({ speaker, transcript, state = 'default' }: MessageRo
         <TypingDots />
       ) : (
         <p
-          className={`font-sans text-[16px] font-normal leading-6 ${isPally ? 'text-text' : 'text-text-tertiary'}`}
+          className={cn(
+            'font-sans text-[16px] font-normal leading-6 text-text',
+            isPally && 'whitespace-pre-wrap',
+          )}
         >
-          {transcript}
+          {isPally && segments
+            ? segments.map((segment, index) => (
+                <span
+                  key={index}
+                  data-segment-kind={segment.kind}
+                  className={cn(
+                    segment.kind === 'correction' && 'font-bold text-primary',
+                    segment.kind === 'new_expr' && 'font-bold text-accent',
+                  )}
+                >
+                  {segment.text}
+                </span>
+              ))
+            : transcript}
         </p>
       )}
     </div>

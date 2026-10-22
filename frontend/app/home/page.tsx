@@ -79,6 +79,7 @@ export default function HomePage() {
   // Controls stay disabled until the session and fresh data are verified, even when
   // the screen is already painted from the snapshot.
   const [isRestoring, setIsRestoring] = useState(true);
+  const [baselineAllowed, setBaselineAllowed] = useState(false);
   const [paintedFromSnapshot, setPaintedFromSnapshot] = useState(snapshot !== null);
   const [hasRestoredPally, setHasRestoredPally] = useState(snapshot !== null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -115,6 +116,15 @@ export default function HomePage() {
       const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
       const storedId = window.localStorage.getItem(CONVERSATION_KEY);
       const conversationId = requestedId ?? storedId;
+
+      const baseline = await pallyApi.getEnergyBaseline();
+      if (!active) return;
+      if (baseline.status === "required") {
+        if (conversationId) window.localStorage.setItem(CONVERSATION_KEY, conversationId);
+        router.replace("/onboarding?step=voice");
+        return;
+      }
+      setBaselineAllowed(true);
 
       const usagePromise = loadUsage(userId);
       const profilePromise = loadProfile(userId);
@@ -330,6 +340,7 @@ export default function HomePage() {
           sessionId: conversationId,
           role: "pally",
           transcript: response.pally.text,
+          segments: response.pally.segments,
           createdAt: response.created_at ?? new Date().toISOString(),
           feedback: { items: response.feedback, pending: response.feedback_pending },
         };
@@ -478,9 +489,9 @@ export default function HomePage() {
   }, [getAccumulatedAxes, recorder, revealAxes, router, stopPlayback]);
 
   const handlePressStart = useCallback(() => {
-    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally) return;
+    if (closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally || !baselineAllowed) return;
     void recorder.start();
-  }, [hasRestoredPally, isRestoring, quotaExhausted, recorder]);
+  }, [baselineAllowed, hasRestoredPally, isRestoring, quotaExhausted, recorder]);
 
   // Must run inside a user gesture so mobile browsers allow TTS playback afterwards.
   const unlockAudio = useCallback(() => {
@@ -503,7 +514,7 @@ export default function HomePage() {
   }, [recorder, unlockAudio]);
 
   const handleStartConversation = useCallback(() => {
-    if (pendingOpenerRef.current || closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally || state.messages.length > 0) return;
+    if (pendingOpenerRef.current || closingRef.current || quotaExhausted || isRestoring || !hasRestoredPally || !baselineAllowed || state.messages.length > 0) return;
     unlockAudio();
     const requestId = openerRequestRef.current + 1;
     openerRequestRef.current = requestId;
@@ -586,7 +597,7 @@ export default function HomePage() {
     void pending.finally(() => {
       if (pendingOpenerRef.current === pending) pendingOpenerRef.current = null;
     });
-  }, [ensureConversation, hasRestoredPally, isRestoring, playTts, quotaExhausted, router, state.messages.length, stopPlayback, unlockAudio, updateFromChatResponse]);
+  }, [baselineAllowed, ensureConversation, hasRestoredPally, isRestoring, playTts, quotaExhausted, router, state.messages.length, stopPlayback, unlockAudio, updateFromChatResponse]);
 
   const handleToggleHistory = useCallback(() => {
     if (!state.historyOpen) {
@@ -669,7 +680,7 @@ export default function HomePage() {
               <p className="mt-1 text-body text-text-tertiary">소리를 켜고 시작해 주세요 <span aria-hidden="true">🔊</span></p>
               <button
                 className="mt-4 h-20 w-[304px] max-w-full rounded-full bg-primary-soft p-2 transition-transform duration-150 active:scale-95 disabled:opacity-50"
-                disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted}
+                disabled={isClosing || isRestoring || !hasRestoredPally || !baselineAllowed || quotaExhausted}
                 onClick={() => { void handleStartConversation(); }}
                 type="button"
               >
@@ -680,7 +691,7 @@ export default function HomePage() {
             </div>
           ) : (
             <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${showChatBubble ? "top-[690px]" : "top-[calc(649px_+_min(0px,_100%_-_874px))]"}`}>
-              <TalkButton disabled={isClosing || isRestoring || !hasRestoredPally || quotaExhausted} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
+              <TalkButton disabled={isClosing || isRestoring || !hasRestoredPally || !baselineAllowed || quotaExhausted} onPressStart={handlePressStart} onPressStop={handlePressStop} rec={state.rec} />
             </div>
           )}
         </>

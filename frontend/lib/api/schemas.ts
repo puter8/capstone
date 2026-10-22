@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizePallySegments } from "@/lib/api/pally-segments";
 
 export const axesSchema = z.object({
   Formality: z.number().min(0).max(100),
@@ -89,6 +90,21 @@ export const conversationCompleteResponseSchema = conversationMutationResponseSc
   }).optional(),
 });
 
+const energyBaselinePromptsSchema = z.tuple([
+  z.string().trim().min(1),
+  z.string().trim().min(1),
+  z.string().trim().min(1),
+]);
+
+const energyBaselineLimitsSchema = z.object({
+  clips: z.literal(3),
+  min_seconds: z.number().finite().positive().max(30),
+  max_seconds: z.number().finite().positive().max(30),
+}).refine((limits) => limits.min_seconds <= limits.max_seconds, {
+  message: "The minimum recording length cannot exceed the maximum.",
+  path: ["min_seconds"],
+});
+
 export const energyBaselineResponseSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("ready"),
@@ -97,9 +113,16 @@ export const energyBaselineResponseSchema = z.discriminatedUnion("status", [
       valid_clips: z.literal(3),
       method_version: z.string().min(1),
     }),
+    prompts: energyBaselinePromptsSchema,
+    limits: energyBaselineLimitsSchema,
   }),
-  z.object({ status: z.literal("required"), baseline: z.null() }),
-  z.object({ status: z.literal("disabled"), baseline: z.null() }),
+  z.object({
+    status: z.literal("required"),
+    baseline: z.null(),
+    prompts: energyBaselinePromptsSchema,
+    limits: energyBaselineLimitsSchema,
+  }),
+  z.object({ status: z.literal("disabled"), baseline: z.null(), prompts: z.tuple([]), limits: z.null() }),
 ]);
 
 export const conversationListResponseSchema = z.object({
@@ -129,12 +152,22 @@ export const conversationDetailResponseSchema = z.object({
     status: z.enum(["processing", "completed", "partial", "failed"]),
     user_transcript: z.string().nullable(),
     pally_text: z.string().nullable(),
+    pally_segments: z.unknown().optional(),
     feedback: z.array(feedbackSchema),
     feedback_pending: z.boolean(),
     created_at: z.string(),
   })),
   next_cursor: z.string().nullable(),
-});
+}).transform((response) => ({
+  ...response,
+  turns: response.turns.map((turn, index) => ({
+    ...turn,
+    pally_segments: normalizePallySegments(turn.pally_segments, turn.pally_text, {
+      response: "conversation_detail",
+      path: ["turns", index, "pally_segments"],
+    }),
+  })),
+}));
 
 export const turnResponseSchema = z.object({
   conversation_id: z.string().uuid(),
@@ -142,7 +175,11 @@ export const turnResponseSchema = z.object({
   status: z.enum(["completed", "partial"]),
   replayed: z.boolean(),
   user: z.object({ transcript: z.string() }),
-  pally: z.object({ text: z.string(), audio: z.string().nullable() }),
+  pally: z.object({
+    text: z.string(),
+    audio: z.string().nullable(),
+    segments: z.unknown().optional(),
+  }),
   axes: axesSchema,
   character: characterSchema,
   feedback: z.array(feedbackSchema),
@@ -156,7 +193,16 @@ export const turnResponseSchema = z.object({
     resets_at: z.string(),
   }).optional(),
   created_at: z.string().nullable(),
-});
+}).transform((response) => ({
+  ...response,
+  pally: {
+    ...response.pally,
+    segments: normalizePallySegments(response.pally.segments, response.pally.text, {
+      response: "turn",
+      path: ["pally", "segments"],
+    }),
+  },
+}));
 
 export const usageResponseSchema = z.object({
   plan: z.enum(["free", "pro"]),

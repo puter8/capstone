@@ -59,3 +59,4 @@ jobs:
           npm run check:opener
           npm run check:home-snapshot
           npm run check:inline-feedback
+          npm run check:pally-segments

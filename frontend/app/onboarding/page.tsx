@@ -4,14 +4,15 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { MobileShell } from "@/components/layout/MobileShell";
+import { EnergyBaselineRegistration } from "@/components/audio/EnergyBaselineRegistration";
 import { LevelOption } from "@/components/onboarding/LevelOption";
 import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
-import { PallyCharacter } from "@/components/pally/PallyCharacter";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { TextInput } from "@/components/ui/TextInput";
 import { pallyApi, PallyApiError } from "@/lib/api";
+import type { EnergyBaselineResponse } from "@/lib/api";
 import { DISPLAY_NAME_MAX_LENGTH } from "@/lib/display-name";
 import { saveOnboardingProfile } from "@/lib/onboarding-save";
 import type { Level } from "@/lib/types/session";
@@ -26,7 +27,10 @@ const LEVELS = [
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 5>(1);
+  const [baseline, setBaseline] = useState<EnergyBaselineResponse | null>(null);
+  const [isLoadingVoice, setIsLoadingVoice] = useState(false);
+  const [voiceEntryFailed, setVoiceEntryFailed] = useState(false);
   const [level, setLevel] = useState<Level | null>(null);
   const [name, setName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -35,6 +39,31 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     let active = true;
+    const voiceOnly = new URLSearchParams(window.location.search).get("step") === "voice";
+    if (voiceOnly) setIsLoadingVoice(true);
+    void pallyApi.getEnergyBaseline()
+      .then(async (result) => {
+        if (!active) return;
+        setBaseline(result);
+        if (voiceOnly) {
+          const { profile } = await pallyApi.getProfile();
+          if (!active) return;
+          setName(profile.display_name);
+          setLevel(profile.english_level);
+          setStep(result.status === "required" ? 3 : 5);
+        }
+      })
+      .catch((caught: unknown) => {
+        console.error("Voice registration status fetch failed", caught);
+        if (!active) return;
+        if (caught instanceof PallyApiError && caught.code === "unauthorized") router.replace("/");
+        else if (caught instanceof PallyApiError && caught.code === "profile_not_found") setStep(1);
+        else {
+          setError(caught instanceof Error ? caught.message : "목소리 등록 상태를 불러오지 못했어요.");
+          if (voiceOnly) setVoiceEntryFailed(true);
+        }
+      })
+      .finally(() => { if (active) setIsLoadingVoice(false); });
     void pallyApi.getProfileAvatar()
       .then(({ avatar_url: nextAvatarUrl }) => {
         if (active) setAvatarUrl(nextAvatarUrl);
@@ -52,9 +81,9 @@ export default function OnboardingPage() {
     };
   }, [router]);
 
-  const goBack = () => setStep((value) => (value === 3 ? 2 : 1));
+  const goBack = () => setStep((value) => (value > 2 ? 2 : 1));
   const goNext = async () => {
-    if (step === 3) {
+    if (step === 5) {
       router.push("/home");
       return;
     }
@@ -73,13 +102,42 @@ export default function OnboardingPage() {
     setError(null);
     try {
       await saveOnboardingProfile(pallyApi, { display_name: name, english_level: level });
-      setStep(3);
+      const result = await pallyApi.getEnergyBaseline();
+      setBaseline(result);
+      setStep(result.status === "required" ? 3 : 5);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "설정을 저장하지 못했어요.");
     } finally {
       setIsSaving(false);
     }
   };
+
+  if (isLoadingVoice) return <MobileShell><PageLoader message="목소리 등록 상태를 확인하고 있어요" /></MobileShell>;
+  if (voiceEntryFailed) return (
+    <MobileShell className="flex flex-col items-center justify-center gap-5 px-5">
+      <p className="text-center text-body text-error" role="alert">{error}</p>
+      <PrimaryButton onClick={() => window.location.reload()}>다시 불러오기</PrimaryButton>
+    </MobileShell>
+  );
+
+  if (step === 3 && baseline?.status === "required") {
+    return <EnergyBaselineRegistration configuration={baseline} onBack={goBack} onReady={() => setStep(5)} />;
+  }
+
+  if (step === 5) {
+    return (
+      <MobileShell className="flex flex-col px-5 pb-[90px] pt-[60px]">
+        <button aria-label="이전 단계" className="-ml-2 grid size-11 place-items-center" onClick={goBack} type="button"><img alt="" className="-rotate-90" width={40} height={40} src="/onboarding/voice/back.svg" /></button>
+        <h1 className="mt-8 text-title-1">다 됐어요!</h1>
+        <p className="ml-[6px] mt-4 text-[16px] leading-5 text-text-tertiary">Pally와 함께 즐거운 공부 시간 되세요!<br />이름과 영어 레벨은 설정에서 언제든 변경할 수 있어요.</p>
+        <img alt="Pally 캐릭터" className="mx-auto mt-[93px]" width={308} height={308} src="/onboarding/voice/pally-complete.svg" />
+        <footer className="mt-auto pt-[37px]">
+          <OnboardingProgress step={baseline?.status === "disabled" ? 3 : 5} totalSteps={baseline?.status === "disabled" ? 3 : 5} />
+          <PrimaryButton className="mt-[54px]" onClick={() => router.push("/home")}>확인</PrimaryButton>
+        </footer>
+      </MobileShell>
+    );
+  }
 
   return (
     <MobileShell minHeight={820}>
@@ -146,24 +204,8 @@ export default function OnboardingPage() {
         </>
       ) : null}
 
-      {step === 3 ? (
-        <>
-          <button aria-label="이전 단계" className="absolute left-5 top-[77px] z-10 grid size-9 place-items-center" onClick={goBack} type="button">
-            <img alt="" className="absolute left-px top-[10px] size-4" src="/icons/back.svg" />
-          </button>
-          <PageHeader
-            className="absolute left-0 top-[60px]"
-            description={"Pally와 함께 즐거운 공부 시간 되세요!\n이름과 영어 레벨은 설정에서 언제든 변경할 수 있어요."}
-            showBackLink={false}
-            title="설정 완료"
-            variant="back"
-          />
-          <PallyCharacter className="absolute left-[29px] top-[220px]" priority />
-        </>
-      ) : null}
-
-      <div className={`absolute left-[59px] ${step === 1 ? "bottom-[174px]" : "bottom-[147px]"}`}>
-        <OnboardingProgress className="w-[272px] px-[112px]" step={step} />
+      <div className={cn("absolute left-0 right-0", step === 1 ? "bottom-[174px]" : "bottom-[147px]")}>
+        <OnboardingProgress step={step} totalSteps={baseline?.status === "disabled" ? 3 : 5} />
       </div>
       {error ? <p className="absolute bottom-[102px] left-5 right-5 text-center text-body-2 text-red-600" role="alert">{error}</p> : null}
       <PrimaryButton className="absolute bottom-[34px] left-5 w-[calc(100%-40px)]" disabled={isSaving || (step === 1 && level === null) || (step === 2 && !name.trim())} onClick={goNext}>
