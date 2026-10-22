@@ -875,35 +875,44 @@ def test_carried_over_axes_reads_the_saved_look_from_the_profile():
     assert main._carried_over_axes(sb, "user-1") is None
 
 
-def test_ending_a_conversation_saves_tags_and_look_together():
-    """태그와 모습은 같은 요청으로 저장돼 어긋나지 않는다. 지난 대화를 끝내도 마찬가지."""
+def test_ending_a_conversation_saves_tags_and_look_together(monkeypatch):
+    """태그와 모습은 같은 요청으로 저장돼 어긋나지 않는다."""
     from types import SimpleNamespace
     from unittest.mock import Mock
 
     axes = {"Formality": 54, "Energy": 41, "Intimacy": 30, "Humor": 8, "Curiosity": 22}
-    messages, profiles = Mock(), Mock()
-    messages.select.return_value = messages
-    messages.eq.return_value = messages
-    messages.not_.is_.return_value = messages
-    messages.order.return_value = messages
-    messages.limit.return_value = messages
-    messages.execute.return_value = SimpleNamespace(data=[{"axes": axes}])
-    profiles.update.return_value = profiles
-    profiles.eq.return_value = profiles
+    profiles = Mock()
+    profiles.update.return_value = profiles.eq.return_value = profiles
+    profiles.execute.return_value = SimpleNamespace(data=[{"id": "user-1"}])
     sb = Mock()
-    sb.table.side_effect = lambda name: {"messages": messages, "profiles": profiles}[name]
+    sb.table.side_effect = lambda name: {"profiles": profiles}[name]
+    monkeypatch.setattr(main, "_profile_axes", lambda *_: dict(axes))
 
-    assert main._refresh_profile_traits(sb, "user-1", "conversation-1") is True
+    assert main._refresh_profile_traits(sb, "user-1") is True
+    profiles.update.assert_called_once()
     saved = profiles.update.call_args[0][0]
     assert saved["current_axes"] == axes
     assert saved["traits"] == main._axes_to_traits(axes)
     profiles.eq.assert_called_once_with("id", "user-1")
 
-    # 발화가 없는 대화(오프너만)는 모습을 건드리지 않는다
-    profiles.update.reset_mock()
-    messages.execute.return_value = SimpleNamespace(data=[])
-    assert main._refresh_profile_traits(sb, "user-1", "conversation-2") is True
-    profiles.update.assert_not_called()
+
+def test_ending_a_conversation_without_turns_keeps_the_look(monkeypatch):
+    import asyncio
+    from fastapi import BackgroundTasks
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    opened = {"id": "c", "user_id": "u", "ended_at": None, "reopen_count": 0, "title": "t", "axes_contribution": None}
+    sb = Mock()
+    sb.rpc.return_value.execute.return_value = SimpleNamespace(data={**opened, "ended_at": "now"})
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_voice_energy_enabled", lambda: False)
+    monkeypatch.setattr(main, "_owned_session", lambda *_: opened)
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=0))
+    refresh = Mock()
+    monkeypatch.setattr(main, "_refresh_profile_traits", refresh)
+    asyncio.run(main.complete_conversation("c", BackgroundTasks(), "u", "k"))
+    refresh.assert_not_called()
 
 
 def test_profile_carries_pallys_current_look():

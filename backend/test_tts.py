@@ -131,10 +131,11 @@ def test_billing_worker_and_http_pool_share_lifecycle(monkeypatch, worker_fails)
 def test_complete_atomically_marks_review_work_before_scheduling_and_retries_idempotently(monkeypatch):
     completed_at = "2026-10-05T09:00:00+00:00"
     opened = {"id": "conversation-1", "user_id": "user-1", "ended_at": None, "title": None}
-    closed = {**opened, "ended_at": completed_at}
+    closed = {**opened, "ended_at": completed_at, "axes_contribution": {"mean": None, "turns": 1, "first_completed_at": completed_at}}
     sb = Mock()
     sb.rpc.return_value.execute.return_value = SimpleNamespace(data=closed)
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=1))
     monkeypatch.setattr(main, "_owned_session", Mock(side_effect=[opened, closed]))
     now = Mock(side_effect=AssertionError("Completion must use the database clock and work marker"))
     monkeypatch.setattr(main, "_now_iso", now)
@@ -177,7 +178,7 @@ def test_complete_atomically_marks_review_work_before_scheduling_and_retries_ide
             })
         sb.table.assert_not_called()
         now.assert_not_called()
-        refresh_traits.assert_called_once_with(sb, "user-1", "conversation-1")
+        refresh_traits.assert_called_once_with(sb, "user-1")
         assert closed["ended_at"] == completed_at
 
     asyncio.run(scenario())
@@ -188,10 +189,12 @@ def test_repeated_complete_with_existing_title_only_reschedules_review(monkeypat
     session = {
         "id": "conversation-1", "user_id": "user-1", "ended_at": completed_at,
         "title": "Cookie time", "reopen_count": 3,
+        "axes_contribution": {"mean": None, "turns": 1, "first_completed_at": completed_at},
     }
     sb = Mock()
     sb.rpc.return_value.execute.return_value = SimpleNamespace(data=session)
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=1))
     monkeypatch.setattr(main, "_owned_session", Mock(return_value=session))
     process_review = Mock()
     monkeypatch.setattr(main.session_feedback, "process_session", process_review)
@@ -234,6 +237,7 @@ def test_complete_rpc_failure_does_not_schedule_background_work(
     monkeypatch.setattr(main, "_owned_session", Mock(return_value={
         "id": "conversation-1", "user_id": "user-1", "ended_at": None, "reopen_count": 0,
     }))
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=1))
     refresh_traits = Mock()
     monkeypatch.setattr(main, "_refresh_profile_traits", refresh_traits)
     tasks = BackgroundTasks()
@@ -259,7 +263,7 @@ def test_inflight_turn_cannot_save_into_a_closed_or_reopened_session(monkeypatch
     }
     sessions, messages = Mock(), Mock()
     for query in (sessions, messages):
-        for method in ("select", "eq", "order", "insert"):
+        for method in ("select", "eq", "order", "insert", "range"):
             getattr(query, method).return_value = query
     sessions.execute.side_effect = [
         SimpleNamespace(data=[original]),
@@ -275,7 +279,8 @@ def test_inflight_turn_cannot_save_into_a_closed_or_reopened_session(monkeypatch
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "GOOGLE_CLOUD_API_KEY", "test-key")
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
-    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     release_turn = Mock()
     monkeypatch.setattr(main, "_release_turn", release_turn)
@@ -325,7 +330,7 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
     timestamp = "2026-09-15T00:00:00+00:00"
     sessions, messages = Mock(), Mock()
     for query in (sessions, messages):
-        for method in ("select", "eq", "order", "insert"):
+        for method in ("select", "eq", "order", "insert", "range"):
             getattr(query, method).return_value = query
     sessions.execute.return_value = SimpleNamespace(data=[{
         "id": "conversation-1", "user_id": "user-1", "ended_at": None,
@@ -339,7 +344,8 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
     sb.table.side_effect = lambda name: {"sessions": sessions, "messages": messages}[name]
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
-    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Chirp3-HD-Leda")
@@ -403,7 +409,7 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     first, second = "2026-10-07T04:04:19.641016+00:00", "2026-10-07T04:05:03.506262+00:00"
     sessions, messages = Mock(), Mock()
     for query in (sessions, messages):
-        for method in ("select", "eq", "order", "insert"):
+        for method in ("select", "eq", "order", "insert", "range"):
             getattr(query, method).return_value = query
     sessions.execute.return_value = SimpleNamespace(data=[{
         "id": "conversation-1", "user_id": "user-1", "ended_at": None,
@@ -427,6 +433,8 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "GOOGLE_CLOUD_API_KEY", "test-key")
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
     monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("say 3", 1.0)))
     chat = AsyncMock(return_value="A fresh reply to 3")
     monkeypatch.setattr(main, "_call_gemini_chat", chat)
