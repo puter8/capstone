@@ -235,7 +235,17 @@ export default function FeedbackV2Page() {
           </Button>
         </div>
       ) : null}
-      {!isLoading && !error ? (
+      {!isLoading && !error && !conversation ? (
+        <div className="flex flex-col items-center gap-p-4 px-p-5 pt-p-8 text-center">
+          <Stage glow={false} size="compact" />
+          <div className="flex flex-col gap-p-2">
+            <h1 className="text-p-section text-p-text">아직 나눈 대화가 없어요</h1>
+            <p className="text-p-body text-p-text-secondary">첫 대화를 마치면 고친 표현을 여기에서 볼 수 있어요.</p>
+          </div>
+          <Button onClick={() => router.push(routes.home)}>대화하러 가기</Button>
+        </div>
+      ) : null}
+      {!isLoading && !error && conversation ? (
         <section aria-label="대화 피드백" className="flex flex-col gap-p-3 px-p-5 pb-p-6">
           {feedbackPending ? (
             <div className="flex flex-col gap-p-2 rounded-p-card bg-p-info-container px-p-4 py-p-3 text-p-small text-p-text" role="status">

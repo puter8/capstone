@@ -33,11 +33,22 @@
   - 백엔드 `/api/tts`로 만든 음성을 MediaStream으로 주입해 녹음 → 실제 STT → Gemini 조각 응답 → TTS 재생. STT: "Yesterday, I go to the park with my friend and we eat ice cream." 응답 조각: `correction` "went to the park", `new_expr` "a good walk" + 범례 표시. 무대 상태 `speaking` → 건너뛰기 → `idle`. 다시 듣기 활성 → 재생 → 건너뛰기. 전체 대화(날짜 구분선 2026.10.23, 3개 말풍선) → 대화 종료 → 시작 화면 복귀(2초). `/v2/history` 첫 카드에 새 대화(1번 주고받음, 제목 생성 대기 표시).
   - 새로고침 후 다시 듣기 비활성 확인(백엔드가 `pally_audio_url`을 반환하지 않음).
   - 기록·피드백 상세(빈 상태)·업적·마이·레벨 변경·요금제·온보딩(레벨/완료)·로그인·없는 페이지를 360px iframe으로 캡처해 Figma와 대조했다.
+- **새 계정 실검증(Claire 계정 탈퇴 → Google 재가입, Aside Browser, Railway, 2026-10-23 오전):**
+  - 마이 페이지 시트 4개 실동작: 이름 변경(철수 → 클레어), 로그아웃 시트, 대화 기록 삭제(실삭제 + 토스트) → 기록 빈 상태 → 피드백 상세 "아직 나눈 대화가 없어요"(이 상태를 이번에 추가), 회원탈퇴 실행 → `/v2` 복귀.
+  - 재가입: `/v2`의 Google 버튼이 `redirect_to=…/v2/auth/callback`으로 계정 선택까지 이동하는 것을 확인했고, 로그인 자체는 자동화하지 않고 Claire가 Aside에서 직접 했다. **로그인 직후 착지 주소(허용 목록 통과 여부)는 미확인.**
+  - 온보딩 실저장: 레벨 B2 → 이름 "철수" → 프로필 생성 → 목소리 소개 → 질문 3개 녹음(`/api/tts` 합성 음성, 각 9초) → `POST /api/energy/baseline` 200 `status: ready`(`range_st 7.54`, `valid_clips 3`) → "다 됐어요!" → 홈(20회 남음).
+  - 오류 경로 1건 실확인: 세 질문에 같은 음원을 쓰자 백엔드가 "같은 파일 3개"로 422(`clip_index` 없음)를 돌려줬고 화면은 "녹음을 확인하지 못했어요. 질문을 눌러 각각 다시 녹음해 주세요."를 띄웠다. 질문마다 다른 음원으로 바꾸니 등록됐다.
+  - 새 계정 첫 턴: opener "Hey! Do you have any pets…" → 합성 음성 → STT "Not much honestly, I think I will stay home and watch some movie…" → 조각 `new_expr` "cozy movie night"(버터 점선, `own_remark`·`question` 조각은 강조 없음) → 사용량 20 → 19, 팝오버(1회 사용 · 19회 남음 · 10월 24일 0시) → Escape로 닫힘 → 종료 → 시작 화면 + "에너지는 갱신하지 않았어요" 경고 토스트(짧은 합성 음성 때문, 백엔드 판단).
+  - 녹음 권한 거부: `getUserMedia`가 `NotAllowedError`를 던지게 하고 마이크를 누르자 토스트 "마이크 권한이 필요해요…", 도크 "다시 말하기"(retry), 상태 문구 "권한을 허용한 뒤 눌러 주세요".
+  - 기록 "이어서 대화": `/v2/home?conversation_id=…`로 이동해 지난 opener를 복원하고 "눌러서 말하기"까지 확인, 종료.
+  - 한도 시트: **브라우저 안에서 `/api/usage` 응답만 `remaining_turns: 0`으로 바꿔**(Response.prototype 패치, 백엔드 호출·상태 변경 없음) 홈에 들어가자 시트 "오늘 무료 대화를 모두 썼어요"(초기 포커스 "확인") → 닫으면 칩 "오늘 남은 대화 없음", CTA "내일 0시에 다시 대화할 수 있어요" 비활성. 실제 429 `quota_exceeded`는 실행하지 않았다.
+  - 요금제: 실제 무료 상태(월 9,900원 · 연 99,000원 7일 체험) → 연간 선택 → 계속하기 → 시트 "구독 시작하기"(오늘 결제 0원, 초기 포커스 결제 버튼) → Escape로 닫힘. 결제는 실행하지 않았다.
 - **미검증/한계:**
-  - 360px은 Aside가 viewport 설정을 지원하지 않아 같은 출처 iframe(360×800)으로 확인했다. 물리 모바일·iOS Safari·200% 확대는 미확인.
-  - 한도 시트, 녹음 권한 오류, 요금제 Pro/해지/결제 확인 중 상태, 결제 실행, 온보딩 실저장(계정이 이미 온보딩·목소리 등록 완료)은 화면 코드만 작성했고 실데이터로 띄우지 않았다.
+  - 360px은 Aside가 viewport 설정을 지원하지 않아 같은 출처 iframe(360×800)으로 확인했다. 새 계정 흐름 캡처는 데스크톱 폭이다. 물리 모바일·iOS Safari·200% 확대는 미확인.
+  - 요금제 Pro/해지/해지 완료/결제 확인 중 상태와 결제 실행은 실데이터가 없어 화면 코드만 있다. 카카오페이 샌드박스로 실제 체험 구독을 만들어야 확인할 수 있다.
   - `npm run test:e2e`의 v2 테스트는 버튼 가시성 단언까지 통과했으나 AI 단언 단계가 모델 제공자 오류(Bad Request)로 실패했다. v1 테스트도 같은 단계를 쓴다.
-  - `/v2/auth/callback`은 Supabase redirect 허용 목록을 확인하지 못했다(MCP로 조회 불가). 실제 OAuth 로그인은 Claire가 Dashboard › Authentication › URL Configuration에서 `{origin}/v2/**`를 확인한 뒤 시도해야 한다. 현재 검증은 v1 로그인 세션을 그대로 썼다.
+  - `/v2/auth/callback`: Supabase redirect 허용 목록은 MCP로 조회하지 못했다. Claire가 `/v2`에서 로그인해 새 계정 세션은 만들어졌지만, 콜백 페이지에 착지했는지 Site URL로 폴백됐는지는 기록이 없다. Dashboard › Authentication › URL Configuration의 `{origin}/v2/**`와 함께 다음 로그인 때 확인한다.
+  - Aside 메모: `window.fetch`를 감싸면 App Router 링크 이동이 전체 새로고침으로 떨어진다(v1·v2 모두 동일, 앱 버그 아님). 응답을 바꿔야 하면 `Response.prototype.json/text`를 패치한다.
 
 ## 열어둔 판단
 
