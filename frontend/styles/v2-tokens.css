@@ -1,0 +1,98 @@
+/* Pally Design System tokens for the v2 routes. Source of truth: docs/design/pally.tokens.css.
+   Differences from the source are limited to (1) the scope selector, so v1 screens are untouched,
+   and (2) --p-font-brand, which must point at the next/font CSS variable. check:v2-tokens enforces this. */
+/* The html element is included so the canvas background can resolve the token too. */
+html:has([data-design="v2"]),
+[data-design="v2"] {
+  color-scheme: dark;
+  --p-color-bg: #17171B;
+  --p-color-surface: #25252C;
+  --p-color-raised: #303038;
+  --p-color-primary: #B7B5F2;
+  --p-color-primary-hover: #CAC8FA;
+  --p-color-primary-pressed: #A5A1E4;
+  --p-color-primary-container: #302E43;
+  --p-color-on-primary: #201F2B;
+  --p-color-secondary: #F2DFA0;
+  --p-color-secondary-container: #373226;
+  --p-color-on-secondary: #292419;
+  --p-color-text: #F3F1F7;
+  --p-color-text-secondary: #B9B5C4;
+  --p-color-text-muted: #ABA6B6;
+  --p-color-border: #47434F;
+  --p-color-border-control: #80798D;
+  --p-color-focus: #B7B5F2;
+  --p-color-disabled-bg: #35313E;
+  --p-color-disabled-text: #918B9D;
+  --p-color-success: #A8D7BC;
+  --p-color-success-container: #26382E;
+  --p-color-warning: #F2BE80;
+  --p-color-warning-container: #3D3024;
+  --p-color-error: #F2A6AC;
+  --p-color-error-container: #3B252C;
+  --p-color-info: #ABCDF1;
+  --p-color-info-container: #273341;
+  --p-font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --p-font-brand: var(--font-fraunces), Fraunces, "Iowan Old Style", Georgia, serif;
+  --p-type-display-size: 2rem; --p-type-display-line: 1.25; --p-type-display-weight: 600;
+  --p-type-heading-size: 1.75rem; --p-type-heading-line: 1.285714; --p-type-heading-weight: 600;
+  --p-type-section-size: 1.375rem; --p-type-section-line: 1.363636; --p-type-section-weight: 600;
+  --p-type-card-size: 1.125rem; --p-type-card-line: 1.444444; --p-type-card-weight: 600;
+  --p-type-body-size: 1rem; --p-type-body-line: 1.625; --p-type-body-weight: 400;
+  --p-type-small-size: .875rem; --p-type-small-line: 1.571429; --p-type-small-weight: 400;
+  --p-type-label-size: .875rem; --p-type-label-line: 1.428571; --p-type-label-weight: 600;
+  --p-type-caption-size: .75rem; --p-type-caption-line: 1.5; --p-type-caption-weight: 400;
+  --p-type-button-size: 1rem; --p-type-button-line: 1.5; --p-type-button-weight: 600;
+  --p-type-nav-size: .75rem; --p-type-nav-line: 1.333333; --p-type-nav-weight: 500;
+  --p-type-brand-size: 2rem; --p-type-brand-line: 1.25; --p-type-brand-weight: 500;
+  --p-type-metric-size: 2.5rem; --p-type-metric-line: 1.2; --p-type-metric-weight: 600;
+  /* v1.1 · 2026-10-23: Fraunces only for short English text and numerals; never Korean or long chat body. */
+  --p-type-title-en-size: 1.75rem; --p-type-title-en-line: 1.214286; --p-type-title-en-weight: 600; --p-type-title-en-tracking: -0.02em;
+  --p-type-title-en-sm-size: 1.25rem; --p-type-title-en-sm-line: 1.3; --p-type-title-en-sm-weight: 600; --p-type-title-en-sm-tracking: -0.01em;
+  --p-type-quote-size: 1.25rem; --p-type-quote-line: 1.4; --p-type-quote-weight: 400; --p-type-quote-style: italic;
+  --p-type-quote-sm-size: 1rem; --p-type-quote-sm-line: 1.375; --p-type-quote-sm-weight: 400; --p-type-quote-sm-style: italic;
+  --p-type-numeral-size: 4rem; --p-type-numeral-line: 1; --p-type-numeral-weight: 600; --p-type-numeral-tracking: -0.03em;
+  --p-type-eyebrow-size: .75rem; --p-type-eyebrow-line: 1.333333; --p-type-eyebrow-weight: 600; --p-type-eyebrow-tracking: 0.02em;
+  /* Pally stage glow: primary color at these opacities, blurred; the character itself never changes. */
+  --p-stage-glow-idle: .16; --p-stage-glow-speaking: .26; --p-stage-glow-listening: .09; --p-stage-glow-thinking: .13;
+  --p-space-1: 4px; --p-space-2: 8px; --p-space-3: 12px; --p-space-4: 16px;
+  --p-space-5: 20px; --p-space-6: 24px; --p-space-8: 32px; --p-space-10: 40px;
+  --p-space-12: 48px; --p-space-16: 64px;
+  --p-radius-sm: 8px; --p-radius-input: 12px; --p-radius-card: 16px;
+  --p-radius-sheet: 24px; --p-radius-full: 9999px;
+  --p-control-height: 52px; --p-target-min: 44px; --p-mic-size: 80px;
+  --p-content-max: 480px; --p-page-gutter: 24px;
+  --p-shadow-overlay: 0 16px 48px #00000040;
+  --p-overlay: #00000099;
+  --p-motion-fast: 120ms; --p-motion-standard: 200ms; --p-motion-sheet: 280ms;
+  --p-ease-out: cubic-bezier(.2,.8,.2,1);
+  --p-z-nav: 20; --p-z-backdrop: 40; --p-z-dialog: 50; --p-z-toast: 60;
+}
+@media (max-width: 374px) { [data-design="v2"] { --p-page-gutter: 20px; } }
+@media (prefers-reduced-motion: reduce) {
+  [data-design="v2"] { --p-motion-fast: 0ms; --p-motion-standard: 0ms; --p-motion-sheet: 0ms; }
+}
+
+/* The dark canvas must cover overscroll areas too. */
+html:has([data-design="v2"]) {
+  background: var(--p-color-bg);
+}
+
+[data-design="v2"] {
+  font-family: var(--p-font-ui);
+  font-synthesis: none;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+/* English content set in Fraunces: short titles, quotes and numerals only. */
+[data-design="v2"] .font-p-brand {
+  font-optical-sizing: auto;
+  font-variation-settings: "SOFT" 50, "WONK" 0;
+}
+
+[data-design="v2"] :focus-visible {
+  outline: 2px solid var(--p-color-focus);
+  outline-offset: 3px;
+}

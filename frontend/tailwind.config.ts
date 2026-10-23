@@ -1,5 +1,18 @@
 import type { Config } from "tailwindcss";
 
+// v2 design tokens resolve to the CSS variables defined in styles/v2-tokens.css,
+// which are scoped under [data-design="v2"]; outside that scope these utilities
+// are inert. The docs source is docs/design/pally.tokens.css (check:v2-tokens).
+const v2Type = (role: string, tracking = false) =>
+  [
+    `var(--p-type-${role}-size)`,
+    {
+      lineHeight: `var(--p-type-${role}-line)`,
+      fontWeight: `var(--p-type-${role}-weight)`,
+      ...(tracking ? { letterSpacing: `var(--p-type-${role}-tracking)` } : {}),
+    },
+  ] as [string, { lineHeight: string; fontWeight: string; letterSpacing?: string }];
+
 const config: Config = {
   content: [
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
@@ -27,6 +40,36 @@ const config: Config = {
         error: "#ef4444",
         fab: "#1a1a1a",
         nav: "#1c1a17",
+        p: {
+          bg: "var(--p-color-bg)",
+          surface: "var(--p-color-surface)",
+          raised: "var(--p-color-raised)",
+          primary: "var(--p-color-primary)",
+          "primary-hover": "var(--p-color-primary-hover)",
+          "primary-pressed": "var(--p-color-primary-pressed)",
+          "primary-container": "var(--p-color-primary-container)",
+          "on-primary": "var(--p-color-on-primary)",
+          secondary: "var(--p-color-secondary)",
+          "secondary-container": "var(--p-color-secondary-container)",
+          "on-secondary": "var(--p-color-on-secondary)",
+          text: "var(--p-color-text)",
+          "text-secondary": "var(--p-color-text-secondary)",
+          "text-muted": "var(--p-color-text-muted)",
+          border: "var(--p-color-border)",
+          "border-control": "var(--p-color-border-control)",
+          focus: "var(--p-color-focus)",
+          "disabled-bg": "var(--p-color-disabled-bg)",
+          "disabled-text": "var(--p-color-disabled-text)",
+          success: "var(--p-color-success)",
+          "success-container": "var(--p-color-success-container)",
+          warning: "var(--p-color-warning)",
+          "warning-container": "var(--p-color-warning-container)",
+          error: "var(--p-color-error)",
+          "error-container": "var(--p-color-error-container)",
+          info: "var(--p-color-info)",
+          "info-container": "var(--p-color-info-container)",
+          overlay: "var(--p-overlay)",
+        },
       },
       fontFamily: {
         sans: [
@@ -45,6 +88,8 @@ const config: Config = {
           "Apple SD Gothic Neo",
           "sans-serif",
         ],
+        "p-ui": ["var(--p-font-ui)"],
+        "p-brand": ["var(--p-font-brand)"],
       },
       fontSize: {
         display: ["36px", { lineHeight: "44px", fontWeight: "700" }],
@@ -64,6 +109,68 @@ const config: Config = {
         "button-4": ["12px", { lineHeight: "16px", fontWeight: "400" }],
         "caption-1": ["12px", { lineHeight: "16px", fontWeight: "400" }],
         "caption-2": ["11px", { lineHeight: "12px", fontWeight: "400" }],
+        "p-display": v2Type("display"),
+        "p-heading": v2Type("heading"),
+        "p-section": v2Type("section"),
+        "p-card": v2Type("card"),
+        "p-body": v2Type("body"),
+        "p-small": v2Type("small"),
+        "p-label": v2Type("label"),
+        "p-caption": v2Type("caption"),
+        "p-button": v2Type("button"),
+        "p-nav": v2Type("nav"),
+        "p-brand": v2Type("brand"),
+        "p-metric": v2Type("metric"),
+        // Fraunces roles (v1.1): pair with `font-p-brand`; quote roles also take `italic`.
+        "p-title-en": v2Type("title-en", true),
+        "p-title-en-sm": v2Type("title-en-sm", true),
+        "p-quote": v2Type("quote"),
+        "p-quote-sm": v2Type("quote-sm"),
+        "p-numeral": v2Type("numeral", true),
+        "p-eyebrow": v2Type("eyebrow", true),
+      },
+      spacing: {
+        "p-1": "var(--p-space-1)",
+        "p-2": "var(--p-space-2)",
+        "p-3": "var(--p-space-3)",
+        "p-4": "var(--p-space-4)",
+        "p-5": "var(--p-space-5)",
+        "p-6": "var(--p-space-6)",
+        "p-8": "var(--p-space-8)",
+        "p-10": "var(--p-space-10)",
+        "p-12": "var(--p-space-12)",
+        "p-16": "var(--p-space-16)",
+        "p-control": "var(--p-control-height)",
+        "p-target": "var(--p-target-min)",
+        "p-mic": "var(--p-mic-size)",
+        "p-gutter": "var(--p-page-gutter)",
+      },
+      maxWidth: {
+        "p-content": "var(--p-content-max)",
+      },
+      borderRadius: {
+        "p-sm": "var(--p-radius-sm)",
+        "p-input": "var(--p-radius-input)",
+        "p-card": "var(--p-radius-card)",
+        "p-sheet": "var(--p-radius-sheet)",
+        "p-full": "var(--p-radius-full)",
+      },
+      boxShadow: {
+        "p-overlay": "var(--p-shadow-overlay)",
+      },
+      zIndex: {
+        "p-nav": "var(--p-z-nav)",
+        "p-backdrop": "var(--p-z-backdrop)",
+        "p-dialog": "var(--p-z-dialog)",
+        "p-toast": "var(--p-z-toast)",
+      },
+      transitionDuration: {
+        "p-fast": "var(--p-motion-fast)",
+        "p-standard": "var(--p-motion-standard)",
+        "p-sheet": "var(--p-motion-sheet)",
+      },
+      transitionTimingFunction: {
+        "p-out": "var(--p-ease-out)",
       },
     },
   },

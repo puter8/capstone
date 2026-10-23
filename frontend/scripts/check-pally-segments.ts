@@ -329,7 +329,34 @@ async function main(): Promise<void> {
   assertPlain(userRow, turnFixture.user.transcript, "User messages ignore Pally segments");
   assertPlain(renderReply("How was your day?"), "How was your day?", "Plain opener");
 
-  console.log("Pally segment checks passed: independent validation, private error logs, POST/GET/replay, fallbacks and chat rendering.");
+  // v2 design: the same server pieces render as lilac solid-underlined corrections and
+  // butter dotted-underlined new expressions, with hidden labels for screen readers.
+  const { Bubble } = await import("../components/v2/Bubble");
+  const v2Markup = renderToStaticMarkup(createElement(Bubble, { speaker: "pally", text: replyText, segments }));
+  const v2Spans = segmentSpans(v2Markup);
+  deepEqual(v2Spans.map((span) => span.kind), segments.map((segment) => segment.kind), "v2 bubble: segment order and count");
+  equal(v2Spans.map((span) => span.text).join(""), escapeText(replyText), "v2 bubble: the highlighted spans reproduce the reply");
+  equal((v2Markup.match(/<span class="sr-only">고친 표현: <\/span>/g) ?? []).length, segments.filter((segment) => segment.kind === "correction").length, "v2 bubble: one hidden label per correction");
+  equal((v2Markup.match(/<span class="sr-only">새 표현: <\/span>/g) ?? []).length, segments.filter((segment) => segment.kind === "new_expr").length, "v2 bubble: one hidden label per new expression");
+  for (const span of v2Spans) {
+    const has = (token: string): boolean => span.classes.includes(token);
+    equal(has("font-semibold"), ["correction", "new_expr"].includes(span.kind), `v2 bubble: ${span.kind} semibold only for highlighted expressions`);
+    equal(has("text-p-primary"), span.kind === "correction", `v2 bubble: ${span.kind} lilac only for corrections`);
+    equal(has("decoration-solid"), span.kind === "correction", `v2 bubble: ${span.kind} solid underline only for corrections`);
+    equal(has("text-p-secondary"), span.kind === "new_expr", `v2 bubble: ${span.kind} butter only for new expressions`);
+    equal(has("decoration-dotted"), span.kind === "new_expr", `v2 bubble: ${span.kind} dotted underline only for new expressions`);
+    equal(has("underline"), ["correction", "new_expr"].includes(span.kind), `v2 bubble: ${span.kind} underline only for highlighted expressions`);
+  }
+  ok(/<p[^>]*lang="en"/.test(v2Markup), "v2 bubble: the English reply carries lang=\"en\"");
+  ok(!v2Markup.includes("text-primary\"") && !v2Markup.includes("text-accent"), "v2 bubble: no v1 colour classes leak in");
+  const v2Plain = renderToStaticMarkup(createElement(Bubble, { speaker: "pally", text: "How was your day?", segments: null }));
+  equal(segmentSpans(v2Plain).length, 0, "v2 bubble: plain replies have no styled segments");
+  ok(v2Plain.includes("How was your day?"), "v2 bubble: plain replies render their text");
+  const v2Listening = renderToStaticMarkup(createElement(Bubble, { speaker: "me", text: "", placeholder: true }));
+  ok(!v2Listening.includes("Listening"), "v2 bubble: the listening placeholder shows no transcript-like text");
+  ok(v2Listening.includes("듣고 있어요"), "v2 bubble: the listening placeholder is announced to screen readers");
+
+  console.log("Pally segment checks passed: independent validation, private error logs, POST/GET/replay, fallbacks, chat rendering and the v2 bubble.");
 }
 
 void main().catch((error: unknown) => {
