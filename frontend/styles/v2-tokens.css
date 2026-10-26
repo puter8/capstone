@@ -1,9 +1,7 @@
-/* Pally Design System tokens for the v2 routes. Source of truth: docs/design/pally.tokens.css.
-   Differences from the source are limited to (1) the scope selector, so v1 screens are untouched,
-   and (2) --p-font-brand, which must point at the next/font CSS variable. check:v2-tokens enforces this. */
-/* The html element is included so the canvas background can resolve the token too. */
-html:has([data-design="v2"]),
-[data-design="v2"] {
+/* Pally Design System tokens. Source of truth: docs/design/pally.tokens.css.
+   --p-font-brand points at the next/font CSS variable. check:v2-tokens enforces
+   value synchronization with the source. */
+:root {
   color-scheme: dark;
   --p-color-bg: #17171B;
   --p-color-surface: #25252C;
@@ -68,17 +66,17 @@ html:has([data-design="v2"]),
   --p-ease-out: cubic-bezier(.2,.8,.2,1);
   --p-z-nav: 20; --p-z-backdrop: 40; --p-z-dialog: 50; --p-z-toast: 60;
 }
-@media (max-width: 374px) { [data-design="v2"] { --p-page-gutter: 20px; } }
+@media (max-width: 374px) { :root { --p-page-gutter: 20px; } }
 @media (prefers-reduced-motion: reduce) {
-  [data-design="v2"] { --p-motion-fast: 0ms; --p-motion-standard: 0ms; --p-motion-sheet: 0ms; }
+  :root { --p-motion-fast: 0ms; --p-motion-standard: 0ms; --p-motion-sheet: 0ms; }
 }
 
 /* The dark canvas must cover overscroll areas too. */
-html:has([data-design="v2"]) {
+html {
   background: var(--p-color-bg);
 }
 
-[data-design="v2"] {
+body {
   font-family: var(--p-font-ui);
   font-synthesis: none;
   word-break: keep-all;
@@ -87,12 +85,12 @@ html:has([data-design="v2"]) {
 }
 
 /* English content set in Fraunces: short titles, quotes and numerals only. */
-[data-design="v2"] .font-p-brand {
+body .font-p-brand {
   font-optical-sizing: auto;
   font-variation-settings: "SOFT" 50, "WONK" 0;
 }
 
-[data-design="v2"] :focus-visible {
+body :focus-visible {
   outline: 2px solid var(--p-color-focus);
   outline-offset: 3px;
 }

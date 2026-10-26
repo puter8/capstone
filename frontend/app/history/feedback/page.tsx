@@ -3,15 +3,19 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { FeedbackCard } from "@/components/feedback/FeedbackCard";
-import { MobileShell } from "@/components/layout/MobileShell";
-import { BottomNav } from "@/components/nav/BottomNav";
-import { PageLoader } from "@/components/ui/PageLoader";
-import { PageHeader } from "@/components/ui/PageHeader";
+import { AppFrame } from "@/components/v2/AppFrame";
+import { BottomNav } from "@/components/v2/BottomNav";
+import { Button } from "@/components/v2/Button";
+import { CorrectionCard } from "@/components/v2/CorrectionCard";
+import { IconSpinner } from "@/components/v2/icons";
+import { Stage } from "@/components/v2/Stage";
+import { TopBar } from "@/components/v2/TopBar";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import type { ConversationTurn, FeedbackItem } from "@/lib/api";
-import { getCurrentUserId, invalidateConversationData, loadConversationPage, loadHistoryPage } from "@/lib/api/route-data";
+import type { Conversation, ConversationTurn, FeedbackItem } from "@/lib/api";
 import { recordFeedbackItemOpened } from "@/lib/analytics/activity-events";
+import { getCurrentUserId, invalidateConversationData, loadConversationPage, loadHistoryPage } from "@/lib/api/route-data";
+import { formatClockTime, formatLongDate } from "@/lib/v2/format";
+import { routes } from "@/lib/v2/routes";
 
 type FeedbackGroup = { turnId: string; utterance: string | null; items: FeedbackItem[] };
 
@@ -22,8 +26,11 @@ function toFeedbackGroups(turns: readonly ConversationTurn[]): FeedbackGroup[] {
     .map((turn) => ({ turnId: turn.id, utterance: turn.user_transcript, items: turn.feedback }));
 }
 
-export default function FeedbackPage() {
+const WORDMARK_STYLE = { fontVariationSettings: '"SOFT" 0, "WONK" 1' } as const;
+
+export default function FeedbackV2Page() {
   const router = useRouter();
+  const [conversation, setConversation] = useState<Conversation | null>(null);
   const [feedback, setFeedback] = useState<FeedbackGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -40,7 +47,6 @@ export default function FeedbackPage() {
   const refreshingRef = useRef(false);
   const openedFeedbackRef = useRef(new Set<string>());
   const conversationIdRef = useRef<string | null>(null);
-  const listRef = useRef<HTMLElement | null>(null);
   const loadingMoreRef = useRef(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const userIdRef = useRef<string | null>(null);
@@ -60,6 +66,7 @@ export default function FeedbackPage() {
         const detail = await loadConversationPage(userId, conversationId);
 
         if (active) {
+          setConversation(detail.conversation);
           setFeedback(toFeedbackGroups(detail.turns));
           setFeedbackPending(detail.turns.some((turn) => turn.feedback_pending));
           setIsActiveConversation(detail.conversation.status === "active");
@@ -73,7 +80,7 @@ export default function FeedbackPage() {
         }
       } catch (caught) {
         if (caught instanceof PallyApiError && caught.code === "unauthorized") {
-          router.replace("/");
+          router.replace(routes.login);
           return;
         }
         if (active) setError(caught instanceof Error ? caught.message : "피드백을 불러오지 못했어요.");
@@ -105,7 +112,7 @@ export default function FeedbackPage() {
       setNextCursor(detail.next_cursor);
     } catch (caught) {
       if (caught instanceof PallyApiError && caught.code === "unauthorized") {
-        router.replace("/");
+        router.replace(routes.login);
         return;
       }
       setLoadMoreError(caught instanceof Error ? caught.message : "피드백을 더 불러오지 못했어요.");
@@ -141,6 +148,7 @@ export default function FeedbackPage() {
         if (cancelled) return;
         const turns = pages.flatMap((page) => page.turns);
         const pending = turns.some((turn) => turn.feedback_pending);
+        setConversation(pages[0].conversation);
         setFeedback(toFeedbackGroups(turns));
         setFeedbackPending(pending);
         setIsActiveConversation(pages[0].conversation.status === "active");
@@ -169,13 +177,12 @@ export default function FeedbackPage() {
 
   useEffect(() => {
     if (isLoading || isRefreshing) return;
-    const root = listRef.current;
     const sentinel = sentinelRef.current;
-    if (!root || !sentinel || !nextCursor || loadMoreError) return;
+    if (!sentinel || !nextCursor || loadMoreError) return;
 
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) void loadMore();
-    }, { root, rootMargin: "120px" });
+    }, { rootMargin: "160px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [isLoading, isRefreshing, loadMore, loadMoreError, nextCursor]);
@@ -188,63 +195,116 @@ export default function FeedbackPage() {
       .catch((eventError: unknown) => console.error("Activity event failed", eventError));
   }, []);
 
-  if (isLoading) {
-    return (
-      <MobileShell minHeight={640}>
-        <PageLoader />
-      </MobileShell>
-    );
-  }
+  const totalCorrections = feedback.reduce((sum, group) => sum + group.items.length, 0);
+  const title = conversation?.title ?? "Pally와 나눈 대화";
 
   return (
-    <MobileShell minHeight={640}>
-      <PageHeader
-        backHref="/history"
-        className="absolute left-0 top-[60px]"
-        description="대화에서 받은 피드백을 확인해보세요."
-        title="Feedback"
-        variant="back"
-      />
-      {!error && !feedbackPending && feedback.length === 0 ? (
-        <p className="absolute inset-x-4 top-[399px] text-center text-body text-text-tertiary">
-          아직 피드백이 없어요!
-        </p>
+    <AppFrame withBottomNav>
+      <TopBar backHref={routes.history} title="대화 피드백" variant="back" />
+      {isLoading ? (
+        <div aria-busy="true" className="flex flex-col items-center gap-p-4 px-p-5 pt-p-12 text-center" role="status">
+          <IconSpinner className="animate-spin text-p-text-secondary motion-reduce:animate-none" size={24} />
+          <p className="text-p-label text-p-text-secondary">피드백을 불러오고 있어요</p>
+        </div>
       ) : null}
-      <section ref={listRef} aria-label="대화 피드백" className="absolute bottom-[126px] left-[21px] right-[19px] top-[188px] flex flex-col gap-3 overflow-y-auto pb-4">
-        {error ? (
-          <div className="flex flex-col items-center gap-2 text-center text-body text-red-600" role="alert">
-            <p>{error}</p>
-            <button className="rounded-full border border-red-600 px-4 py-1 text-body-2" onClick={() => window.location.reload()} type="button">다시 시도</button>
+      {!isLoading && conversation ? (
+        <header className="flex flex-col gap-[6px] px-p-5 pb-p-5 pt-p-2">
+          <p className="text-p-eyebrow text-p-text-muted">
+            {formatLongDate(conversation.started_at)} · {formatClockTime(conversation.started_at)}
+          </p>
+          <h1 className="font-p-brand text-p-title-en text-p-text [overflow-wrap:anywhere]" lang="en" style={WORDMARK_STYLE}>
+            {title}
+          </h1>
+          <div className="flex flex-wrap gap-[6px] pt-[6px]">
+            {totalCorrections > 0 ? (
+              <span className="rounded-p-full bg-p-primary-container px-[10px] py-p-1 text-p-eyebrow text-p-primary">고친 표현 {totalCorrections}개</span>
+            ) : null}
+            <span className="rounded-p-full bg-p-raised px-[10px] py-p-1 text-p-eyebrow text-p-text-secondary">{conversation.turn_count}번 주고받음</span>
           </div>
-        ) : null}
-        {feedbackPending ? (
-          <div className="rounded-2xl bg-amber-50 px-4 py-3 text-body-2 text-text-secondary" role="status">
-            {isActiveConversation ? "대화를 종료하면 피드백을 정리해요." : pollingStopped ? "피드백 정리에 시간이 걸리고 있어요. 잠시 후 다시 확인해 주세요." : "대화 피드백을 정리하고 있어요. 준비되면 자동으로 표시돼요."}
-            {refreshError ? <p className="mt-2 text-red-600" role="alert">{refreshError}</p> : null}
-            {pollingStopped && !isActiveConversation ? <button className="mt-2 min-h-11 underline underline-offset-4" onClick={() => setRefreshVersion((version) => version + 1)} type="button">다시 확인</button> : null}
+        </header>
+      ) : null}
+      {error ? (
+        <div className="flex flex-col items-center gap-p-4 px-p-5 pt-p-8 text-center" role="alert">
+          <Stage glow={false} size="compact" />
+          <div className="flex flex-col gap-p-2">
+            <h2 className="text-p-section text-p-text">피드백을 불러오지 못했어요</h2>
+            <p className="text-p-body text-p-text-secondary">{error}</p>
           </div>
-        ) : null}
-        {feedback.map((group) => (
-          <FeedbackCard
-            items={group.items}
-            key={group.turnId}
-            onOpen={() => {
-              const conversationId = conversationIdRef.current;
-              if (conversationId) group.items.forEach((item) => recordFeedbackOpen(conversationId, item));
-            }}
-            utterance={group.utterance}
-          />
-        ))}
-        <div aria-hidden="true" className="h-px shrink-0" ref={sentinelRef} />
-        {isLoadingMore ? <p className="py-2 text-center text-body-2 text-text-tertiary" role="status">피드백을 더 불러오고 있어요</p> : null}
-        {loadMoreError ? (
-          <div className="flex flex-col items-center gap-2 py-2 text-center text-body-2 text-red-600" role="alert">
-            <p>{loadMoreError}</p>
-            <button className="rounded-full border border-red-600 px-4 py-1" onClick={() => { void loadMore(); }} type="button">다시 시도</button>
+          <Button onClick={() => window.location.reload()} variant="secondary">
+            다시 시도
+          </Button>
+        </div>
+      ) : null}
+      {!isLoading && !error && !conversation ? (
+        <div className="flex flex-col items-center gap-p-4 px-p-5 pt-p-8 text-center">
+          <Stage glow={false} size="compact" />
+          <div className="flex flex-col gap-p-2">
+            <h1 className="text-p-section text-p-text">아직 나눈 대화가 없어요</h1>
+            <p className="text-p-body text-p-text-secondary">첫 대화를 마치면 고친 표현을 여기에서 볼 수 있어요.</p>
           </div>
-        ) : null}
-      </section>
+          <Button onClick={() => router.push(routes.home)}>대화하러 가기</Button>
+        </div>
+      ) : null}
+      {!isLoading && !error && conversation ? (
+        <section aria-label="대화 피드백" className="flex flex-col gap-p-3 px-p-5 pb-p-6">
+          {feedbackPending ? (
+            <div className="flex flex-col gap-p-2 rounded-p-card bg-p-info-container px-p-4 py-p-3 text-p-small text-p-text" role="status">
+              <p>
+                {isActiveConversation
+                  ? "대화를 종료하면 고친 표현을 정리해요."
+                  : pollingStopped
+                    ? "고친 표현을 정리하는 데 시간이 걸리고 있어요. 잠시 후 다시 확인해 주세요."
+                    : "고친 표현을 정리하고 있어요. 준비되면 자동으로 표시돼요."}
+              </p>
+              {refreshError ? <p className="text-p-error" role="alert">{refreshError}</p> : null}
+              {pollingStopped && !isActiveConversation ? (
+                <Button className="self-start" onClick={() => setRefreshVersion((version) => version + 1)} size="compact" variant="text">
+                  다시 확인
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {!feedbackPending && feedback.length === 0 ? (
+            <div className="flex flex-col items-center gap-p-4 pt-p-6 text-center">
+              <Stage glow={false} size="compact" />
+              <div className="flex flex-col gap-p-2">
+                <h2 className="text-p-section text-p-text">이번 대화에는 고친 표현이 없어요</h2>
+                <p className="text-p-body text-p-text-secondary">자연스럽게 잘 말했어요. 다음 대화도 이어서 해 봐요.</p>
+              </div>
+              <Button onClick={() => router.push(routes.history)} variant="secondary">
+                피드백 목록으로
+              </Button>
+            </div>
+          ) : null}
+          {feedback.map((group, index) => (
+            <CorrectionCard
+              index={index + 1}
+              items={group.items}
+              key={group.turnId}
+              onOpen={() => {
+                const conversationId = conversationIdRef.current;
+                if (conversationId) group.items.forEach((item) => recordFeedbackOpen(conversationId, item));
+              }}
+              utterance={group.utterance}
+            />
+          ))}
+          <div aria-hidden="true" className="h-px shrink-0" ref={sentinelRef} />
+          {isLoadingMore ? (
+            <p className="py-p-2 text-center text-p-small text-p-text-muted" role="status">
+              피드백을 더 불러오고 있어요
+            </p>
+          ) : null}
+          {loadMoreError ? (
+            <div className="flex flex-col items-center gap-p-2 py-p-2 text-center text-p-small text-p-error" role="alert">
+              <p>{loadMoreError}</p>
+              <Button onClick={() => { void loadMore(); }} size="compact" variant="secondary">
+                다시 시도
+              </Button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       <BottomNav />
-    </MobileShell>
+    </AppFrame>
   );
 }

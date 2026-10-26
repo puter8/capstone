@@ -24,7 +24,7 @@ export function BottomNav({ className }: { className?: string }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  // Route data is keyed by the v1 pathnames until v2 replaces them, hence `dataKey`.
+  // Keep dataKey for the existing route-data prefetch contract until cleanup.
   const prefetchTab = useCallback(
     (href: string, dataKey: string) => {
       router.prefetch(href);

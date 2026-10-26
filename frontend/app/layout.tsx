@@ -1,12 +1,17 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Sans_KR } from "next/font/google";
+import { Fraunces } from "next/font/google";
+import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "./globals.css";
+import "@/styles/v2-tokens.css";
 
-const notoSansKr = Noto_Sans_KR({
+// Fraunces is reserved for short English content and numerals.
+const fraunces = Fraunces({
+  weight: "variable",
+  style: ["normal", "italic"],
+  subsets: ["latin"],
+  axes: ["SOFT", "WONK", "opsz"],
   display: "swap",
-  preload: false,
-  variable: "--font-noto-sans-kr",
-  weight: ["400", "500", "600", "700", "900"],
+  variable: "--font-fraunces",
 });
 
 export const metadata: Metadata = {
@@ -15,14 +20,11 @@ export const metadata: Metadata = {
     "내 영어 발화 스타일에 반응하는 Pally — 한국인 영어학습자를 위한 음성 회화 동반자",
 };
 
-// Mobile viewport lock — Figma 402px target (per 01A-CONTEXT.md + commit a2c2bb4).
-// maximumScale=1 prevents iOS Safari from auto-zooming when MediaRecorder
-// permission prompts or input focus events fire.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  maximumScale: 5,
+  userScalable: true,
 };
 
 export default function RootLayout({
@@ -31,8 +33,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko">
-      <body className={`${notoSansKr.variable} min-h-dvh bg-surface font-sans text-text antialiased`}>
+    <html className={fraunces.variable} lang="ko">
+      <body className="min-h-dvh bg-p-bg text-p-text font-p-ui antialiased">
         {children}
       </body>
     </html>

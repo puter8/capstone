@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-// Unknown /v2 paths render the v2 not-found screen instead of the root one.
+// Unknown paths render the shared not-found screen; static API/dev routes win.
 export default function UnknownV2Route() {
   notFound();
 }

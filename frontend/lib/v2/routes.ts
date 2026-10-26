@@ -1,10 +1,10 @@
 /**
  * Route table for the v2 design.
  *
- * Every v2 link and redirect goes through here so that moving v2 onto the
- * root routes later is a one-constant change (set V2_BASE to "").
+ * Every link and redirect goes through here. The design now uses root routes;
+ * keep the existing helper names until the follow-up cleanup.
  */
-export const V2_BASE = "/v2";
+export const V2_BASE = "";
 
 export function v2Path(path: string): string {
   if (!path.startsWith("/")) throw new Error(`v2Path expects an absolute path, got "${path}"`);
@@ -30,9 +30,8 @@ export const routes = {
 export type NavItemId = "home" | "history" | "ranking" | "my";
 
 /**
- * Bottom navigation items. `dataKey` is the v1 pathname that
- * `prefetchRouteData` in lib/api/route-data.ts recognises; it stays until
- * the v2 routes replace the root ones.
+ * Bottom navigation items. `dataKey` matches `href` at the root and is kept
+ * for compatibility with prefetchRouteData until the follow-up cleanup.
  */
 export const NAV_ITEMS: ReadonlyArray<{ id: NavItemId; href: string; dataKey: string; label: string }> = [
   { id: "home", href: routes.home, dataKey: "/home", label: "홈" },
