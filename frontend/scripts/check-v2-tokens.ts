@@ -1,7 +1,7 @@
 /**
  * check:v2-tokens
  *
- * frontend/styles/v2-tokens.css is a scoped copy of docs/design/pally.tokens.css.
+ * frontend/styles/v2-tokens.css copies docs/design/pally.tokens.css at :root.
  * This check fails when the two drift apart, except for the one documented
  * difference (--p-font-brand points at the next/font variable), and when
  * tailwind.config.ts references a --p-* variable that does not exist.
@@ -35,8 +35,8 @@ const source = readDeclarations(sourceCss);
 const scoped = readDeclarations(scopedCss);
 
 assert.ok(source.size > 50, `expected the design tokens source to define many --p-* tokens, found ${source.size}`);
-assert.ok(!/:root\b/.test(scopedCss), "v2-tokens.css must not style :root; v1 screens share the document");
-assert.ok(scopedCss.includes('[data-design="v2"]'), 'v2-tokens.css must scope tokens under [data-design="v2"]');
+assert.match(scopedCss, /:root\s*\{/, "design tokens must be available at :root");
+assert.ok(!scopedCss.includes('[data-design="v2"]'), "root tokens must not depend on the removed v2 wrapper");
 
 for (const [name, value] of Array.from(source)) {
   assert.ok(scoped.has(name), `missing in frontend copy: ${name}`);
@@ -58,8 +58,8 @@ for (const name of Array.from(referenced)) {
   assert.ok(scoped.has(name), `tailwind.config.ts references an undefined token: ${name}`);
 }
 
-const sourceMediaBlocks = (sourceCss.match(/@media[^{]+\{/g) ?? []).map((block) => block.trim());
-const scopedMediaBlocks = (scopedCss.match(/@media[^{]+\{/g) ?? []).map((block) => block.trim());
+const sourceMediaBlocks = Array.from(sourceCss.matchAll(/@media[^{]+\{/g), (match) => match[0].trim());
+const scopedMediaBlocks = Array.from(scopedCss.matchAll(/@media[^{]+\{/g), (match) => match[0].trim());
 assert.deepEqual(scopedMediaBlocks, sourceMediaBlocks, "media queries must match the docs source");
 
 console.log(`v2 token checks passed: ${source.size} tokens in sync, ${referenced.size} Tailwind references resolved.`);

@@ -1,23 +1,20 @@
 /**
  * check:v2-routes
  *
- * Every link and redirect in the v2 screens must go through lib/v2/routes.ts so
- * that moving v2 onto the root routes later is a one-constant change. This
- * check fails on hard-coded app paths inside app/v2 and components/v2.
- *
- * A line may opt out with a trailing `// v2-routes-allow` comment when the
- * path is intentionally the v1 one (the KakaoPay return URL the backend
- * validates).
+ * Every link and redirect must go through lib/v2/routes.ts. Check the root
+ * screens and components/v2 for literal app paths, excluding API/dev routes.
  */
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const frontendRoot = path.resolve(__dirname, "..");
-const ROOTS = ["app/v2", "components/v2"].map((dir) => path.join(frontendRoot, dir));
+const ROOTS = ["app", "components/v2"].map((dir) => path.join(frontendRoot, dir));
+const EXCLUDED_ROOTS = ["app/api", "app/dev"].map((dir) => path.join(frontendRoot, dir));
 const PATH_LITERAL = /["'`](\/(?:home|history|ranking|my|onboarding|settings|auth)(?:[/?][^"'`]*)?)["'`]/g;
 
 function walk(dir: string): string[] {
+  if (EXCLUDED_ROOTS.includes(dir)) return [];
   return readdirSync(dir).flatMap((entry) => {
     const full = path.join(dir, entry);
     if (statSync(full).isDirectory()) return walk(full);
@@ -32,7 +29,6 @@ for (const root of ROOTS) {
     scanned += 1;
     const lines = readFileSync(file, "utf8").split("\n");
     lines.forEach((line, index) => {
-      if (line.includes("v2-routes-allow")) return;
       for (const match of Array.from(line.matchAll(PATH_LITERAL))) {
         offenders.push(`${path.relative(frontendRoot, file)}:${index + 1} uses literal path ${match[1]}`);
       }

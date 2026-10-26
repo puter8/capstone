@@ -59,6 +59,7 @@ jobs:
           npm run check:opener
           npm run check:home-snapshot
           npm run check:inline-feedback
+          npm run check:name-edit-dialog
           npm run check:pally-segments
           npm run check:v2-tokens
           npm run check:v2-routes

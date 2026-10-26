@@ -22,7 +22,7 @@
     "check:supabase": "tsx scripts/check-supabase.ts",
     "check:v2-tokens": "tsx scripts/check-v2-tokens.ts",
     "check:v2-routes": "tsx scripts/check-v2-routes.ts",
-    "test:e2e": "e2e run tests/public-pages.e2e.ts tests/v2-public-pages.e2e.ts",
+    "test:e2e": "e2e run tests/v2-public-pages.e2e.ts",
     "test:e2e:member": "e2e run tests/member-navigation.e2e.ts --headed"
   },
   "dependencies": {

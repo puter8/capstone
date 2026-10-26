@@ -1,12 +1,15 @@
-# Pally v2 디자인 프론트 반영 · `/v2` 병행 구현
+# Pally v2 디자인 프론트 반영 · 루트 경로 전환
 
 기준: 2026-10-23 KST, 브랜치 `feat/design-v2`(`1015-frontend` → 10/15 미커밋 작업 2커밋 → `origin/main` 머지).
+
+현재 결정은 아래 **교체(v1 삭제) 체크리스트**의 2026-10-26 KST 기록을 따른다. 그 앞의 구조·화면·검증·열어둔 판단은 2026-10-23 병행 구현 당시 기록이다.
 
 ## Claire 결정
 
 - v2 디자인(Figma `1023_디자인 업그레이드 v2`, 페이지 `1360:750`)을 코드로 옮기되, **v1은 당장 지우지 않고 `/v2` 경로로 병행**한다. 최종 목표는 v2가 v1을 대체하는 것이다.
 - 1차 범위는 10개 경로 전부. 백엔드는 기존 `lib/api`(Railway)를 그대로 써서 실연결한다.
 - v2 화면의 문구는 디자인 문서 "코드 문구를 바꿔야 하는 제안" 표를 따른다(v1 문구는 v1에 그대로 남는다).
+- **2026-10-26 변경:** v2를 루트로 옮긴다. 겹치는 v1 페이지·오류 화면만 삭제하고, v1 컴포넌트·Tailwind 토큰은 보존한다. `feat/design-v2`에서 로컬 커밋만 만들며 푸시·PR·main 합류·배포는 하지 않는다. 백엔드·PallyCanvas·app/dev는 수정하지 않는다.
 
 ## 구조
 
@@ -59,4 +62,54 @@
 
 ## 교체(v1 삭제) 체크리스트
 
-플랜 파일(`~/.claude/plans/crispy-bubbling-ocean.md`) §6과 같다: `app/v2/*` → `app/*` 이동, `V2_BASE = ""`, 토큰 선택자 `:root`, 루트 `layout.tsx` 폰트·viewport 교체, Tailwind v1 토큰 제거, v1 컴포넌트·스크립트·e2e 정리, 김민주에게 `PallyCanvas` 정적 렌더 export 요청.
+2026-10-26 KST · Claire의 이번 작업 지시를 기준으로 범위를 좁혔다.
+
+- [x] 시작 상태: `feat/design-v2`, `git fetch origin` 후 `origin/main...HEAD = 0 5`. main 머지 불필요.
+- [x] 태그 없이 롤백 기준 해시 기록: `a3d43e1303d24d63d76b6f96fb6f3cdb9bdd6bf9`. `git reset --hard` 실행은 Claire에게 별도 확인한다.
+- [x] 겹치는 v1 페이지·error/not-found/global-error만 삭제하고 `app/v2/*`를 `git mv`로 루트에 이동. `app/api`, `app/dev`, favicon, globals, 루트 layout은 보존.
+- [x] `V2_BASE = ""`, `v2Path("/") = "/"`. 로그인 콜백은 `/auth/callback`, 결제 반환은 공통 `routes.plans`(`/settings/plans`). 결제 예외 주석 제거.
+- [x] 토큰 선택자 `:root`, 래퍼 스타일 `body`로 이동. 토큰 값 유지. Fraunces 변수를 `html`에 두어 `:root`의 브랜드 폰트 토큰에서도 해석되게 함.
+- [x] 루트 layout에서 Pretendard·Fraunces·확대 허용 viewport 사용, Noto Sans KR 제거. v1 html 배경은 v2 배경 토큰으로 교체.
+- [x] 코드의 `/v2` 페이지 경로 제거. 소스 import 경로와 정상 표시되는 `public/v2/*.svg` URL은 유지.
+- [x] 경로 검사는 `app`·`components/v2`를 읽고 `app/api`·`app/dev`는 제외. 토큰 검사는 `:root` 및 문서 값 동기화를 유지. v1/v2 말풍선 검사 블록은 기존 컴포넌트 경로 그대로 유지.
+- [x] v2 공개 페이지 e2e의 시작 주소를 `/`로 변경하고 `test:e2e`는 해당 테스트만 실행. v1 e2e 파일은 후속 정리까지 보존. CI의 기존 v2 검사 호출을 유지하고 이름 변경 다이얼로그 검사를 추가.
+- [x] 백엔드 보완 커밋 `1885ff3` 유지. 백엔드·ai·app/dev·PallyCanvas·캐릭터 타입 변경 없음.
+- [x] 최종 검증 결과 기록: 아래 표·Aside 검증 참조. 페이지 이동 커밋은 `aafcef3`.
+
+### 루트 전환 검증 (2026-10-26 KST)
+
+| 검사 | 실제 결과 |
+|---|---|
+| 타입체크 | `npm --prefix frontend exec tsc -- --noEmit -p frontend/tsconfig.json` 종료 0. 지시문의 `-p` 없는 명령은 저장소 루트에서 tsconfig를 찾지 못해 도움말만 출력했으므로 프로젝트를 명시함. |
+| 린트 | `npm --prefix frontend run lint` 종료 0. 보존한 v1 컴포넌트의 기존 `<img>` 권고 17건. |
+| 빌드 | `npm --prefix frontend run build` 종료 0. `/`, `/home`, `/history`, `/history/feedback`, `/ranking`, `/my`, `/settings/level`, `/settings/plans`, `/onboarding`, `/auth/callback` 생성. `/v2/*` 페이지 없음. |
+| 필수 스크립트 | `check:v2-tokens`, `check:v2-routes`, `check:pally-segments` 모두 통과. 123개 토큰 동기화, 59개 Tailwind 참조 해석, 38개 소스 파일 경로 검사. |
+| v1 유지 검사 | `check:name-edit-dialog`, `check:inline-feedback` 통과. 기존 컴포넌트를 보존했으므로 검사 이관 불필요. |
+| CI 프론트 회귀 검사 | 위 검사와 함께 billing-contract, billing-view, billing-account-binding, mock-api, query-cache, conversation-order, opener, home-snapshot 모두 로컬 통과. |
+| 경로 유틸 | `v2Path("/")`, 끝 슬래시 정리, `/auth/callback`, `/settings/plans`, 4탭의 `href === dataKey` 직접 확인. |
+| catch-all 충돌 | HTTP `/api/health` 200 및 `{"ok":true}`, `/dev/pally` 200. `/v2/home`·없는 경로는 404. |
+
+첫 빌드는 `.next-dev/types/app/v2`에 남은 생성 타입이 삭제된 페이지를 참조해 실패했다. 실행 중인 기존 dev 서버가 없음을 확인하고 해당 생성 타입만 정리한 뒤 빌드·타입체크를 통과했다. 소스·tsconfig 변경으로 우회하지 않았다.
+
+**Aside Browser 실검증:**
+
+- 기존 로그인 세션으로 `http://localhost:3000`의 실제 Railway 연결을 사용했다. `.env.local`은 바꾸지 않았다.
+- Aside의 같은 출처 iframe(360×800)에서 `/`, `/home`, `/history`, `/my`, `/settings/plans`를 캡처·확인했다. 각 화면의 `innerWidth`·`scrollWidth`가 모두 360. 배경 `rgb(23,23,27)`, 라일락 `#B7B5F2`, Pretendard UI·next/font Fraunces 브랜드 글꼴 및 확대 허용 viewport 확인. 로그인 SVG 2개도 실제 로딩됨.
+- 홈→피드백→업적→마이→홈 이동 중 같은 window 표식과 `performance.timeOrigin`이 유지됐다. 하단 4탭은 전체 새로고침 없이 이동했다.
+- `/home`에서 실제 선발화(201)→GCP TTS로 만든 8.616초 음성을 MediaStream 입력으로 녹음→실제 STT/Gemini/TTS 한 턴(201)→종료(200)를 수행했다. 사용량은 **20→19회**, 추가 턴 없음. 응답은 “You went to a cafe? Sounds like a lovely time! What did you talk about?”이며 `lovely time` 새 표현 표시를 확인했다.
+- 대화 `cf794860-d2a1-480d-a50f-eec4eef132d2`를 목록·상세 API(각 200)로 재조회했다. `completed`, `turn_count: 1`, 제목 `Cafe Visit and Weekend Plans`, 사용자 STT와 Pally 응답이 저장돼 있었다. `/history` 카드와 `/history/feedback?conversation_id=…`에서도 표시됐다.
+- 종료 시 백엔드의 `energy_unavailable` 경고가 화면에 표시됐다. 합성 음성으로 이 대화의 에너지는 갱신되지 않았지만 대화 저장은 성공했다.
+
+**확인하지 않은 항목:**
+
+- `npm run test:e2e` 러너는 별도 브라우저를 띄우므로 Aside 전용 규칙에 따라 실행하지 않았다. 변경한 공개 페이지의 가시성·디자인·가로 넘침은 Aside에서 직접 확인했다. 원격 CI 실행도 푸시하지 않아 미실행이다.
+- 물리 모바일/iOS, 실제 마이크 입력, 새 OAuth 로그인 전체 왕복, 실제 결제 왕복은 이번 검증에 포함하지 않았다. 로그인 `redirectTo`와 결제 반환 URL은 경로표·호출 코드로 확인했다.
+
+- [x] 정리: 검증용 dev 서버 종료(3000 포트 리스너 없음), 테스트 MP3·임시 JSON·명령 로그 제거, Aside 관찰 설정 복원 및 전용 탭 2개 종료. `.env.local` 변경 없음. 기존 미추적 `.playwright-mcp/`, `output/`, `yourpally-domain-mobile.png`는 보존하고 커밋에서 제외.
+
+후속 작업(이번 범위 밖):
+
+- [ ] v1 컴포넌트와 사용하지 않는 v1 검사·e2e 정리.
+- [ ] Tailwind v1 토큰 제거.
+- [ ] 하단 내비 `dataKey` 중복 제거(이번에는 `href`와 같은지 확인).
+- [ ] 김민주에게 `PallyCanvas` 정적 렌더 export 요청(이번에는 연락·구현하지 않음).
