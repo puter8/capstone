@@ -43,7 +43,7 @@ function formatDividerDate(iso: string): string {
 
 function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cn("font-p-brand text-p-title-en-sm text-p-text", className)} lang="en" style={WORDMARK_STYLE}>
+    <span className={cn("font-p-brand text-p-title-en text-p-text", className)} lang="en" style={WORDMARK_STYLE}>
       Pally
     </span>
   );
@@ -213,7 +213,7 @@ export default function HomeV2Page() {
           {usage ? <UsagePopover id={usagePopoverId} onClose={() => setUsageOpen(false)} open={usageOpen} usage={usage} /> : null}
         </header>
         <section className="flex flex-col gap-p-2 px-p-5 pt-[28px]">
-          <p className="text-p-eyebrow text-p-text-muted">{formatTodayLabel()} · 나만의 영어 친구</p>
+          <p className="text-p-eyebrow text-p-text-muted">{formatTodayLabel()}</p>
           <h1 className="text-p-heading tracking-[-0.02em] text-p-text">
             {home.displayName ? `${home.displayName}, 오늘은 어떤 이야기를 해볼까요?` : "오늘은 어떤 이야기를 해볼까요?"}
           </h1>

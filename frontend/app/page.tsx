@@ -7,12 +7,18 @@ import { AppFrame } from "@/components/v2/AppFrame";
 import { Stage } from "@/components/v2/Stage";
 import { Toast } from "@/components/v2/Toast";
 import { supabase } from "@/lib/supabase/client";
+import type { Axes } from "@/lib/types/character";
 import { routes } from "@/lib/v2/routes";
 import { cn } from "@/lib/utils";
 
 type Provider = "google" | "kakao";
 
 const WORDMARK_STYLE = { fontVariationSettings: '"SOFT" 0, "WONK" 1' } as const;
+
+// The login Pally is the yellow one: rounded square, yellow body, wide smile
+// (Intimacy in the top tier). It is fixed on purpose and independent of the
+// new-user default axes.
+const LOGIN_AXES: Axes = { Formality: 50, Energy: 50, Intimacy: 100, Humor: 50, Curiosity: 50 };
 
 export default function LoginV2Page() {
   const [isLoading, setIsLoading] = useState<Provider | null>(null);
@@ -44,7 +50,7 @@ export default function LoginV2Page() {
         <span className="font-p-brand text-p-title-en text-p-text" lang="en" style={WORDMARK_STYLE}>
           Pally
         </span>
-        <Stage glow={false} size="large" />
+        <Stage axes={LOGIN_AXES} glow={false} size="large" />
         <h1 className="text-p-heading tracking-[-0.02em] text-p-text">
           나를 가장 잘 아는
           <br />
