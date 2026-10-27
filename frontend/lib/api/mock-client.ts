@@ -572,7 +572,7 @@ export const mockPallyApi: PallyApi = {
     }
     const deletedConversations = mockState.records.length;
     mockState.records = [];
-    mockState.profile.traits = ["acquaint", "serious", "calm", "indifferent", "casual"];
+    mockState.profile.traits = ["acquaint", "funny", "lively", "curious", "casual"];
     mockState.profile.updated_at = new Date().toISOString();
     idempotencyCache.clear();
     return { status: "deleted", deleted_conversations: deletedConversations };

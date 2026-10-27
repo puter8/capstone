@@ -34,10 +34,10 @@ export interface Axes {
 /** 기본 5축 초기값 (세션 시작 전 / EMA prev 초기화용) */
 export const DEFAULT_AXES: Axes = {
   Formality: 50,
-  Energy: 30,
-  Intimacy: 20,
-  Humor: 10,
-  Curiosity: 15,
+  Energy: 50,
+  Intimacy: 0,
+  Humor: 50,
+  Curiosity: 50,
 };
 
 // ---------------------------------------------------------------------------

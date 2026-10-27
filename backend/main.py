@@ -1629,9 +1629,9 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
 
 # 첫 Pally 의 5축. 프론트 DEFAULT_AXES(lib/types/character.ts)와 같은 값이고,
 # 여기에 태그 규칙을 적용한 것이 profiles.traits 의 기본값(_DEFAULT_TRAITS,
-# 20260922000000_profiles_default_traits.sql)이다. 셋이 어긋나면 신규 사용자의
+# 20261027000000_profiles_default_traits_neutral.sql)이다. 셋이 어긋나면 신규 사용자의
 # 홈 Pally 와 마이페이지 태그가 서로 다른 모습을 말한다 (test_smoke 가 지킨다).
-_INITIAL_AXES = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+_INITIAL_AXES = {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
 
 
 def _conversation_to_response(row: dict) -> dict:
@@ -2465,8 +2465,8 @@ _TRAIT_TIERS = (
 
 # 신규 가입자 기본 태그이자 데이터 삭제 후 되돌릴 값. 프론트가 신규 사용자에게
 # 보여주는 기본 Pally(DEFAULT_AXES)에 위 구간 규칙을 적용한 결과와 같아야 한다
-# (supabase/migrations/20260922000000_profiles_default_traits.sql 의 기본값).
-_DEFAULT_TRAITS = ["acquaint", "serious", "calm", "indifferent", "casual"]
+# (supabase/migrations/20261027000000_profiles_default_traits_neutral.sql 의 기본값).
+_DEFAULT_TRAITS = ["acquaint", "funny", "lively", "curious", "casual"]
 
 
 def _axis_tier(value: float) -> int:

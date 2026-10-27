@@ -105,11 +105,11 @@ def test_default_traits_match_the_default_pally_shown_to_new_users():
     """신규 가입자 기본 태그(DB default)는 홈 화면의 기본 Pally 모습과 같아야 한다.
 
     frontend/lib/types/character.ts 의 DEFAULT_AXES 를 태그 규칙에 넣은 결과가
-    supabase/migrations/20260922000000_profiles_default_traits.sql 의 기본값이다.
+    supabase/migrations/20261027000000_profiles_default_traits_neutral.sql 의 기본값이다.
     둘 중 하나를 바꾸면 이 테스트와 다른 쪽도 함께 바꿔야 한다.
     """
-    frontend_default_axes = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
-    assert main._axes_to_traits(frontend_default_axes) == ["acquaint", "serious", "calm", "indifferent", "casual"]
+    frontend_default_axes = {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
+    assert main._axes_to_traits(frontend_default_axes) == ["acquaint", "funny", "lively", "curious", "casual"]
 
 
 def test_axes_to_traits_always_returns_five_unique_tags():
@@ -259,7 +259,7 @@ def test_delete_conversation_history_requires_authentication():
 
 def test_default_traits_constant_matches_migration_default():
     """코드의 복원값과 DB 기본값(마이그레이션)이 같아야 한다."""
-    frontend_default_axes = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+    frontend_default_axes = {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
 
     assert main._DEFAULT_TRAITS == main._axes_to_traits(frontend_default_axes)
 
@@ -946,7 +946,7 @@ def test_first_pally_axes_match_the_default_traits():
     """신규 사용자의 홈 Pally(프로필 current_axes)와 마이페이지 기본 태그는 같은 모습이어야 한다."""
     assert main._axes_to_traits(main._INITIAL_AXES) == main._DEFAULT_TRAITS
     # 프론트 DEFAULT_AXES (frontend/lib/types/character.ts)
-    assert main._INITIAL_AXES == {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+    assert main._INITIAL_AXES == {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
 
 
 def test_in_turn_order_puts_the_user_message_before_its_reply_at_the_same_time():
