@@ -2,8 +2,6 @@
 
 import { useEffect, useRef } from 'react';
 import type { Message } from '@/lib/types/message';
-import { InlineFeedbackPanel } from '@/components/feedback/InlineFeedbackPanel';
-import { recordFeedbackItemOpened } from '@/lib/analytics/activity-events';
 import { cn } from '@/lib/utils';
 import { MessageRow } from './MessageRow';
 import { DateDivider } from './DateDivider';
@@ -170,7 +168,12 @@ function ShortBubble({
           <>
             {lastPally && (
               <div ref={lastPallyRowRef}>
-                <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
+                <MessageRow
+                  speaker="pally"
+                  transcript={lastPally.transcript}
+                  segments={lastPally.segments}
+                  compact
+                />
               </div>
             )}
             <MessageRow speaker="pally" transcript="" state="listening" />
@@ -184,10 +187,14 @@ function ShortBubble({
             {lastUser && <MessageRow speaker="you" transcript={lastUser.transcript} compact />}
             {lastPally && (
               <div ref={lastPallyRowRef}>
-                <MessageRow speaker="pally" transcript={lastPally.transcript} compact />
+                <MessageRow
+                  speaker="pally"
+                  transcript={lastPally.transcript}
+                  segments={lastPally.segments}
+                  compact
+                />
               </div>
             )}
-            {lastPally && <MessageFeedback key={lastPally.id} message={lastPally} />}
           </>
         )}
       </div>
@@ -240,8 +247,8 @@ function LongBubble({
             <MessageRow
               speaker={m.role === 'pally' ? 'pally' : 'you'}
               transcript={m.transcript}
+              segments={m.segments}
             />
-            {m.role === 'pally' && <MessageFeedback message={m} />}
           </div>
         ))}
         {thinking && <MessageRow speaker="pally" transcript="" state="thinking" />}
@@ -258,20 +265,5 @@ function LongBubble({
         <Chevron direction="up" />
       </button>
     </section>
-  );
-}
-
-function MessageFeedback({ message }: { message: Message }) {
-  if (!message.feedback) return null;
-  return (
-    <InlineFeedbackPanel
-      className="mt-2 shrink-0"
-      feedback={message.feedback.items}
-      onOpen={(item) => {
-        void recordFeedbackItemOpened(message.sessionId, item).catch((error: unknown) => {
-          console.error('Feedback activity event failed', error);
-        });
-      }}
-    />
   );
 }

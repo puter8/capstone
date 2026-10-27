@@ -1007,6 +1007,8 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
     from types import SimpleNamespace
 
     payload = {
+        "original_error": "I'm diet",
+        "error_reason": "The phrase is be on a diet, not be diet.",
         "reaction": "Oh, you're on a diet?", "corrected_expr": "you're on a diet",
         "own_remark": "I skip lunch sometimes too.",
         "new_expr": "skip lunch", "question": "What do you eat for dinner?",
@@ -1031,3 +1033,73 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
         "correction", "own_remark", "new_expr", "own_remark", "question",
     ]
     assert [s["text"] for s in segments if s["kind"] == "correction"] == ["you're on a diet"]
+
+
+def test_current_correct_utterance_keeps_segments_without_a_correction(monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    payload = {
+        "original_error": "", "error_reason": "", "corrected_expr": "",
+        "reaction": "You were just chilling?",
+        "own_remark": "I like to take it easy too.",
+        "new_expr": "take it easy", "question": "Did you relax much?",
+    }
+    post = AsyncMock(return_value=SimpleNamespace(
+        status_code=200,
+        json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
+    ))
+    monkeypatch.setattr(main.app.state, "http_client", SimpleNamespace(post=post), raising=False)
+    plain = AsyncMock()
+    monkeypatch.setattr(main, "_call_gemini_chat", plain)
+
+    text, segments = asyncio.run(main._call_gemini_chat_segments(
+        "I was just chilling.", [], "Pally", "A2", dict(main._INITIAL_AXES),
+    ))
+
+    assert text == "You were just chilling? I like to take it easy too. Did you relax much?"
+    assert "".join(s["text"] for s in segments) == text
+    assert not [s for s in segments if s["kind"] == "correction"]
+    assert [s["text"] for s in segments if s["kind"] == "new_expr"] == ["take it easy"]
+    post.assert_awaited_once()
+    plain.assert_not_awaited()
+
+
+def test_ungrounded_correction_retries_then_falls_back_without_logging_evidence(monkeypatch, caplog):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    payload = {
+        "original_error": "I'm diet",
+        "error_reason": "The phrase is be on a diet, not be diet.",
+        "reaction": "Oh, you're on a diet?", "corrected_expr": "on a diet",
+        "own_remark": "I skip lunch sometimes too.",
+        "new_expr": "skip lunch", "question": "What do you eat for dinner?",
+    }
+    post = AsyncMock(return_value=SimpleNamespace(
+        status_code=200,
+        json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
+    ))
+    monkeypatch.setattr(main.app.state, "http_client", SimpleNamespace(post=post), raising=False)
+    plain = AsyncMock(return_value="That sounds relaxing. Did you have fun?")
+    monkeypatch.setattr(main, "_call_gemini_chat", plain)
+    utterance = "I was just chilling."
+    history = [SimpleNamespace(role="user", content="I'm diet")]
+
+    text, segments = asyncio.run(main._call_gemini_chat_segments(
+        utterance, history, "Pally", "A2", dict(main._INITIAL_AXES),
+    ))
+
+    assert text == "That sounds relaxing. Did you have fun?"
+    assert segments is None
+    assert post.await_count == main._SEGMENT_ATTEMPTS
+    plain.assert_awaited_once_with(utterance, history, "Pally", "A2", dict(main._INITIAL_AXES))
+    assert caplog.text.count("segment reply rejected") == main._SEGMENT_ATTEMPTS
+    assert utterance not in caplog.text
+    assert payload["original_error"] not in caplog.text
+    assert payload["error_reason"] not in caplog.text
+    assert payload["reaction"] not in caplog.text

@@ -42,12 +42,15 @@ function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffer {
  * AudioContext constructed at 16 kHz resamples automatically in decodeAudioData.
  * decodeAudioData works even on a suspended AudioContext — no user gesture needed.
  */
-export async function blobToMonoWav(blob: Blob): Promise<Blob> {
+export async function blobToMonoWav(blob: Blob, maxSeconds?: number): Promise<Blob> {
   const ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
   try {
     const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
 
-    const len = decoded.length;
+    // MediaRecorder can deliver a final chunk just after its stop timer fires.
+    const len = maxSeconds === undefined
+      ? decoded.length
+      : Math.min(decoded.length, Math.floor(maxSeconds * TARGET_SAMPLE_RATE));
     const mono = new Float32Array(len);
     for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
       const chData = decoded.getChannelData(ch);

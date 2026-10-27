@@ -105,9 +105,9 @@ async function apiRequest<TSchema extends z.ZodType>(path: string, options: Requ
     if (!parsedError.success) {
       throw new PallyApiError(response.status, "invalid_response", `서버 오류 응답 형식이 올바르지 않아요. (${response.status})`);
     }
-    const { code, message, request_id: requestId } = parsedError.data.error;
+    const { code, message, request_id: requestId, details } = parsedError.data.error;
     console.error("API request failed", { path, status: response.status, code, message, requestId });
-    throw new PallyApiError(response.status, code, userFacingErrorMessage(response.status, code, message), requestId);
+    throw new PallyApiError(response.status, code, userFacingErrorMessage(response.status, code, message), requestId, details);
   }
 
   const parsed = options.schema.safeParse(payload);

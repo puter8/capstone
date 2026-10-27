@@ -1,5 +1,8 @@
 import type { Axes } from "@/lib/types/character";
 import type { Level } from "@/lib/types/session";
+import type { PallySegment } from "@/lib/api/pally-segments";
+
+export type { PallySegment } from "@/lib/api/pally-segments";
 
 export type ConversationStatus = "active" | "completed";
 export type TurnStatus = "processing" | "completed" | "partial" | "failed";
@@ -65,6 +68,7 @@ export interface ConversationTurn {
   status: TurnStatus;
   user_transcript: string | null;
   pally_text: string | null;
+  pally_segments?: PallySegment[] | null;
   pally_audio_url?: string | null;
   axes?: Axes | null;
   character?: CharacterParams | null;
@@ -117,10 +121,24 @@ export interface ConversationCompleteResponse extends ConversationMutationRespon
   energy?: { status: string; score: number | null; reason: string | null };
 }
 
-// 평소 목소리 기준 등록 상태. disabled 면 기능이 꺼진 서버라 등록 화면을 띄우지 않는다.
+export type EnergyBaselinePrompts = [string, string, string];
+
+export interface EnergyBaselineLimits {
+  clips: 3;
+  min_seconds: number;
+  max_seconds: number;
+}
+
+// A disabled server does not require voice registration.
 export type EnergyBaselineResponse =
-  | { status: "ready"; baseline: { range_st: number; valid_clips: 3; method_version: string } }
-  | { status: "required" | "disabled"; baseline: null };
+  | {
+    status: "ready";
+    baseline: { range_st: number; valid_clips: 3; method_version: string };
+    prompts: EnergyBaselinePrompts;
+    limits: EnergyBaselineLimits;
+  }
+  | { status: "required"; baseline: null; prompts: EnergyBaselinePrompts; limits: EnergyBaselineLimits }
+  | { status: "disabled"; baseline: null; prompts: []; limits: null };
 
 export interface ConversationListResponse {
   items: ConversationListItem[];
@@ -144,6 +162,7 @@ export interface TurnResponse {
   pally: {
     text: string;
     audio: string | null;
+    segments?: PallySegment[] | null;
   };
   axes: Axes;
   character: CharacterParams;
@@ -367,13 +386,15 @@ export class PallyApiError extends Error {
   readonly code: string;
   readonly status: number;
   readonly requestId: string;
+  readonly details?: Record<string, unknown>;
 
-  constructor(status: number, code: string, message: string, requestId = createRequestId()) {
+  constructor(status: number, code: string, message: string, requestId = createRequestId(), details?: Record<string, unknown>) {
     super(message);
     this.name = "PallyApiError";
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.details = details;
   }
 }
 

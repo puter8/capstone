@@ -3,7 +3,7 @@
 import { useCallback, useRef } from 'react';
 import { pickMimeType } from './pickMimeType';
 
-const MAX_DURATION_MS = 30_000;
+export const MAX_DURATION_MS = 30_000;
 
 const ERR_NO_MIME = '이 브라우저는 음성 녹음을 지원하지 않아요.';
 const ERR_MIC_ACCESS = '마이크에 접근할 수 없어요.';
