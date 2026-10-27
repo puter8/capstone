@@ -49,7 +49,7 @@ export const DEFAULT_AXES: Axes = {
 //   Energy    → 몸 모양: 0~33=원(calm), 34~66=둥근 사각(lively), 67~100=8각 별(energetic)
 //   Curiosity → 몸 색상, 연속: 파랑(0) → 노랑(50) → 빨강(100)
 //   Formality → 눈: 0~33=단순한 점(blunt), 34~66=흰자+동공(casual), 67~100=반짝이는 눈(formal)
-//   Humor     → 전신 움직임: 비활성(고정 bob)
+//   Humor     → 전신 움직임: 0~33=거의 정지(serious), 34~66=보통 bob, 67~100=좌우 wiggle(ridiculous)
 // 아래 axesToCharacterParams 의 필드 이름(spikiness/borderRadius/eyeType/...)은 예전 매핑 기준이며
 // 렌더러는 이 함수를 쓰지 않는다.
 // ---------------------------------------------------------------------------

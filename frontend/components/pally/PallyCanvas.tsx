@@ -113,11 +113,19 @@ export default function PallyCanvas({
 
     // Final mapping (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14):
     // Intimacy=mouth, Energy=body shape, Curiosity=body colour (continuous),
-    // Formality=eyes, Humor=whole-body motion (inactive: fixed calm bob).
-    const oY = Math.sin(t * 0.9) * 4;
+    // Formality=eyes, Humor=whole-body motion.
+    //
+    // Humor → 움직임(bob/bounce/wiggle): serious=거의 정지, ridiculous=활발한 wiggle.
+    // 최종 매핑으로 옮길 때 고정 bob 으로 비워뒀던 자리에, 이전 매핑에서 쓰던 3단계를
+    // 그대로 되돌린다. 0단계가 그 고정값과 같아 차분한 쪽 모습은 바뀌지 않는다.
+    const mT = tier(ax.Humor);
+    let oY = 0, oX = 0;
+    if      (mT === 0) { oY = Math.sin(t * 0.9) * 4; }
+    else if (mT === 1) { oY = Math.sin(t * 1.8) * 8; }
+    else               { oY = Math.sin(t * 3.2) * 7; oX = Math.cos(t * 3.2) * 5; }
 
     ctx.save();
-    ctx.translate(cx, cy + oY);
+    ctx.translate(cx + oX, cy + oY);
 
     const [r, g, b] = curiosityRgb(ax.Curiosity);
     // Energy → body shape: calm=circle → lively=rounded square → energetic=8-point star
@@ -127,7 +135,10 @@ export default function PallyCanvas({
     ctx.shadowBlur  = 20;
 
     if (sT === 2) {
-      drawStar(ctx, 8, bs * 1.15, bs * 0.63, 10);
+      // Tip angle comes from innerR/outerR: 0.63 gave a 46° spike, which read as sharp
+      // rather than lively. 0.78 opens it to 70°. Raise innerR to blunt it further
+      // (0.85 is 84°); tipR only rounds the very point and saturates at 27.
+      drawStar(ctx, 8, bs * 1.15, bs * 0.78, 10);
     } else {
       ctx.beginPath();
       ctx.roundRect(-bs, -bs, bs * 2, bs * 2, sT === 0 ? bs : bs * 0.3);
@@ -198,16 +209,25 @@ export default function PallyCanvas({
         ctx.fillStyle = '#1a1a1a';
         ctx.fill();
 
-        // 노란 마름모 (검정 원 안 중앙)
-        const mx = px;
-        const my = py;
-        const hw = pupilR * 0.40; // 가로 반폭
-        const hh = pupilR * 0.55; // 세로 반폭 (세로로 약간 길게)
+        // 노란 반짝임. 4각 별 — 눈 안이 작아 꼭짓점이 많으면 뭉개져서 점으로
+        // 보인다. 안쪽 반지름을 바깥의 28%로 깊게 파야 반짝임으로 읽히고, 그보다
+        // 얕으면 마름모와 구별되지 않는다.
+        // 동공 중앙이 아니라 좌상단에 둔다 — 눈에 비친 빛처럼 보이게. 시선과 함께
+        // 움직이도록 동공 좌표(px, py)를 기준으로 한다.
+        const sparkleOuter = pupilR * 0.45;
+        const sparkleInner = sparkleOuter * 0.28;
+        const sparkleX = px - pupilR * 0.30;
+        const sparkleY = py - pupilR * 0.30;
         ctx.beginPath();
-        ctx.moveTo(mx,      my - hh); // 위
-        ctx.lineTo(mx + hw, my);      // 오른쪽
-        ctx.lineTo(mx,      my + hh); // 아래
-        ctx.lineTo(mx - hw, my);      // 왼쪽
+        for (let s = 0; s < 8; s++) {
+          const a = -Math.PI / 2 + (s * Math.PI) / 4;
+          const sr = s % 2 === 0 ? sparkleOuter : sparkleInner;
+          const sx = sparkleX + Math.cos(a) * sr;
+          // 세로로 살짝 길게 — 원래 마름모의 비율을 유지한다
+          const sy = sparkleY + Math.sin(a) * sr * 1.25;
+          if (s === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
         ctx.closePath();
         ctx.fillStyle = '#FFD700';
         ctx.fill();
