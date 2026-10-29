@@ -22,6 +22,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { Subscription, UsageResponse } from "@/lib/api";
 import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
+import { userFacingWarningMessages } from "@/lib/api/error-messages";
 import { requestPallyOpener } from "@/lib/api/opener";
 import { markTitlePending } from "@/lib/api/pending-titles";
 import {
@@ -436,7 +437,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
           setUsage((current) => usageFromQuota(current, quota));
           if (userId) patchStaleUsage(userId, quota);
         }
-        const notices = response.warnings.map((item) => item.message);
+        const notices = userFacingWarningMessages(response.warnings);
         if (response.replayed) notices.push("네트워크 재시도로 저장된 응답을 다시 불러왔어요.");
         setWarning(notices.length > 0 ? notices.join(" ") : null);
 
@@ -534,8 +535,9 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       // coming back to home does not flash the previous look before the reload.
       if (userId && firstUserTranscript) patchStaleProfileAxes(userId, getAccumulatedAxes());
       if (conversationId && firstUserTranscript) markTitlePending(conversationId, firstUserTranscript);
-      if (completed && completed.warnings.length > 0) {
-        setWarning(completed.warnings.map((item) => item.message).join(" "));
+      if (completed) {
+        const notices = userFacingWarningMessages(completed.warnings);
+        setWarning(notices.length > 0 ? notices.join(" ") : null);
       }
       if (firstUserTranscript) revealAxes();
       conversationIdRef.current = null;
@@ -625,7 +627,8 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         const userId = userIdRef.current;
         if (userId) invalidateConversationData(userId, conversationId);
         if (openerRequestRef.current !== requestId || closingRef.current) return;
-        setWarning(opener.warnings.length ? opener.warnings.map((item) => item.message).join(" ") : null);
+        const notices = userFacingWarningMessages(opener.warnings);
+        setWarning(notices.length > 0 ? notices.join(" ") : null);
         dispatch({
           type: "opener/received",
           pallyMsg: {

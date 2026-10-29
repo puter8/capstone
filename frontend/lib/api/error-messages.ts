@@ -1,4 +1,5 @@
 import { PallyApiError } from "@/lib/api/contracts";
+import type { ApiWarning } from "@/lib/api/contracts";
 
 // The backend writes some error messages in English for logs and API clients.
 // Screens show `PallyApiError.message` as-is, so the API client converts them here.
@@ -9,6 +10,11 @@ export const SESSION_ERROR_MESSAGE = "로그인 정보를 확인하지 못했어
 export const SIGN_IN_ERROR_MESSAGE = "로그인을 완료하지 못했어요. 다시 시도해 주세요.";
 
 const HANGUL = /[가-힣]/;
+
+/** Keep energy retention metadata in the API without showing an advisory toast. */
+export function userFacingWarningMessages(warnings: readonly ApiWarning[]): string[] {
+  return warnings.filter((warning) => warning.code !== "energy_unavailable").map((warning) => warning.message);
+}
 
 const MESSAGES_BY_CODE: Record<string, string> = {
   unauthorized: "로그인이 필요해요.",

@@ -1220,10 +1220,13 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
         "error_reason": "The phrase is be on a diet, not be diet.",
         "reaction": "Oh, you're on a diet?", "corrected_expr": "you're on a diet",
         "own_remark": "I skip lunch sometimes too.",
-        "new_expr": "skip lunch", "question": "What do you eat for dinner?",
+        "question": "What do you eat for dinner?",
     }
 
     async def ok_post(*_args, **_kwargs):
+        request = _kwargs["json"]
+        assert "new_expr" not in request["generationConfig"]["responseSchema"]["properties"]
+        assert "new_expr" not in request["system_instruction"]["parts"][0]["text"]
         return SimpleNamespace(
             status_code=200,
             json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
@@ -1239,7 +1242,7 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
     assert "".join(s["text"] for s in segments) == text
     # 주황은 고쳐준 표현만 덮는다 — reaction 앞의 "Oh, " 는 plain 이다.
     assert [s["kind"] for s in segments if s["kind"] != "plain"] == [
-        "correction", "own_remark", "new_expr", "own_remark", "question",
+        "correction", "own_remark", "question",
     ]
     assert [s["text"] for s in segments if s["kind"] == "correction"] == ["you're on a diet"]
 
@@ -1254,7 +1257,7 @@ def test_current_correct_utterance_keeps_segments_without_a_correction(monkeypat
         "original_error": "", "error_reason": "", "corrected_expr": "",
         "reaction": "You were just chilling?",
         "own_remark": "I like to take it easy too.",
-        "new_expr": "take it easy", "question": "Did you relax much?",
+        "question": "Did you relax much?",
     }
     post = AsyncMock(return_value=SimpleNamespace(
         status_code=200,
@@ -1271,7 +1274,8 @@ def test_current_correct_utterance_keeps_segments_without_a_correction(monkeypat
     assert text == "You were just chilling? I like to take it easy too. Did you relax much?"
     assert "".join(s["text"] for s in segments) == text
     assert not [s for s in segments if s["kind"] == "correction"]
-    assert [s["text"] for s in segments if s["kind"] == "new_expr"] == ["take it easy"]
+    assert [s["text"] for s in segments if s["kind"] == "own_remark"] == ["I like to take it easy too."]
+    assert not [s for s in segments if s["kind"] == "new_expr"]
     post.assert_awaited_once()
     plain.assert_not_awaited()
 
@@ -1287,7 +1291,7 @@ def test_ungrounded_correction_retries_then_falls_back_without_logging_evidence(
         "error_reason": "The phrase is be on a diet, not be diet.",
         "reaction": "Oh, you're on a diet?", "corrected_expr": "on a diet",
         "own_remark": "I skip lunch sometimes too.",
-        "new_expr": "skip lunch", "question": "What do you eat for dinner?",
+        "question": "What do you eat for dinner?",
     }
     post = AsyncMock(return_value=SimpleNamespace(
         status_code=200,

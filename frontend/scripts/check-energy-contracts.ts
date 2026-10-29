@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { PallyApiError } from "../lib/api/contracts";
 import type { EnergyBaselineResponse } from "../lib/api/contracts";
+import { userFacingWarningMessages } from "../lib/api/error-messages";
 import { conversationCompleteResponseSchema, energyBaselineResponseSchema } from "../lib/api/schemas";
 
 const required: EnergyBaselineResponse = {
@@ -65,6 +66,14 @@ const completion = conversationCompleteResponseSchema.parse({
 });
 assert.equal(completion.current_axes?.Energy, 65);
 assert.equal(completion.warnings[0].code, "energy_unavailable");
+assert.deepEqual(userFacingWarningMessages(completion.warnings), [], "Energy retention is not shown as a toast");
+assert.deepEqual(userFacingWarningMessages([
+  ...completion.warnings,
+  { code: "tts_failed", message: "음성을 재생하지 못했어요." },
+  { code: "feedback_failed", message: "피드백을 만들지 못했어요." },
+  { code: "traits_update_failed", message: "성향을 갱신하지 못했어요." },
+]), ["음성을 재생하지 못했어요.", "피드백을 만들지 못했어요.", "성향을 갱신하지 못했어요."], "Other warnings stay visible alongside retained energy");
+assert.equal(completion.warnings.length, 1, "Filtering the UI does not remove API metadata");
 
 async function checkHttpContract() {
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://fixture.supabase.invalid";

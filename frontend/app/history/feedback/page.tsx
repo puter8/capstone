@@ -219,7 +219,6 @@ export default function FeedbackV2Page() {
             {totalCorrections > 0 ? (
               <span className="rounded-p-full bg-p-primary-container px-[10px] py-p-1 text-p-eyebrow text-p-primary">고친 표현 {totalCorrections}개</span>
             ) : null}
-            <span className="rounded-p-full bg-p-raised px-[10px] py-p-1 text-p-eyebrow text-p-text-secondary">{conversation.turn_count}번 주고받음</span>
           </div>
         </header>
       ) : null}

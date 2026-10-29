@@ -966,7 +966,7 @@ async def _call_gemini_chat_segments(
 ) -> tuple:
     """Pally 응답을 색칠 가능한 조각으로 받는다. 반환: (text, segments|None).
 
-    조각은 교정(correction) / Pally 자신의 말(own_remark) / 새 표현(new_expr) /
+    조각은 교정(correction) / Pally 자신의 말(own_remark) /
     질문(question) 으로 나뉘고, 프론트가 그대로 색을 입힌다.
 
     모델이 계약을 깨면 segments 없이 기존 평문 경로로 내려간다. 조각을 추측해

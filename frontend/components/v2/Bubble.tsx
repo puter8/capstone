@@ -17,12 +17,10 @@ type BubbleProps = {
 
 const SEGMENT_CLASS: Partial<Record<PallySegment["kind"], string>> = {
   correction: "font-semibold text-p-primary underline decoration-solid underline-offset-4",
-  new_expr: "font-semibold text-p-secondary underline decoration-dotted underline-offset-4",
 };
 
 const SEGMENT_PREFIX: Partial<Record<PallySegment["kind"], string>> = {
   correction: "고친 표현: ",
-  new_expr: "새 표현: ",
 };
 
 export function Bubble({ speaker, text, segments, emphasis = "current", placeholder = false, className }: BubbleProps) {

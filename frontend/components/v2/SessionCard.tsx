@@ -7,7 +7,6 @@ import { formatClockTime, formatDurationMinutes } from "@/lib/v2/format";
 import { cn } from "@/lib/utils";
 
 import { IconArrowRight } from "./icons";
-import { PallyThumb } from "./PallyThumb";
 
 type SessionCardProps = {
   item: ConversationListItem;
@@ -20,8 +19,8 @@ type SessionCardProps = {
   className?: string;
 };
 
-export function sessionTitle(item: Pick<ConversationListItem, "title" | "preview">): string {
-  return item.title ?? item.preview ?? "Pally와 나눈 대화";
+export function sessionTitle(item: Pick<ConversationListItem, "title">): string {
+  return item.title ?? "Pally와 나눈 대화";
 }
 
 /**
@@ -36,10 +35,7 @@ export function SessionCard({ item, feedbackHref, titlePending = false, onResume
 
   return (
     <article className={cn("relative flex w-full flex-col gap-[6px] rounded-p-sheet bg-p-surface px-p-5 pb-p-3 pt-p-4", className)}>
-      <div className="flex items-center gap-p-3">
-        <p className="min-w-0 flex-1 text-p-eyebrow text-p-text-muted">{meta}</p>
-        <PallyThumb axes={item.current_axes ?? undefined} size={32} />
-      </div>
+      <p className="text-p-eyebrow text-p-text-muted">{meta}</p>
       {titlePending ? (
         <p aria-busy="true" className="flex h-[26px] items-center" role="status">
           <span className="sr-only">대화 제목을 만들고 있어요</span>
@@ -52,13 +48,7 @@ export function SessionCard({ item, feedbackHref, titlePending = false, onResume
           </Link>
         </h2>
       )}
-      {item.preview ? (
-        <p className="truncate text-p-small text-p-text-secondary" lang="en">
-          {item.preview}
-        </p>
-      ) : null}
       <div className="flex items-center gap-[6px] pt-p-1">
-        <span className="rounded-p-full bg-p-raised px-[10px] py-p-1 text-p-eyebrow text-p-text-secondary">{item.turn_count}번 주고받음</span>
         {item.feedback_count > 0 ? (
           <span className="rounded-p-full bg-p-primary-container px-[10px] py-p-1 text-p-eyebrow text-p-primary">고친 표현 {item.feedback_count}개</span>
         ) : null}
@@ -90,7 +80,6 @@ export function SessionCardSkeleton() {
     <div aria-hidden="true" className="flex w-full flex-col gap-[10px] rounded-p-sheet bg-p-surface px-p-5 pb-p-3 pt-p-4">
       <span className="h-[12px] w-[96px] rounded-p-full bg-p-raised" />
       <span className="h-[18px] w-[180px] rounded-p-full bg-p-raised" />
-      <span className="h-[12px] w-full rounded-p-full bg-p-raised" />
       <span className="h-[24px] w-[200px] rounded-p-full bg-p-raised" />
     </div>
   );

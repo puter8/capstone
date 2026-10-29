@@ -2,26 +2,15 @@
 """
 reply_segments
 --------------
-Pally's turn reply, built from labelled pieces instead of one blob, so the app
-can colour what it means: the expression Pally corrected orange, what Pally
-offers mint.
-
-Both coloured spans are substrings the model copied from its own sentences -
-`corrected_expr` inside `reaction`, `new_expr` inside `own_remark` - so we paint
-only the words that carry the meaning, never a whole sentence. The user said
+Pally's turn reply, built from labelled pieces so the app can highlight only
+the expression Pally corrected. `corrected_expr` is copied from `reaction`,
+so we paint only the words that carry the meaning, never a whole sentence. The user said
 "I'm diet" and Pally says "Oh, you're on a diet?": the orange is
 "you're on a diet", not the "Oh," in front of it.
 
-Why pieces and not span tagging: asking the model to compose a natural A2 reply
-AND then mark spans inside it is two jobs, and it drops one. Measured over 12
-live calls, only 4 carried all three labels and 5 lost the spaces between
-sentences. Making each piece a required schema field instead moved that to 24/24
-with the same latency (p50 0.93s vs 0.92s for the current plain reply), because
-the schema enforces presence where prose instructions only ask.
-
-The backend joins the pieces with single spaces, so spacing can never break, and
-`new_expr` is a substring of `own_remark`. Before composing the reaction, the
-model identifies an actual error in the current utterance and gives a specific
+The backend joins the pieces with single spaces. Pally's own remark stays an
+ordinary sentence. Before composing the reaction, the model identifies an
+actual error in the current utterance and gives a specific
 reason. Source and reply spans are checked here; whether the source is incorrect
 English remains a model judgment, not something substring checks can prove.
 
@@ -82,17 +71,13 @@ RESPONSE_SCHEMA = {
             "type": "STRING",
             "description": "One short sentence Pally says about itself on the same topic.",
         },
-        "new_expr": {
-            "type": "STRING",
-            "description": "The exact phrase copied from own_remark that is worth learning.",
-        },
         "question": {
             "type": "STRING",
             "description": "One short question that keeps the conversation going.",
         },
     },
-    "required": ["original_error", "error_reason", "reaction", "corrected_expr", "own_remark", "new_expr", "question"],
-    "propertyOrdering": ["original_error", "error_reason", "reaction", "corrected_expr", "own_remark", "new_expr", "question"],
+    "required": ["original_error", "error_reason", "reaction", "corrected_expr", "own_remark", "question"],
+    "propertyOrdering": ["original_error", "error_reason", "reaction", "corrected_expr", "own_remark", "question"],
 }
 
 _PROMPT = """You are {character_name}, the user's English conversation friend. A FRIEND, not a teacher.
@@ -102,7 +87,7 @@ Your personality right now (show it in every piece; the level and length rules w
 Never write meta-commentary like "You can say X" or "The correct form is X".
 Never point out a mistake. Just say it correctly yourself and move on.
 
-Return exactly these seven fields, in this order. Decide whether there is an
+Return exactly these six fields, in this order. Decide whether there is an
 error BEFORE writing the reaction. Never invent an error to justify a rewording.
 
 1. "original_error" - Copy the exact words containing ONE clear grammar or
@@ -136,9 +121,7 @@ error BEFORE writing the reaction. Never invent an error to justify a rewording.
 5. "own_remark" (UNDER 35 characters) - ONE short sentence about yourself on
    their topic. You are sharing, not teaching.
 
-6. "new_expr" - The exact useful phrase copied from own_remark, word for word.
-
-7. "question" (UNDER 30 characters) - One short question to keep talking.
+6. "question" (UNDER 30 characters) - One short question to keep talking.
 
 Examples:
 
@@ -148,7 +131,6 @@ error_reason: "The phrase is be on a diet, not be diet."
 reaction: "Oh, you're on a diet?"
 corrected_expr: "on a diet"
 own_remark: "I skip lunch sometimes too."
-new_expr: "skip lunch"
 question: "What do you eat for dinner?"
 
 User: "Yesterday I go to park with my friend"
@@ -157,7 +139,6 @@ error_reason: "Yesterday requires past went; singular park needs the article the
 reaction: "You went to the park?"
 corrected_expr: "went to the park"
 own_remark: "I love a long walk outside."
-new_expr: "a long walk"
 question: "Was the weather nice?"
 
 User: "She don't like coffee"
@@ -166,7 +147,6 @@ error_reason: "Third-person singular she takes doesn't, not don't."
 reaction: "She doesn't like coffee?"
 corrected_expr: "doesn't"
 own_remark: "I can't start my day without it."
-new_expr: "start my day"
 question: "What does she drink?"
 
 User: "I didn't study anything. I was just chilling."
@@ -175,7 +155,6 @@ error_reason: ""
 reaction: "You were just chilling?"
 corrected_expr: ""
 own_remark: "I like to take it easy too."
-new_expr: "take it easy"
 question: "Did you relax much?"
 
 User: "I like coffee very much."
@@ -184,7 +163,6 @@ error_reason: ""
 reaction: "You like coffee a lot?"
 corrected_expr: ""
 own_remark: "I start my day with tea."
-new_expr: "start my day"
 question: "How do you like it?"
 
 User: "I was tired yesterday."
@@ -193,7 +171,6 @@ error_reason: ""
 reaction: "You were tired yesterday?"
 corrected_expr: ""
 own_remark: "I needed a good night's sleep."
-new_expr: "a good night's sleep"
 question: "Did you rest well?"
 
 Stay in character as {character_name} at all times. Never break the fourth wall."""
@@ -265,9 +242,8 @@ def build_reply(payload: Optional[dict], utterance: str) -> Optional[ReplyParts]
     reaction = _clean(payload["reaction"])
     corrected_expr = _clean(payload["corrected_expr"])
     own_remark = _clean(payload["own_remark"])
-    new_expr = _clean(payload["new_expr"])
     question = _clean(payload["question"])
-    if not (reaction and own_remark and new_expr and question):
+    if not (reaction and own_remark and question):
         return None
     # Evidence must be complete or entirely empty. Ground the source span in
     # this utterance, never a previous turn; this does not prove a grammar error.
@@ -279,12 +255,6 @@ def build_reply(payload: Optional[dict], utterance: str) -> Optional[ReplyParts]
     if corrected_expr and corrected_expr not in reaction:
         return None
 
-    # new_expr must be a span of own_remark; otherwise there is nothing to
-    # underline and highlighting a phrase Pally never said would be a lie.
-    start = own_remark.find(new_expr)
-    if start < 0:
-        return None
-
     text = f"{reaction} {own_remark} {question}"
     if len(text) > MAX_REPLY_CHARS:
         return None
@@ -292,14 +262,6 @@ def build_reply(payload: Optional[dict], utterance: str) -> Optional[ReplyParts]
     if any(phrase in lowered for phrase in _META_PHRASES):
         return None
 
-    end = start + len(new_expr)
-    # own_remark splits into up to three spans so the new expression can carry
-    # its own underline while the rest of the sentence stays Pally's own voice.
-    remark_spans = [
-        ("own_remark", own_remark[:start]),
-        ("new_expr", new_expr),
-        ("own_remark", own_remark[end:]),
-    ]
     reaction_spans = [("plain", reaction)]
     if corrected_expr:
         start = reaction.find(corrected_expr)
@@ -308,7 +270,7 @@ def build_reply(payload: Optional[dict], utterance: str) -> Optional[ReplyParts]
                           ("plain", reaction[end:])]
     segments = [{"kind": kind, "text": part} for kind, part in reaction_spans if part]
     segments += [{"kind": "plain", "text": " "}]
-    segments += [{"kind": kind, "text": part} for kind, part in remark_spans if part]
+    segments += [{"kind": "own_remark", "text": own_remark}]
     segments += [{"kind": "plain", "text": " "}, {"kind": "question", "text": question}]
 
     if "".join(segment["text"] for segment in segments) != text:
