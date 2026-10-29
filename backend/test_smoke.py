@@ -508,6 +508,10 @@ def _opener_client(monkeypatch, *, session, first_message, text="Hey! What music
         query.eq.side_effect = eq
 
         def execute():
+            # messages 외의 테이블(오늘의 표현 snapshot, profiles 등)은 비어 있다.
+            # 전부 같은 행을 돌려주면 snapshot 조회가 메시지 행을 받아 깨진다.
+            if name != "messages":
+                return SimpleNamespace(data=[])
             user_probe = ("role", "user") in filters
             rows = [first_message] if first_message else []
             if user_probe:
@@ -525,8 +529,8 @@ def _opener_client(monkeypatch, *, session, first_message, text="Hey! What music
     monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
     monkeypatch.setattr(main, "_recent_session_texts", lambda *_: [])
 
-    async def fake_generate(axes, level, recent_texts):
-        calls.append((axes, level, recent_texts))
+    async def fake_generate(axes, level, recent_texts, expression_rule=None):
+        calls.append((axes, level, recent_texts, expression_rule))
         return text
 
     calls = []
@@ -559,8 +563,15 @@ def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
     response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
 
     assert response.status_code == 201
-    assert response.json() == {
-        "text": "Hey! What music do you like?", "audio": "BASE64AUDIO", "warnings": [],
+    body = response.json()
+    assert (body["text"], body["audio"], body["warnings"]) == (
+        "Hey! What music do you like?", "BASE64AUDIO", [])
+    # 채팅 화면이 "이번엔 써볼 차례" 를 띄울 시점을 고르려면 오프너가 표현을
+    # 실제로 말했는지 알아야 한다. 이 가짜 오프너 문장에는 표현이 없으므로 False.
+    today = main.daily_expression.pick_for_day("caller-id", main._kst_date(), "A2")
+    assert body["daily_expression"] == {
+        "id": today.id, "text": today.text, "meaning_ko": today.meaning_ko,
+        "spoken": False,
     }
     assert [name for name, _ in inserted] == ["messages"]
     row = inserted[0][1]
@@ -569,7 +580,12 @@ def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
     assert row["axes"] is None  # axes 는 user 발화의 것. 오프너에는 없다
     assert reserved == []  # quota 차감 없음
     # 축 출발점은 완료 대화가 없을 때 첫 Pally 와 같은 _INITIAL_AXES, 레벨은 세션 레벨
-    assert calls == [(dict(main._INITIAL_AXES), "A2", [])]
+    axes, level, recent, expression_rule = calls[0]
+    assert (axes, level, recent) == (dict(main._INITIAL_AXES), "A2", [])
+    # 오늘의 표현은 오프너가 들려준다 — 그 규칙이 실제로 전달되는지까지 본다.
+    today = main.daily_expression.pick_for_day("caller-id", main._kst_date(), "A2")
+    assert expression_rule == main.daily_expression.opener_rule(today)
+    assert today.text in expression_rule
 
 
 def test_opener_is_refused_once_the_user_has_spoken_even_if_one_is_saved(monkeypatch):
@@ -661,7 +677,7 @@ def test_opener_requires_authentication_and_idempotency_key(monkeypatch):
 
 
 def test_opener_failure_does_not_store_a_fallback_line(monkeypatch):
-    """모델이 두 번 다 실패하면 폴백 문구를 저장하지 않고 503 (§6 #3)."""
+    """모델이 매번 실패하면 폴백 문구를 저장하지 않고 503 (§6 #3)."""
     from ai.opener import OpenerRejected
 
     client, inserted, _ = _opener_client(
@@ -681,7 +697,41 @@ def test_opener_failure_does_not_store_a_fallback_line(monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "opener_failed"
-    assert len(attempts) == 2  # 1회 재시도
+    # 오늘의 표현 지시로 2회 + 지시를 뺀 1회. 긴 표현이 레벨 단어 수에 안 들어가
+    # 거부되는 경우가 있어, 표현 때문에 오프너 전체가 막히지 않게 한 단계를 더 둔다.
+    assert len(attempts) == 3
+    assert inserted == []
+
+
+def test_opener_ladder_does_not_outlast_the_old_two_attempt_budget(monkeypatch):
+    """시도가 3회로 늘어도 사용자가 기다리는 최악 시간은 2회분을 넘지 않는다.
+
+    대화 시작 로딩이라 15초까지 늘어나면 안 된다. 예산이 소진되면 남은 시도를
+    건너뛰고 503 으로 끝낸다.
+    """
+    from ai.opener import OpenerRejected
+
+    client, inserted, _ = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        first_message=None, patch_generate=False,
+    )
+    _tts(monkeypatch)
+    attempts = []
+    clock = {"now": 0.0}
+    monkeypatch.setattr(main.time, "monotonic", lambda: clock["now"])
+
+    def slow_and_rejected(*_args, **_kwargs):
+        attempts.append(1)
+        clock["now"] += main._OPENER_TOTAL_TIMEOUT_S  # 매 시도가 예산을 꽉 쓴다
+        raise OpenerRejected("too_long")
+
+    monkeypatch.setattr(main, "generate_opener", slow_and_rejected)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 503
+    # 2회분 예산이 끝났으므로 3회차는 아예 시작하지 않는다.
+    assert len(attempts) == 2
     assert inserted == []
 
 
@@ -747,6 +797,11 @@ class _FakeAchievementQuery:
     def limit(self, *_):
         return self
 
+    def upsert(self, row, **_):
+        self.data.setdefault("writes", []).append((self.table, row))
+        self.data.setdefault(self.table, []).append(row)
+        return self
+
     def execute(self):
         from types import SimpleNamespace
 
@@ -757,7 +812,7 @@ class _FakeAchievementQuery:
         return SimpleNamespace(data=self.data.get(self.table, []))
 
 
-def _achievement_ctx(sessions, spoken_ids, today_msgs):
+def _achievement_ctx(sessions, spoken_ids, today_msgs, level="B1", snapshots=None):
     from unittest.mock import Mock
 
     date_kst = main._kst_date()
@@ -767,10 +822,12 @@ def _achievement_ctx(sessions, spoken_ids, today_msgs):
         "today": today_msgs,
         "activity_events": [],
         "usage_daily": [],
+        "profiles": [{"english_level": level}],
+        "daily_expression_snapshots": list(snapshots or []),
     }
     sb = Mock()
     sb.table.side_effect = lambda name: _FakeAchievementQuery(name, data)
-    return sb, main._gather_achievement_context(sb, "user-1", date_kst), date_kst
+    return sb, main._gather_achievement_context(sb, "user-1", date_kst), date_kst, data
 
 
 def _today_window():
@@ -783,7 +840,7 @@ def test_daily_tasks_do_not_count_a_conversation_the_user_never_spoke_in():
     start, _end = _today_window()
     opener_only = {"id": "s-opener", "created_at": start, "ended_at": start, "reopened_at": None}
 
-    sb, ctx, date_kst = _achievement_ctx([opener_only], spoken_ids=[], today_msgs=[])
+    sb, ctx, date_kst, _data = _achievement_ctx([opener_only], spoken_ids=[], today_msgs=[])
 
     assert ctx["sessions_today"] == [] and ctx["completed_today"] == []
     assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is False  # 오늘 대화 시작
@@ -798,7 +855,7 @@ def test_daily_tasks_count_a_conversation_once_the_user_speaks():
     msgs = [{"session_id": "s-spoke", "role": "user", "transcript": "i went to the park",
              "axes": None, "character": None, "created_at": start, "feedback": None}]
 
-    sb, ctx, date_kst = _achievement_ctx([spoke, opener_only], spoken_ids=["s-spoke"], today_msgs=msgs)
+    sb, ctx, date_kst, _data = _achievement_ctx([spoke, opener_only], spoken_ids=["s-spoke"], today_msgs=msgs)
 
     assert [s["id"] for s in ctx["sessions_today"]] == ["s-spoke"]
     assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is True
@@ -813,7 +870,7 @@ def test_a6_counts_a_conversation_spoken_yesterday_but_completed_today():
     start, _end = _today_window()
     session = {"id": "s-old", "created_at": "2026-01-01T00:00:00+00:00", "ended_at": start, "reopened_at": None}
 
-    sb, ctx, date_kst = _achievement_ctx([session], spoken_ids=["s-old"], today_msgs=[])
+    sb, ctx, date_kst, _data = _achievement_ctx([session], spoken_ids=["s-old"], today_msgs=[])
 
     assert [s["id"] for s in ctx["completed_today"]] == ["s-old"]
     assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is True
@@ -836,10 +893,129 @@ def test_opener_only_conversations_do_not_fill_the_weekly_streak_tasks():
         sessions.append({"id": f"s-spoke-{day}", "created_at": at, "ended_at": None, "reopened_at": None})
         spoken.append(f"s-spoke-{day}")
 
-    sb, ctx, date_kst = _achievement_ctx(sessions, spoken_ids=spoken, today_msgs=[])
+    sb, ctx, date_kst, _data = _achievement_ctx(sessions, spoken_ids=spoken, today_msgs=[])
 
     assert len(ctx["week_conv_dates"]) == 2
     assert main._eval_task(sb, "user-1", date_kst, "E2", ctx) is False
+
+
+# ── 오늘의 표현 (F1) ─────────────────────────────────────────────────────────
+
+
+def _msg(transcript):
+    start, _end = _today_window()
+    return {"session_id": "s-1", "role": "user", "transcript": transcript,
+            "axes": None, "character": None, "created_at": start, "feedback": None}
+
+
+def _spoke_session():
+    start, _end = _today_window()
+    return {"id": "s-1", "created_at": start, "ended_at": None, "reopened_at": None}
+
+
+def test_f1_needs_the_user_to_say_todays_expression():
+    """오늘의 표현은 Pally 가 들려주는 것만으로 달성되지 않는다 — 사용자가 써야 한다.
+
+    Pally 발화는 ctx["user_msgs"] 에 없으므로, 들려준 턴만 있으면 F1 은 미달성이다.
+    """
+    sb, ctx, date_kst, data = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("i listen music every day")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
+
+    sb, ctx, date_kst, data = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("i listen music every day"),
+                    _msg("Actually I'm really into rock these days")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is True
+
+
+def test_f1_accepts_a_negated_use_of_the_expression():
+    """"I'm not into ~" 도 구조를 연습한 것이다 (판정 범위 결정, 2026-10-29)."""
+    sb, ctx, date_kst, _d = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("honestly i'm not into horror movies")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is True
+
+
+def test_f1_does_not_fire_on_a_lookalike_phrase():
+    """"I'm going into town" 은 "I'm into ~" 이 아니다 — 안 쓴 Task 를 주면 안 된다."""
+    sb, ctx, date_kst, _d = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("i'm going into town later")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
+
+
+def test_card_separates_pally_saying_it_from_the_user_saying_it():
+    """카드 문구가 "Pally가 썼어요 · 이번엔 내 차례" 로 가려면 둘을 나눠야 한다.
+
+    Pally 발화만 있는 상태에서 used_today 가 True 가 되면 사용자는 쓰지도 않고
+    달성 처리되고, 반대로 pally_used_today 를 클라이언트가 추측하면 Pally 가
+    말하지 않은 날에도 "방금 썼어요" 가 뜬다.
+    """
+    expr = main.daily_expression.by_id("b1-into")
+    pally_only = [{"role": "pally", "transcript": "Hey! I'm into painting lately."}]
+    user_too = pally_only + [{"role": "user", "transcript": "I'm into movies too"}]
+
+    assert main._spoke_daily_expression(expr, []) is False
+    assert main._spoke_daily_expression(
+        expr, [m for m in pally_only if m["role"] == "user"]) is False
+    assert main._spoke_daily_expression(
+        expr, [m for m in pally_only if m["role"] != "user"]) is True
+    assert main._spoke_daily_expression(
+        expr, [m for m in user_too if m["role"] == "user"]) is True
+
+
+def test_daily_expression_is_written_once_and_then_reused():
+    """같은 날 두 번 물어도 같은 표현이 나오고, 쓰기는 처음 한 번만 일어난다."""
+    sb, _ctx, date_kst, data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], level="B2", snapshots=[])
+
+    first = main._daily_expression(sb, "user-1", date_kst, "B2")
+    assert first.level == "B2"
+    writes = [row for table, row in data["writes"] if table == "daily_expression_snapshots"]
+    assert writes == [{"user_id": "user-1", "date_kst": date_kst, "expr_id": first.id}]
+
+    second = main._daily_expression(sb, "user-1", date_kst, "B2")
+    assert second.id == first.id
+    assert len([r for t, r in data["writes"] if t == "daily_expression_snapshots"]) == 1
+
+
+def test_daily_expression_repicks_when_the_stored_id_left_the_catalog():
+    """카탈로그에서 빠진 표현이 저장돼 있으면 화면이 비지 않게 다시 뽑는다."""
+    sb, _ctx, date_kst, data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], snapshots=[{"expr_id": "b1-removed-long-ago"}])
+
+    expr = main._daily_expression(sb, "user-1", date_kst, "B1")
+
+    assert expr is not None and expr.level == "B1"
+    assert [row["expr_id"] for t, row in data["writes"]
+            if t == "daily_expression_snapshots"] == [expr.id]
+
+
+def test_f1_is_fixed_every_day_for_every_user():
+    """표현 카드가 매일 보이므로 그 Task 도 매일 있어야 한다 (추첨이면 어긋난다)."""
+    assert main._TASK_CATALOG["F1"][0] == "F"  # A~E 는 이미 다 쓰고 있다
+    for user in ("user-a", "user-b"):
+        for day in range(1, 15):
+            ids = main._select_daily_task_ids(user, f"2026-11-{day:02d}")
+            assert len(ids) == 3 and len(set(ids)) == 3
+            assert ids[:2] == ["A1", "F1"]  # 고정 2개 + 추첨 1개
+    # 추첨 슬롯은 고정분을 다시 뽑지 않는다.
+    picked = {
+        ids[2]
+        for day in range(1, 60)
+        for ids in [main._select_daily_task_ids("user-a", f"2026-11-{day % 30 + 1:02d}")]
+    }
+    assert not picked & set(main._FIXED_TASKS)
 
 
 # ── 현재 Pally 상태(current_axes) — 홈·마이페이지·다음 대화가 같은 값을 쓴다 ──
