@@ -192,7 +192,8 @@ railway logs --http --lines 100
 ### Vercel — MCP 우선, CLI 보조
 
 - **팀은 Hobby 플랜이고 멤버는 owner(백은혜) 1명뿐이다.** 2026-10-27 Pro에서 다운그레이드했다. Pro 팀원 초대는 Viewer가 아니면 좌석당 월 $20가 청구됐고, 팀원은 Vercel에서 직접 배포하지 않았다.
-- 팀원은 Vercel 계정 없이 작업한다. `puter8/capstone`은 public 저장소라 `main` 머지는 Git 연동으로 자동 배포된다.
+- Hobby의 Vercel Git 연동은 팀 멤버가 아닌 사람이 작성한 커밋(팀원의 커밋·머지 커밋)의 배포를 거부한다(`You don't have permission to create a Preview Deployment`). 그래서 `frontend/vercel.json`으로 Git 연동 자동 배포를 끄고, `main` push마다 `.github/workflows/deploy-frontend.yml`이 owner의 `VERCEL_TOKEN`(GitHub repository secret)으로 production을 배포한다. PR preview 배포는 없다.
+- 팀원은 Vercel 계정 없이 작업한다. 배포 결과는 GitHub Actions의 `Deploy frontend` 실행 결과로 확인한다. 루트 `.vercelignore`는 배포 업로드를 `frontend/`로 한정한다.
 - 배포 로그·환경변수 확인·변경이 필요하면 owner에게 요청한다. 팀원을 Vercel 팀에 다시 초대하거나 Pro로 업그레이드하지 않는다(결제 결정은 owner와 팀 합의 후).
 - 공식 MCP 주소는 `https://mcp.vercel.com`이다. 사용하는 AI 앱에서 서버를 등록하고 owner의 Vercel 계정으로 OAuth 인증한다. Claude Code는 `/mcp`에서 인증할 수 있다. [공식 MCP 안내](https://vercel.com/docs/agent-resources/vercel-mcp)
 - MCP가 로드되면 우리 팀·프로젝트를 조회하고 배포 상태/로그 도구를 사용한다. 도구 이름은 현재 세션에 노출된 목록을 기준으로 한다.
@@ -205,7 +206,7 @@ vercel projects inspect yourpally --scope hunheay123s-projects
 ```
 
 - `The specified scope does not exist`가 나오면 owner 계정으로 로그인했는지 확인한다. 프로젝트를 새로 만들거나 다른 개인 프로젝트로 대체하지 않는다.
-- `vercel deploy --prod` 수동 **금지**. Production은 Git 연동을 통해 배포한다. 환경변수 변경은 승인된 작업 범위에서 CLI 또는 dashboard로 수행한다.
+- `vercel deploy --prod` 수동 **금지**. Production은 `main` 머지 후 `Deploy frontend` 워크플로가 배포한다(재배포가 필요하면 그 워크플로를 수동 실행). 환경변수 변경은 승인된 작업 범위에서 CLI 또는 dashboard로 수행한다.
 
 ### Supabase — 팀원별 MCP 인증
 
@@ -229,14 +230,14 @@ vercel projects inspect yourpally --scope hunheay123s-projects
 
 | Surface | Platform | 코드 위치 | Owner |
 |---------|----------|-----------|-------|
-| Frontend | **Vercel** (Git 자동 배포) | `frontend/` | 이찬희 |
+| Frontend | **Vercel** (`main` push → GitHub Actions `Deploy frontend`) | `frontend/` | 이찬희 |
 | Backend | **Railway** (Git 자동 배포) | `backend/` | 백은혜 |
 
 - Production 변경은 feature → `main` PR 머지로 진행한다. 머지 후 실제 배포 결과를 확인한다.
 - Railway에는 루트 `Procfile`과 `backend/Procfile`이 있고 시작 모듈이 다르다. 서비스의 실제 Root Directory/Start Command와 루트 `ai/` import 가능 여부를 확인한다.
 - Railway URL이 바뀌면 `frontend/.env.local`의 `NEXT_PUBLIC_BACKEND_URL`과 Vercel 환경변수를 승인된 범위에서 동기화한다.
 
-1. Vercel MCP 또는 인증된 CLI에서 대상 배포의 READY 상태를 확인한다.
+1. GitHub Actions `Deploy frontend` 성공과 Vercel MCP 또는 인증된 CLI에서 대상 배포의 READY 상태를 확인한다.
 2. Railway 배포 상태·런타임 로그·실제 응답을 확인한다.
 3. 모바일 브라우저에서 배포 URL을 열어 rec → Pally 응답 → DB 저장 흐름을 확인한다.
 4. 실패 시 **로그 먼저 확인**. 추측 금지.
@@ -267,7 +268,7 @@ ADR은 **세션당 최대 3개**. 나머지는 해당 작업 설명에 "Minor De
 - `git add .` — 개별 스테이징만
 - `.env*`, GCP service account JSON, Supabase `service_role` 커밋
 - `--no-verify`, `--force push` (명시 허락 시만)
-- `vercel deploy --prod` 수동 (Git 연동 사용)
+- `vercel deploy --prod` 수동 (`Deploy frontend` 워크플로 사용)
 - Empty `catch {}`, silent fallback (`|| {}`, `?? []`)
 - "동작할 것이다" 식 미검증 완료 보고
 - README.md / ARCHITECTURE.md / 문서 자동 생성 (요청 없으면)
