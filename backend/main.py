@@ -3180,6 +3180,44 @@ def _kst_day_window_utc(date_kst: str) -> tuple:
     return start.isoformat(), (start + timedelta(days=1)).isoformat()
 
 
+def _resolve_daily_task_ids(sb, user_id: str, date_kst: str) -> list:
+    """그날의 Task 3개. snapshot 에 고정해 같은 날 바뀌지 않게 한다.
+
+    고정 Task 가 빠진 snapshot 은 다시 뽑아 덮어쓴다. 고정 목록에 F1(오늘의 표현)
+    을 추가한 날, 그 날 이미 snapshot 이 있던 사용자는 하루 종일 표현 카드는
+    보이는데 과제는 없는 상태가 된다. "매일 반드시 있다" 로 정했으면 그 날부터
+    지켜야 한다.
+    """
+    try:
+        snap = (
+            sb.table("daily_task_snapshots").select("task_ids")
+            .eq("user_id", user_id).eq("date_kst", date_kst).execute()
+        )
+    except Exception as e:
+        logging.error(f"daily_task_snapshots read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
+
+    task_ids = snap.data[0]["task_ids"] if snap.data else None
+    if task_ids is not None and not set(_FIXED_TASKS) <= set(task_ids):
+        logging.info("daily task snapshot is missing fixed tasks; re-selecting")
+        task_ids = None
+    if task_ids is not None:
+        return task_ids
+
+    task_ids = _select_daily_task_ids(user_id, date_kst)
+    try:
+        # 선택은 결정적이라 경합해도 같은 3개가 된다. ignore_duplicates 를 쓰지
+        # 않는 이유는 위 재선택이 기존 행을 실제로 덮어써야 해서다.
+        sb.table("daily_task_snapshots").upsert(
+            {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
+            on_conflict="user_id,date_kst",
+        ).execute()
+    except Exception as e:
+        logging.error(f"daily_task_snapshots write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
+    return task_ids
+
+
 def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
     start, end = _kst_day_window_utc(date_kst)
     try:
@@ -3416,24 +3454,8 @@ async def get_achievements(user_id: str = Depends(get_current_user_id)):
     sb = get_supabase()
     date_kst = _kst_date()
 
-    # 1. 오늘 선택 3개 (snapshot 고정). 선택은 결정적이라 경합해도 동일.
-    try:
-        snap = sb.table("daily_task_snapshots").select("task_ids").eq("user_id", user_id).eq("date_kst", date_kst).execute()
-    except Exception as e:
-        logging.error(f"daily_task_snapshots read failed: {e}")
-        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
-    if snap.data:
-        task_ids = snap.data[0]["task_ids"]
-    else:
-        task_ids = _select_daily_task_ids(user_id, date_kst)
-        try:
-            sb.table("daily_task_snapshots").upsert(
-                {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
-                on_conflict="user_id,date_kst", ignore_duplicates=True,
-            ).execute()
-        except Exception as e:
-            logging.error(f"daily_task_snapshots write failed: {e}")
-            raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
+    # 1. 오늘 선택 3개 (snapshot 고정)
+    task_ids = _resolve_daily_task_ids(sb, user_id, date_kst)
 
     # 2. 완료 평가
     ctx = _gather_achievement_context(sb, user_id, date_kst)

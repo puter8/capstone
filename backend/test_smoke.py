@@ -954,6 +954,39 @@ def test_f1_does_not_fire_on_a_lookalike_phrase():
     assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
 
 
+def test_a_snapshot_taken_before_f1_was_fixed_gets_re_selected():
+    """F1 을 고정 목록에 넣은 날, 그 날 이미 snapshot 이 있던 사용자도 받아야 한다.
+
+    snapshot 을 그대로 쓰면 그 사용자는 하루 종일 표현 카드는 보이는데 과제는
+    없는 상태가 된다.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    stale = {"task_ids": ["A1", "D2", "C3"]}        # F1 이 없는 과거 선택
+    written = []
+
+    def table(name):
+        q = Mock()
+        for m in ("select", "eq", "in_", "gte", "lt", "order", "limit"):
+            getattr(q, m).return_value = q
+        q.upsert.side_effect = lambda row, **_: written.append((name, row)) or q
+        q.execute.side_effect = lambda: SimpleNamespace(
+            data=[stale] if name == "daily_task_snapshots" else [])
+        return q
+
+    sb = Mock()
+    sb.table.side_effect = table
+    date_kst = main._kst_date()
+
+    picked = main._resolve_daily_task_ids(sb, "user-1", date_kst)
+
+    assert picked[:2] == ["A1", "F1"]
+    assert ("daily_task_snapshots", {
+        "user_id": "user-1", "date_kst": date_kst, "task_ids": picked,
+    }) in written
+
+
 def test_card_separates_pally_saying_it_from_the_user_saying_it():
     """카드 문구가 "Pally가 썼어요 · 이번엔 내 차례" 로 가려면 둘을 나눠야 한다.
 
