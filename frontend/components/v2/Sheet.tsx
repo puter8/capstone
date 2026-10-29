@@ -36,6 +36,18 @@ export function Sheet({ open, title, description, children, actions, onDismiss, 
     const first = panel?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel)?.focus();
 
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      openerRef.current?.focus();
+    };
+  }, [open]);
+
+  // Callback changes during typing must not interrupt focus or IME composition.
+  useEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && onDismiss) {
         event.preventDefault();
@@ -60,12 +72,8 @@ export function Sheet({ open, title, description, children, actions, onDismiss, 
       }
     };
     document.addEventListener("keydown", handleKeyDown);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      openerRef.current?.focus();
     };
   }, [open, onDismiss]);
 
