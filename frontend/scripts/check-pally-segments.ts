@@ -19,7 +19,7 @@ const segments: PallySegment[] = [
   { kind: "correction", text: "you skipped lunch because you're on a diet?" },
   { kind: "plain", text: " " },
   { kind: "own_remark", text: "I tried that once and got super " },
-  { kind: "new_expr", text: "hangry" },
+  { kind: "own_remark", text: "hangry" },
   { kind: "own_remark", text: "." },
   { kind: "plain", text: " " },
   { kind: "question", text: "What do you eat instead?" },
@@ -103,9 +103,9 @@ function assertReply(markup: string, expected: PallySegment[], text: string, con
   equal(replyParagraphs[0].replace(/<[^>]*>/g, ""), escapeText(text), `${context}: no duplicated plain text`);
   for (const span of spans) {
     const has = (token: string): boolean => span.classes.includes(token);
-    equal(has("font-bold"), ["correction", "new_expr"].includes(span.kind), `${context}: ${span.kind} bold only for colored expressions`);
+    equal(has("font-bold"), span.kind === "correction", `${context}: ${span.kind} bold only for corrections`);
     equal(has("text-primary"), span.kind === "correction", `${context}: ${span.kind} orange only for corrections`);
-    equal(has("text-accent"), span.kind === "new_expr", `${context}: ${span.kind} mint only for new expressions`);
+    equal(has("text-accent"), false, `${context}: ${span.kind} no expression color`);
     equal(has("underline"), false, `${context}: ${span.kind} no underline styling`);
   }
 }
@@ -127,6 +127,21 @@ async function main(): Promise<void> {
   const rendered = renderReply(validTurn.result.pally.text, validTurn.result.pally.segments);
   assertReply(rendered, segments, replyText, "POST rendering");
 
+  // Rolling deployments and stored History can still contain the removed kind.
+  const legacySegments = segments.map((segment, index) => index === 4 ? { ...segment, kind: "new_expr" } : segment);
+  const legacyTurn = captureErrors(() => turnResponseSchema.parse({
+    ...turnFixture, pally: { ...turnFixture.pally, segments: legacySegments },
+  }));
+  equal(legacyTurn.errors.length, 0, "An old reply is normalized without errors");
+  deepEqual(legacyTurn.result.pally.segments, segments, "Old turn expressions become ordinary remarks");
+  equal(legacyTurn.result.pally.text, replyText, "Old turn text stays unchanged");
+  const legacyDetail = captureErrors(() => conversationDetailResponseSchema.parse({
+    ...detailFixture, turns: [{ ...historyTurn, pally_segments: legacySegments }],
+  }));
+  equal(legacyDetail.errors.length, 0, "Old History is normalized without errors");
+  deepEqual(legacyDetail.result.turns[0].pally_segments, segments, "Old History expressions become ordinary remarks");
+  assertReply(renderReply(legacyTurn.result.pally.text, legacyTurn.result.pally.segments), segments, replyText, "Old reply rendering");
+
   const correctionCases: Array<{ name: string; transcript: string; segments: PallySegment[]; correctionCount: number }> = [
     {
       name: "Partial correction",
@@ -137,7 +152,7 @@ async function main(): Promise<void> {
         { kind: "plain", text: "?" },
         { kind: "plain", text: " " },
         { kind: "own_remark", text: "I " },
-        { kind: "new_expr", text: "skip lunch" },
+        { kind: "own_remark", text: "skip lunch" },
         { kind: "own_remark", text: " sometimes too." },
         { kind: "plain", text: " " },
         { kind: "question", text: "What do you eat for dinner?" },
@@ -151,7 +166,7 @@ async function main(): Promise<void> {
         { kind: "plain", text: "Oh, you were just chilling?" },
         { kind: "plain", text: " " },
         { kind: "own_remark", text: "That sounds like " },
-        { kind: "new_expr", text: "a nice break" },
+        { kind: "own_remark", text: "a nice break" },
         { kind: "own_remark", text: "." },
         { kind: "plain", text: " " },
         { kind: "question", text: "Did you relax much?" },
@@ -329,23 +344,22 @@ async function main(): Promise<void> {
   assertPlain(userRow, turnFixture.user.transcript, "User messages ignore Pally segments");
   assertPlain(renderReply("How was your day?"), "How was your day?", "Plain opener");
 
-  // v2 design: the same server pieces render as lilac solid-underlined corrections and
-  // butter dotted-underlined new expressions, with hidden labels for screen readers.
+  // Only corrections receive emphasis and hidden labels; other reply text stays plain.
   const { Bubble } = await import("../components/v2/Bubble");
   const v2Markup = renderToStaticMarkup(createElement(Bubble, { speaker: "pally", text: replyText, segments }));
   const v2Spans = segmentSpans(v2Markup);
   deepEqual(v2Spans.map((span) => span.kind), segments.map((segment) => segment.kind), "v2 bubble: segment order and count");
   equal(v2Spans.map((span) => span.text).join(""), escapeText(replyText), "v2 bubble: the highlighted spans reproduce the reply");
   equal((v2Markup.match(/<span class="sr-only">고친 표현: <\/span>/g) ?? []).length, segments.filter((segment) => segment.kind === "correction").length, "v2 bubble: one hidden label per correction");
-  equal((v2Markup.match(/<span class="sr-only">새 표현: <\/span>/g) ?? []).length, segments.filter((segment) => segment.kind === "new_expr").length, "v2 bubble: one hidden label per new expression");
+  ok(!v2Markup.includes("새 표현"), "v2 bubble: no obsolete expression label");
   for (const span of v2Spans) {
     const has = (token: string): boolean => span.classes.includes(token);
-    equal(has("font-semibold"), ["correction", "new_expr"].includes(span.kind), `v2 bubble: ${span.kind} semibold only for highlighted expressions`);
+    equal(has("font-semibold"), span.kind === "correction", `v2 bubble: ${span.kind} semibold only for corrections`);
     equal(has("text-p-primary"), span.kind === "correction", `v2 bubble: ${span.kind} lilac only for corrections`);
     equal(has("decoration-solid"), span.kind === "correction", `v2 bubble: ${span.kind} solid underline only for corrections`);
-    equal(has("text-p-secondary"), span.kind === "new_expr", `v2 bubble: ${span.kind} butter only for new expressions`);
-    equal(has("decoration-dotted"), span.kind === "new_expr", `v2 bubble: ${span.kind} dotted underline only for new expressions`);
-    equal(has("underline"), ["correction", "new_expr"].includes(span.kind), `v2 bubble: ${span.kind} underline only for highlighted expressions`);
+    equal(has("text-p-secondary"), false, `v2 bubble: ${span.kind} no expression color`);
+    equal(has("decoration-dotted"), false, `v2 bubble: ${span.kind} no expression underline`);
+    equal(has("underline"), span.kind === "correction", `v2 bubble: ${span.kind} underline only for corrections`);
   }
   ok(/<p[^>]*lang="en"/.test(v2Markup), "v2 bubble: the English reply carries lang=\"en\"");
   ok(!v2Markup.includes("text-primary\"") && !v2Markup.includes("text-accent"), "v2 bubble: no v1 colour classes leak in");

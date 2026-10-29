@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 export const pallySegmentSchema = z.object({
-  kind: z.enum(["correction", "own_remark", "new_expr", "question", "plain"]),
+  // Older saved replies keep their text, without a separate expression category.
+  kind: z.preprocess(
+    (kind) => kind === "new_expr" ? "own_remark" : kind,
+    z.enum(["correction", "own_remark", "question", "plain"]),
+  ),
   text: z.string(),
 });
 

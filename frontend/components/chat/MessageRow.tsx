@@ -55,7 +55,6 @@ export function MessageRow({
                   data-segment-kind={segment.kind}
                   className={cn(
                     segment.kind === 'correction' && 'font-bold text-primary',
-                    segment.kind === 'new_expr' && 'font-bold text-accent',
                   )}
                 >
                   {segment.text}

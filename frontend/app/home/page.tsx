@@ -51,22 +51,13 @@ function Wordmark({ className }: { className?: string }) {
 
 function SegmentLegend({ segments }: { segments: PallySegment[] }) {
   const correction = segments.find((segment) => segment.kind === "correction");
-  const newExpr = segments.find((segment) => segment.kind === "new_expr");
-  if (!correction && !newExpr) return null;
+  if (!correction) return null;
   return (
     <ul aria-label="표시 안내" className="flex flex-wrap items-center gap-x-p-4 gap-y-p-1 px-p-1">
-      {correction ? (
-        <li className="flex items-center gap-p-2 text-p-caption text-p-text-muted">
-          <span className="text-p-small font-semibold text-p-primary underline decoration-solid underline-offset-4" lang="en">{correction.text}</span>
-          고친 표현
-        </li>
-      ) : null}
-      {newExpr ? (
-        <li className="flex items-center gap-p-2 text-p-caption text-p-text-muted">
-          <span className="text-p-small font-semibold text-p-secondary underline decoration-dotted underline-offset-4" lang="en">{newExpr.text}</span>
-          새 표현
-        </li>
-      ) : null}
+      <li className="flex items-center gap-p-2 text-p-caption text-p-text-muted">
+        <span className="text-p-small font-semibold text-p-primary underline decoration-solid underline-offset-4" lang="en">{correction.text}</span>
+        고친 표현
+      </li>
     </ul>
   );
 }
@@ -184,7 +175,6 @@ export default function HomeV2Page() {
   if (home.isRestoring && !home.paintedFromSnapshot) {
     return (
       <AppFrame className="items-center justify-center gap-p-4">
-        <Stage axes={home.axes} glow={false} size="compact" />
         <p className="flex items-center gap-p-2 text-p-label text-p-text-secondary" role="status">
           <IconSpinner className="animate-spin motion-reduce:animate-none" size={20} />
           대화를 불러오고 있어요
