@@ -37,6 +37,7 @@ if BACKEND_DIR not in sys.path:
 
 from ai.analyzer import analyze_utterance
 from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
+from ai import daily_expression
 from ai.intimacy import compute_intimacy_from_access_days
 from ai.matrix_engine import apply_ema, conversation_mean, replay_cumulative, compute_character, describe_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
@@ -1712,26 +1713,51 @@ def _recent_session_texts(sb, user_id: str, exclude_id: str) -> list:
     return [m["transcript"] for m in (msgs.data or []) if m.get("transcript")]
 
 
-async def _generate_opener_text(axes: Dict[str, int], level: str, recent_texts: list) -> str:
-    """ai.opener 호출. 동기 함수라 to_thread 로 offload, 실패 시 1회 재시도.
+async def _generate_opener_text(
+    axes: Dict[str, int],
+    level: str,
+    recent_texts: list,
+    expression_rule: Optional[str] = None,
+) -> str:
+    """ai.opener 호출. 동기 함수라 to_thread 로 offload, 실패 시 재시도.
 
-    폴백 문구는 두지 않는다 (§6 #3). 두 번 다 실패하면 503 — Pally 가 아무 말도
+    오늘의 표현 지시가 있으면 그걸 넣고 2회 시도한 뒤, 그래도 거부되면 지시 없이
+    한 번 더 시도한다. 실측 24건에서 1회차 18, 2회차 4, 3회차 2 로 끝났고, 3회차
+    까지 간 둘은 표현 자체가 길어 레벨 단어 수에 안 들어가는 것들이었다
+    ("That said, ~", "I wouldn't go so far as to ~"). 표현 하나 때문에 Pally 가
+    입을 닫는 것보다 그 날 오프너에서만 표현을 빼는 쪽이 낫다 — 표현은 홈 카드에
+    그대로 보이고, 사용자가 직접 쓰면 F1 은 그대로 달성된다.
+
+    시도가 2 → 3 으로 늘어도 사용자가 기다리는 최악 시간은 그대로다. 시도당
+    타임아웃을 세 번 쌓으면 15초가 되는데, 대화 시작 로딩에서 그건 너무 길다.
+    그래서 사다리 전체에 기존 최악값(2회분)을 예산으로 걸고, 남은 예산만큼만
+    다음 시도에 준다. 실측 사다리 p50 은 0.78초라 보통은 예산을 쓰지도 않는다.
+
+    폴백 문구는 두지 않는다 (§6 #3). 전부 실패하면 503 — Pally 가 아무 말도
     하지 않은 채 대화가 시작되는 것보다 FE 가 재시도하게 하는 쪽이 맞다.
     로그에는 reason 과 예외 타입만 남긴다: httpx 에러 텍스트에는 키가 담긴 URL 이
     섞일 수 있다.
     """
     last: Optional[BaseException] = None
-    for attempt in (1, 2):
+    rules = [expression_rule, expression_rule, None] if expression_rule else [None, None]
+    deadline = time.monotonic() + 2 * _OPENER_TOTAL_TIMEOUT_S
+    for attempt, rule in enumerate(rules, start=1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logging.warning("opener attempt %d skipped: budget spent", attempt)
+            break
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(
-                    generate_opener, axes, level, recent_texts, _OPENER_CALL_TIMEOUT_S
+                    generate_opener, axes, level, recent_texts,
+                    _OPENER_CALL_TIMEOUT_S, expression_rule=rule,
                 ),
-                timeout=_OPENER_TOTAL_TIMEOUT_S,
+                timeout=min(_OPENER_TOTAL_TIMEOUT_S, remaining),
             )
         except OpenerRejected as exc:
             last = exc
-            logging.warning("opener attempt %d rejected: %s", attempt, exc.reason)
+            logging.warning("opener attempt %d rejected: %s (expression=%s)",
+                            attempt, exc.reason, rule is not None)
         except Exception as exc:
             last = exc
             logging.warning("opener attempt %d failed: %s", attempt, type(exc).__name__)
@@ -1776,12 +1802,22 @@ async def create_conversation_opener(
         raise AppError(409, "conversation_started", "Conversation already has a user turn")
     existing = (first.data or [None])[0]
 
+    # 오늘의 표현은 오프너가 들려준다. 표현을 못 읽으면 오프너는 표현 없이
+    # 만든다 — Pally 가 먼저 말을 거는 것 자체가 더 중요하다. 멱등 재호출에서도
+    # 읽는 이유는 응답의 daily_expression 이 그때도 같아야 하기 때문이다.
+    expr = None
+    try:
+        expr = _daily_expression(sb, user_id, _kst_date(), session["level"])
+    except AppError as exc:
+        logging.warning("daily expression unavailable for opener: %s", exc.code)
+
     if existing:
         text = existing["transcript"]
     else:
         axes = _carried_over_axes(sb, user_id) or dict(_INITIAL_AXES)
         text = await _generate_opener_text(
-            axes, session["level"], _recent_session_texts(sb, user_id, conversation_id)
+            axes, session["level"], _recent_session_texts(sb, user_id, conversation_id),
+            expression_rule=daily_expression.opener_rule(expr) if expr else None,
         )
         try:
             sb.table("messages").insert({
@@ -1807,7 +1843,21 @@ async def create_conversation_opener(
             "code": "tts_failed",
             "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
         })
-    return {"text": text, "audio": audio, "warnings": warnings}
+    return {
+        "text": text,
+        "audio": audio,
+        "warnings": warnings,
+        # 이 오프너가 오늘의 표현을 실제로 들려줬는지. 클라이언트가 추측할 수
+        # 없는 값이다 — 사다리 3회차까지 가면 표현이 안 들어가는 날이 있다
+        # (실측 38건 중 4건). 채팅 화면이 "이번엔 써볼 차례" 같은 안내를 띄울
+        # 시점을 고를 때 쓴다. null 은 표현을 못 읽었다는 뜻.
+        "daily_expression": None if expr is None else {
+            "id": expr.id,
+            "text": expr.text,
+            "meaning_ko": expr.meaning_ko,
+            "spoken": daily_expression.matches(expr, text),
+        },
+    }
 
 
 def _paired_reply(sb, session_id: str, user_created_at: str) -> tuple:
@@ -2168,6 +2218,10 @@ async def create_turn(
 
     # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패) — latency 측정
     #    segments 는 색칠용 조각. 모델이 계약을 깨면 None 이고, 그때는 평문으로 보인다.
+    #    오늘의 표현은 여기서 주입하지 않는다 — 오프너가 들려준다. 턴 중간에 끼워
+    #    넣으면 표현 등장률은 7/8 로 높았지만 맥락과 어긋났다 ("음악 매일 들어요"
+    #    에 "It depends on my mood."). 오프너는 주제를 여는 발화라 표현을 자연스럽게
+    #    담을 수 있다.
     gemini_t0 = time.perf_counter()
     try:
         reply, segments = await _call_gemini_chat_segments(
@@ -2616,7 +2670,8 @@ async def delete_conversation_history(user_id: str = Depends(get_current_user_id
     되돌릴 수 없다. 확인 절차는 클라이언트가 담당한다.
     - 지움: sessions (messages 는 FK ON DELETE CASCADE 로 함께 삭제), 성향 태그는 기본값 복원,
       저장된 Pally 모습(current_axes)은 비운다 → 홈 Pally 도 첫 모습으로 돌아간다.
-    - 유지: usage_daily, streak_days, activity_events, daily_task_snapshots, subscriptions.
+    - 유지: usage_daily, streak_days, activity_events, daily_task_snapshots,
+      daily_expression_snapshots, subscriptions.
       특히 usage_daily 를 지우면 대화 기록 삭제로 무료 한도를 초기화할 수 있어 지우지 않는다.
     """
     sb = get_supabase()
@@ -2953,6 +3008,121 @@ async def reopen_conversation(
 # 30개 Task 전부 서버에서 판정: 오늘 범위(A/B/C/D + E6)와 교차일/주간/추세(A5 reopen,
 # D1 톤변화, E1 어제자격, E2/E3 주간, E4 Intimacy 상승, E5 문장길이 추세)까지 포함.
 
+# ── 오늘의 표현 (daily expression) ───────────────────────────────────────────
+
+
+def _user_level(sb, user_id: str) -> str:
+    """profiles.english_level. 프로필이 없으면 B1 (create_conversation 과 동일)."""
+    try:
+        prof = sb.table("profiles").select("english_level").eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"english_level read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read profile")
+    return prof.data[0]["english_level"] if prof.data else "B1"
+
+
+def _daily_expression(sb, user_id: str, date_kst: str, level: str):
+    """그 사용자의 오늘 표현. snapshot 으로 하루 안에서 고정한다.
+
+    선택 자체는 결정적이지만, 레벨 변경과 카탈로그 추가 배포가 순서를 바꾼다.
+    고정하지 않으면 사용자가 이미 연습한 표현이 하루 중에 다른 것으로 바뀌어
+    Task 달성이 풀린다.
+    """
+    try:
+        snap = (
+            sb.table("daily_expression_snapshots").select("expr_id")
+            .eq("user_id", user_id).eq("date_kst", date_kst).execute()
+        )
+    except Exception as e:
+        logging.error(f"daily_expression_snapshots read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load today's expression")
+    if snap.data:
+        expr = daily_expression.by_id(snap.data[0]["expr_id"])
+        if expr:
+            return expr
+        # 카탈로그에서 빠진 id. 조용히 넘기면 화면에 표현이 사라지므로 다시 뽑아
+        # 덮어쓰고, 왜 바뀌었는지 로그에 남긴다.
+        logging.warning(
+            "daily expression %s is no longer in the catalog; re-picking",
+            snap.data[0]["expr_id"],
+        )
+
+    expr = daily_expression.pick_for_day(user_id, date_kst, level)
+    try:
+        sb.table("daily_expression_snapshots").upsert(
+            {"user_id": user_id, "date_kst": date_kst, "expr_id": expr.id},
+            on_conflict="user_id,date_kst",
+        ).execute()
+    except Exception as e:
+        logging.error(f"daily_expression_snapshots write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to persist today's expression")
+    return expr
+
+
+def _spoke_daily_expression(expr, user_msgs: list) -> bool:
+    """오늘 사용자가 그 표현을 썼는지. 판정 기준은 ai/daily_expression.matches."""
+    return any(daily_expression.matches(expr, m.get("transcript") or "") for m in user_msgs)
+
+
+def _today_messages_by_role(sb, user_id: str, date_kst: str) -> tuple:
+    """오늘(KST) 발화들을 (사용자, Pally) 로 나눠 반환. 오늘의 표현 판정용.
+
+    Pally 쪽까지 읽는 이유: 카드 문구가 "Pally가 썼어요 → 이번엔 내 차례" 로
+    바뀌어야 하는데, Pally 가 실제로 말했는지는 서버만 안다. 오프너 사다리가
+    3회차(지시 없음)까지 가면 그 날은 Pally 가 표현을 말하지 않는다 — 실측 38건
+    중 4건. 말하지도 않았는데 "Pally가 썼어요" 를 띄우면 사용자가 없는 걸 찾는다.
+    """
+    start, end = _kst_day_window_utc(date_kst)
+    try:
+        sess = sb.table("sessions").select("id").eq("user_id", user_id).execute()
+        sess_ids = [s["id"] for s in (sess.data or [])]
+        if not sess_ids:
+            return [], []
+        msgs = (
+            sb.table("messages").select("role, transcript")
+            .in_("session_id", sess_ids)
+            .gte("created_at", start).lt("created_at", end).execute()
+        )
+    except Exception as e:
+        logging.error(f"today messages read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load today's utterances")
+    rows = msgs.data or []
+    return ([m for m in rows if m["role"] == "user"],
+            [m for m in rows if m["role"] != "user"])
+
+
+@app.get("/api/daily-expression")
+async def get_daily_expression(user_id: str = Depends(get_current_user_id)):
+    """오늘의 표현 1개 + 오늘 Pally 와 사용자가 각각 그걸 썼는지.
+
+    상태가 두 개인 이유는 카드 문구가 3단계로 갈리기 때문이다:
+      둘 다 안 씀          → "오늘의 표현"
+      Pally 만 씀          → "Pally가 방금 썼어요 · 이번엔 내 차례"
+      사용자가 씀          → 달성
+    `pally_used_today` 를 클라이언트가 추측할 수는 없다. 오프너가 표현을 넣는
+    데 실패하는 날이 있어서(실측 38건 중 4건), 서버가 실제로 말했는지를 보고
+    내려준다.
+    """
+    sb = get_supabase()
+    date_kst = _kst_date()
+    expr = _daily_expression(sb, user_id, date_kst, _user_level(sb, user_id))
+    user_msgs, pally_msgs = _today_messages_by_role(sb, user_id, date_kst)
+    return {
+        "date": date_kst,
+        "timezone": "Asia/Seoul",
+        "expression": {
+            "id": expr.id,
+            "level": expr.level,
+            "text": expr.text,
+            "meaning_ko": expr.meaning_ko,
+            "example_en": expr.example_en,
+            "example_ko": expr.example_ko,
+        },
+        "used_today": _spoke_daily_expression(expr, user_msgs),
+        "pally_used_today": _spoke_daily_expression(expr, pally_msgs),
+    }
+
+
 # (category, title, description)
 _TASK_CATALOG: Dict[str, tuple] = {
     "A1": ("A", "오늘 Pally와 대화 시작하기", "오늘 Pally와 새 대화를 시작해보세요"),
@@ -2985,21 +3155,67 @@ _TASK_CATALOG: Dict[str, tuple] = {
     "E4": ("E", "Intimacy 축이 어제보다 상승하기", "어제보다 Intimacy를 더 올려보세요"),
     "E5": ("E", "지난 세션보다 더 긴 문장으로 말해보기", "지난 대화보다 평균적으로 더 길게 말해보세요"),
     "E6": ("E", "오늘 무료 대화량 절반 이상 채우기", "오늘 무료 대화량의 절반 이상을 사용해보세요"),
+    "F1": ("F", "오늘의 표현 직접 써보기", "홈에 뜬 오늘의 표현을 대화에서 한 번 써보세요"),
 }
-_FIXED_TASK = "A1"
+# 매일 반드시 들어가는 Task. A1 은 "오늘 대화 시작", F1 은 "오늘의 표현 써보기".
+# F1 을 고정하는 이유: 표현 카드는 매일 보이는데 Task 가 30개 중 추첨이면 대부분의
+# 날에 카드와 Task 가 어긋난다. 표현을 매일 띄우기로 했으면 그 과제도 매일 있어야
+# 한다. 추첨 슬롯은 그만큼 2개 → 1개로 줄어든다.
+_FIXED_TASKS = ("A1", "F1")
 
 
 def _select_daily_task_ids(user_id: str, date_kst: str) -> list:
-    """A1 고정 + 나머지 29개 중 hash(user_id+date) 로 2개 결정적 선택 (같은 날 불변)."""
-    pool = [t for t in _TASK_CATALOG if t != _FIXED_TASK]
+    """고정 2개(A1, F1) + 나머지 중 hash(user_id+date) 로 1개 결정적 선택.
+
+    선택이 결정적이라 같은 날 여러 번 계산해도 같고, 경합해도 같은 3개가 된다.
+    """
+    pool = [t for t in _TASK_CATALOG if t not in _FIXED_TASKS]
     ranked = sorted(pool, key=lambda t: hashlib.sha256(f"{user_id}:{date_kst}:{t}".encode()).hexdigest())
-    return [_FIXED_TASK, ranked[0], ranked[1]]
+    return [*_FIXED_TASKS, ranked[0]]
 
 
 def _kst_day_window_utc(date_kst: str) -> tuple:
     d = datetime.fromisoformat(date_kst).date()
     start = datetime.combine(d, dtime.min, tzinfo=_KST).astimezone(timezone.utc)
     return start.isoformat(), (start + timedelta(days=1)).isoformat()
+
+
+def _resolve_daily_task_ids(sb, user_id: str, date_kst: str) -> list:
+    """그날의 Task 3개. snapshot 에 고정해 같은 날 바뀌지 않게 한다.
+
+    고정 Task 가 빠진 snapshot 은 다시 뽑아 덮어쓴다. 고정 목록에 F1(오늘의 표현)
+    을 추가한 날, 그 날 이미 snapshot 이 있던 사용자는 하루 종일 표현 카드는
+    보이는데 과제는 없는 상태가 된다. "매일 반드시 있다" 로 정했으면 그 날부터
+    지켜야 한다.
+    """
+    try:
+        snap = (
+            sb.table("daily_task_snapshots").select("task_ids")
+            .eq("user_id", user_id).eq("date_kst", date_kst).execute()
+        )
+    except Exception as e:
+        logging.error(f"daily_task_snapshots read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
+
+    task_ids = snap.data[0]["task_ids"] if snap.data else None
+    if task_ids is not None and not set(_FIXED_TASKS) <= set(task_ids):
+        logging.info("daily task snapshot is missing fixed tasks; re-selecting")
+        task_ids = None
+    if task_ids is not None:
+        return task_ids
+
+    task_ids = _select_daily_task_ids(user_id, date_kst)
+    try:
+        # 선택은 결정적이라 경합해도 같은 3개가 된다. ignore_duplicates 를 쓰지
+        # 않는 이유는 위 재선택이 기존 행을 실제로 덮어써야 해서다.
+        sb.table("daily_task_snapshots").upsert(
+            {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
+            on_conflict="user_id,date_kst",
+        ).execute()
+    except Exception as e:
+        logging.error(f"daily_task_snapshots write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
+    return task_ids
 
 
 def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
@@ -3203,6 +3419,11 @@ def _eval_task(sb, user_id: str, date_kst: str, task_id: str, ctx: dict) -> bool
         return prev_avg > 0 and today_avg > prev_avg
     if task_id == "E6":
         return ctx["used_turns"] >= max(1, FREE_DAILY_TURNS // 2)
+    if task_id == "F1":
+        # 표현은 여기서 읽는다 — ctx 에 넣으면 F1 이 안 뽑힌 날에도 매번 조회한다.
+        # um 이 이미 오늘치 발화라 발화 조회는 추가되지 않는다.
+        expr = _daily_expression(sb, user_id, date_kst, _user_level(sb, user_id))
+        return _spoke_daily_expression(expr, um)
 
     return False
 
@@ -3233,24 +3454,8 @@ async def get_achievements(user_id: str = Depends(get_current_user_id)):
     sb = get_supabase()
     date_kst = _kst_date()
 
-    # 1. 오늘 선택 3개 (snapshot 고정). 선택은 결정적이라 경합해도 동일.
-    try:
-        snap = sb.table("daily_task_snapshots").select("task_ids").eq("user_id", user_id).eq("date_kst", date_kst).execute()
-    except Exception as e:
-        logging.error(f"daily_task_snapshots read failed: {e}")
-        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
-    if snap.data:
-        task_ids = snap.data[0]["task_ids"]
-    else:
-        task_ids = _select_daily_task_ids(user_id, date_kst)
-        try:
-            sb.table("daily_task_snapshots").upsert(
-                {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
-                on_conflict="user_id,date_kst", ignore_duplicates=True,
-            ).execute()
-        except Exception as e:
-            logging.error(f"daily_task_snapshots write failed: {e}")
-            raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
+    # 1. 오늘 선택 3개 (snapshot 고정)
+    task_ids = _resolve_daily_task_ids(sb, user_id, date_kst)
 
     # 2. 완료 평가
     ctx = _gather_achievement_context(sb, user_id, date_kst)

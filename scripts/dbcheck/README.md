@@ -6,8 +6,9 @@
 ```bash
 cd scripts/dbcheck
 npm install @electric-sql/pglite
-node apply_migrations.mjs            # 21개 마이그레이션이 순서대로 적용되는지
-node voice_energy_scenarios.mjs      # 음성 Energy 가 실제로 동작하는지 (18종)
+node apply_migrations.mjs             # 마이그레이션 전체가 순서대로 적용되는지
+node voice_energy_scenarios.mjs       # 음성 Energy 가 실제로 동작하는지 (18종)
+node daily_expression_scenarios.mjs   # 오늘의 표현 snapshot 모양·제약·연쇄삭제 (9종)
 ```
 
 `apply_migrations.mjs` 는 "적용되는가"만 본다. plpgsql 은 생성 시 본문을 검증하지

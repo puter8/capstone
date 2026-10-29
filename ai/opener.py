@@ -97,7 +97,7 @@ Rules (the level rules win over the personality if they conflict):
 - English only. No emoji, no quotation marks.
 - You know nothing about the user yet: never refer to past chats or things they told you.
 - Do not start with "Hello there". Never offer help ("How can I help/assist").
-Output only the opener."""
+{expression_rule}Output only the opener."""
 
 _WORD = re.compile(r"[A-Za-z0-9']+")
 _SENTENCE = re.compile(r"[^.!?]+[.!?]+")
@@ -163,6 +163,12 @@ def validate_opener(text: str, max_words: int) -> str:
         raise OpenerRejected("too_long")
     if _HANGUL.search(text):
         raise OpenerRejected("non_english")
+    # A tilde is never spoken English. It leaks in when a prompt rule shows an
+    # expression with a "~" slot ("I'm into ~"): the model copied the marker
+    # into the opener ("that makes sense~ What tunes..."), which TTS then reads
+    # as a stumble. Reject so the caller's retry produces a clean line.
+    if "~" in text:
+        raise OpenerRejected("slot_marker")
     if not text.endswith("?"):
         raise OpenerRejected("no_closing_question")
     sentences = _SENTENCE.findall(text)
@@ -214,7 +220,11 @@ def generate_opener(
     recent_texts: list[str],
     timeout: float = DEFAULT_TIMEOUT_S,
     rng: random.Random | None = None,
+    expression_rule: str | None = None,
 ) -> str:
+    """`expression_rule`: one extra prompt rule, e.g. the day's expression for
+    Pally to model (see ai.daily_expression.opener_rule). It is appended after
+    the fixed rules so the sentence and word limits still bind."""
     rng = rng or random.Random()
     axes = AxisResult(**axes).to_axes_dict()
     guide, max_words = LEVEL_RULES.get(level, LEVEL_RULES["B1"])
@@ -223,6 +233,7 @@ def generate_opener(
         topic=pick_topic(recent_texts, rng),
         max_words=max_words - PROMPT_WORD_MARGIN,
         level_guide=guide,
+        expression_rule=f"{expression_rule}\n" if expression_rule else "",
     )
     return validate_opener(_call_gemini(prompt, timeout), max_words)
 
