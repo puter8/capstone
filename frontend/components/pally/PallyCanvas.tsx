@@ -255,12 +255,16 @@ export default function PallyCanvas({
       ctx.moveTo(-w, mouthY);
       ctx.quadraticCurveTo(0, mouthY + bs * 0.1, w, mouthY);
     } else {
-      const w = bs * (sT === 2 ? 0.36 : 0.48); // narrower inside the star's inner valleys
-      const top = mouthY - bs * 0.04;
-      ctx.moveTo(-w - bs * 0.05, top - bs * 0.05);
-      ctx.lineTo(-w, top);
-      ctx.quadraticCurveTo(0, top + bs * 0.42, w, top);
-      ctx.lineTo(w + bs * 0.05, top - bs * 0.05);
+      // One continuous crescent whose ends hook upward, like the classic smiley.
+      // The ends used to be straight segments tacked onto the arc, which read as
+      // a kink rather than a curl once the face is drawn small.
+      const w = bs * (sT === 2 ? 0.32 : 0.40); // narrower inside the star's inner valleys
+      const top = mouthY - bs * 0.03;
+      const depth = bs * 0.12;
+      const hook = bs * 0.04; // how far the tips rise above the arc's corners
+      ctx.moveTo(-w, top - hook);
+      ctx.bezierCurveTo(-w * 0.94, top + depth * 0.64, -w * 0.46, top + depth, 0, top + depth);
+      ctx.bezierCurveTo(w * 0.46, top + depth, w * 0.94, top + depth * 0.64, w, top - hook);
     }
     ctx.stroke();
 
