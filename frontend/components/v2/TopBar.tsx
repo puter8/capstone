@@ -7,26 +7,6 @@ import { cn } from "@/lib/utils";
 
 import { IconChevronLeft, IconX } from "./icons";
 
-export type ConversationStatus = "speaking" | "listening" | "idle" | "opening" | "processing" | "closing";
-
-const STATUS_LABEL: Record<ConversationStatus, string> = {
-  speaking: "말하는 중",
-  listening: "듣는 중",
-  idle: "내 차례",
-  opening: "인사 준비 중",
-  processing: "답변 준비 중",
-  closing: "저장 중",
-};
-
-const STATUS_DOT: Record<ConversationStatus, string> = {
-  speaking: "bg-p-primary",
-  listening: "bg-p-error",
-  idle: "bg-p-secondary",
-  opening: "bg-p-text-muted",
-  processing: "bg-p-text-muted",
-  closing: "bg-p-text-muted",
-};
-
 type BackTopBarProps = {
   variant: "back";
   title: string;
@@ -42,7 +22,6 @@ type BackTopBarProps = {
 
 type ConversationTopBarProps = {
   variant: "conversation";
-  status: ConversationStatus;
   onEnd: () => void;
   endDisabled?: boolean;
   trailing?: ReactNode;
@@ -52,7 +31,7 @@ type TopBarProps = (BackTopBarProps | ConversationTopBarProps) & { className?: s
 
 export function TopBar(props: TopBarProps) {
   if (props.variant === "conversation") {
-    const { status, onEnd, endDisabled, trailing, className } = props;
+    const { onEnd, endDisabled, trailing, className } = props;
     return (
       <header className={cn("flex h-[64px] w-full items-center px-p-4", className)}>
         <button
@@ -67,18 +46,13 @@ export function TopBar(props: TopBarProps) {
             <span className="whitespace-nowrap text-p-label">대화 종료</span>
           </span>
         </button>
-        <div className="flex min-w-0 flex-1 flex-col items-center">
+        <div className="flex min-w-0 flex-1 items-center justify-center">
           <span
             className="font-p-brand text-p-title-en-sm text-p-text"
             lang="en"
             style={{ fontVariationSettings: '"SOFT" 0, "WONK" 1' }}
           >
             Pally
-          </span>
-          {/* The dock's status line is the live region; this one is decorative. */}
-          <span aria-hidden="true" className="flex items-center gap-[6px]">
-            <span className={cn("size-[6px] rounded-p-full", STATUS_DOT[status])} />
-            <span className="whitespace-nowrap text-p-caption text-p-text-secondary">{STATUS_LABEL[status]}</span>
           </span>
         </div>
         <div className="flex min-w-[44px] justify-end">{trailing}</div>
