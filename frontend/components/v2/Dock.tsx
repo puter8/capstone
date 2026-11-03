@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 import { IconMic, IconMicOff, IconRotateCcw, IconSkipForward, IconSpinner, IconTranscript, IconVolume } from "./icons";
 
-export type DockState = "ready" | "recording" | "processing" | "speaking" | "retry" | "disabled";
+export type DockState = "ready" | "recording" | "opening" | "processing" | "speaking" | "retry" | "disabled";
 
 type DockProps = {
   state: DockState;
@@ -33,6 +33,7 @@ type DockProps = {
 const STATUS_TEXT: Record<DockState, string> = {
   ready: "눌러서 말하기",
   recording: "듣고 있어요",
+  opening: "Pally가 인사를 준비하고 있어요",
   processing: "답변을 준비하고 있어요",
   speaking: "Pally가 말하고 있어요 · 눌러서 건너뛰기",
   retry: "눌러서 다시 말하기",
@@ -42,6 +43,7 @@ const STATUS_TEXT: Record<DockState, string> = {
 const MIC_LABEL: Record<DockState, string> = {
   ready: "말하기 시작",
   recording: "녹음 끝내기",
+  opening: "Pally 인사 준비 중",
   processing: "답변 준비 중",
   speaking: "Pally 말 건너뛰기",
   retry: "다시 말하기",
@@ -97,7 +99,8 @@ export function Dock({
   const replayHidden = state === "recording" || state === "speaking" || state === "disabled";
   const replayInert = replayHidden ? ({ inert: "" } as Record<string, string>) : {};
   // While a replay plays the center button is the skip control, so it stays enabled.
-  const micDisabled = state === "processing" || state === "disabled";
+  const preparing = state === "opening" || state === "processing";
+  const micDisabled = preparing || state === "disabled";
 
   return (
     <div className={cn("flex w-full flex-col items-center gap-p-3 pb-p-6 pt-p-2", className)}>
@@ -108,7 +111,7 @@ export function Dock({
             aria-label="Pally 말 다시 듣기"
             aria-pressed={replaying || undefined}
             className="grid size-[52px] place-items-center rounded-p-full border border-p-border bg-p-surface text-p-text-secondary disabled:text-p-disabled-text"
-            disabled={!canReplay || state === "processing" || replaying}
+            disabled={!canReplay || preparing || replaying}
             onClick={onReplay}
             type="button"
           >
@@ -124,7 +127,7 @@ export function Dock({
             className={cn(
               "absolute inset-0 rounded-p-full",
               state === "speaking" ? "border border-p-border" : "bg-p-primary-container",
-              (state === "processing" || state === "disabled") && "opacity-60",
+              (preparing || state === "disabled") && "opacity-60",
             )}
           />
           {state === "recording" ? (
@@ -148,7 +151,7 @@ export function Dock({
               "absolute left-1/2 top-1/2 grid size-p-mic -translate-x-1/2 -translate-y-1/2 place-items-center rounded-p-full",
               "transition-transform duration-p-fast ease-p-out active:scale-[0.98] disabled:active:scale-100 motion-reduce:transition-none",
               (state === "ready" || state === "retry" || state === "recording") && "bg-p-primary text-p-on-primary hover:bg-p-primary-hover active:bg-p-primary-pressed",
-              state === "processing" && "bg-p-primary-container text-p-primary",
+              preparing && "bg-p-primary-container text-p-primary",
               state === "speaking" && "border-2 border-p-primary bg-p-raised text-p-primary",
               state === "disabled" && "bg-p-disabled-bg text-p-disabled-text",
             )}
@@ -158,7 +161,7 @@ export function Dock({
           >
             {state === "ready" ? <IconMic size={28} /> : null}
             {state === "recording" ? <span aria-hidden="true" className="block size-[24px] rounded-[4px] bg-p-on-primary" /> : null}
-            {state === "processing" ? <IconSpinner className="animate-spin motion-reduce:animate-none" size={28} /> : null}
+            {preparing ? <IconSpinner className="animate-spin motion-reduce:animate-none" size={28} /> : null}
             {state === "speaking" ? <IconSkipForward size={28} /> : null}
             {state === "retry" ? <IconRotateCcw size={28} /> : null}
             {state === "disabled" ? <IconMicOff size={28} /> : null}

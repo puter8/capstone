@@ -15,10 +15,12 @@
 
 import type { Message } from '@/lib/types/message';
 
+export type ProcessingPhase = 'opener' | 'reply';
+
 export type RecState =
   | { kind: 'idle' }
   | { kind: 'recording'; startedAt: number }
-  | { kind: 'processing' }
+  | { kind: 'processing'; phase: ProcessingPhase }
   | { kind: 'speaking' }
   | { kind: 'error'; reason: 'permission-denied' | 'generic'; message: string };
 
@@ -59,7 +61,7 @@ export function reducer(state: ConversationState, action: Action): ConversationS
     case 'rec/start':
       return { ...state, rec: { kind: 'recording', startedAt: Date.now() } };
     case 'rec/stop':
-      return { ...state, rec: { kind: 'processing' } };
+      return { ...state, rec: { kind: 'processing', phase: 'reply' } };
     case 'rec/processed':
       return {
         ...state,
@@ -67,7 +69,7 @@ export function reducer(state: ConversationState, action: Action): ConversationS
         rec: { kind: 'speaking' },
       };
     case 'opener/request':
-      return { ...state, rec: { kind: 'processing' } };
+      return { ...state, rec: { kind: 'processing', phase: 'opener' } };
     case 'opener/received':
       return {
         ...state,

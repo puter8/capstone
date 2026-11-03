@@ -7,12 +7,13 @@ import { cn } from "@/lib/utils";
 
 import { IconChevronLeft, IconX } from "./icons";
 
-export type ConversationStatus = "speaking" | "listening" | "idle" | "processing" | "closing";
+export type ConversationStatus = "speaking" | "listening" | "idle" | "opening" | "processing" | "closing";
 
 const STATUS_LABEL: Record<ConversationStatus, string> = {
   speaking: "말하는 중",
   listening: "듣는 중",
   idle: "내 차례",
+  opening: "인사 준비 중",
   processing: "답변 준비 중",
   closing: "저장 중",
 };
@@ -21,6 +22,7 @@ const STATUS_DOT: Record<ConversationStatus, string> = {
   speaking: "bg-p-primary",
   listening: "bg-p-error",
   idle: "bg-p-secondary",
+  opening: "bg-p-text-muted",
   processing: "bg-p-text-muted",
   closing: "bg-p-text-muted",
 };
