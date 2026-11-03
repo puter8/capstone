@@ -227,6 +227,21 @@ export const achievementsResponseSchema = z.object({
   })).length(3),
 });
 
+export const dailyExpressionResponseSchema = z.object({
+  date: z.iso.date(),
+  timezone: z.literal("Asia/Seoul"),
+  expression: z.object({
+    id: z.string().trim().min(1),
+    level: z.enum(["A2", "B1", "B2", "C1"]),
+    text: z.string().trim().min(1),
+    meaning_ko: z.string().trim().min(1),
+    example_en: z.string().trim().min(1),
+    example_ko: z.string().trim().min(1),
+  }),
+  used_today: z.boolean(),
+  pally_used_today: z.boolean(),
+});
+
 export const billingProductsResponseSchema = z.object({
   test_mode: z.boolean(),
   products: z.array(z.object({

@@ -20,6 +20,7 @@ import {
 } from "@/lib/api/error-messages";
 import {
   achievementsResponseSchema,
+  dailyExpressionResponseSchema,
   energyBaselineResponseSchema,
   deleteAccountResponseSchema,
   deleteConversationHistoryResponseSchema,
@@ -223,6 +224,7 @@ export const httpPallyApi: PallyApi = {
   },
 
   getAchievements: () => apiRequest("/api/achievements", { schema: achievementsResponseSchema }),
+  getDailyExpression: () => apiRequest("/api/daily-expression", { schema: dailyExpressionResponseSchema }),
 
   getBillingProducts: () => apiRequest("/api/billing/products", { schema: billingProductsResponseSchema }),
 

@@ -8,9 +8,9 @@ export type StageState = "idle" | "speaking" | "listening" | "thinking";
 
 type StageProps = {
   axes?: Axes;
-  size?: "large" | "compact";
+  size?: "large" | "compact" | "conversation";
   state?: StageState;
-  /** The lilac light behind Pally. Off on login, loading, error and empty screens. */
+  /** The lilac light behind Pally. Off on login, error and empty screens. */
   glow?: boolean;
   className?: string;
 };
@@ -25,6 +25,7 @@ const GLOW_OPACITY_VAR: Record<StageState, string> = {
 const DIMENSIONS = {
   large: { height: "h-[280px]", glow: "h-[210px] w-[270px]", character: 176, rings: ["size-[220px]", "size-[268px]"] },
   compact: { height: "h-[184px]", glow: "h-[140px] w-[220px]", character: 112, rings: ["size-[156px]", "size-[204px]"] },
+  conversation: { height: "h-[184px]", glow: "h-[140px] w-[220px]", character: 176, rings: ["size-[156px]", "size-[204px]"] },
 } as const;
 
 /**

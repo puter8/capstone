@@ -108,6 +108,21 @@ export interface SpeechResponse {
   encoding: "MP3";
 }
 
+export interface DailyExpressionResponse {
+  date: string;
+  timezone: "Asia/Seoul";
+  expression: {
+    id: string;
+    level: Level;
+    text: string;
+    meaning_ko: string;
+    example_en: string;
+    example_ko: string;
+  };
+  used_today: boolean;
+  pally_used_today: boolean;
+}
+
 export interface OpenerResponse {
   text: string;
   audio: string | null;
@@ -355,6 +370,7 @@ export interface PallyApi {
   getUsage(): Promise<UsageResponse>;
   recordActivityEvent(input: ActivityEventInput): Promise<void>;
   getAchievements(): Promise<AchievementsResponse>;
+  getDailyExpression(): Promise<DailyExpressionResponse>;
   getBillingProducts(): Promise<BillingProductsResponse>;
   getBillingOverview(): Promise<BillingOverviewResponse>;
   createCheckout(input: CheckoutInput, expectedUserId: string): Promise<CheckoutResponse>;
