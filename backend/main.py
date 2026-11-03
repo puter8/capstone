@@ -1807,7 +1807,7 @@ async def create_conversation_opener(
     # 읽는 이유는 응답의 daily_expression 이 그때도 같아야 하기 때문이다.
     expr = None
     try:
-        expr = _daily_expression(sb, user_id, _kst_date(), session["level"])
+        expr = _daily_expression(sb, user_id, _kst_date(), _user_level(sb, user_id))
     except AppError as exc:
         logging.warning("daily expression unavailable for opener: %s", exc.code)
 
@@ -3022,12 +3022,8 @@ def _user_level(sb, user_id: str) -> str:
 
 
 def _daily_expression(sb, user_id: str, date_kst: str, level: str):
-    """그 사용자의 오늘 표현. snapshot 으로 하루 안에서 고정한다.
-
-    선택 자체는 결정적이지만, 레벨 변경과 카탈로그 추가 배포가 순서를 바꾼다.
-    고정하지 않으면 사용자가 이미 연습한 표현이 하루 중에 다른 것으로 바뀌어
-    Task 달성이 풀린다.
-    """
+    """Keep the day's expression stable within a level; re-pick on level change."""
+    effective_level = daily_expression.for_level(level)[0].level
     try:
         snap = (
             sb.table("daily_expression_snapshots").select("expr_id")
@@ -3038,14 +3034,17 @@ def _daily_expression(sb, user_id: str, date_kst: str, level: str):
         raise AppError(503, "persistence_failed", "Failed to load today's expression")
     if snap.data:
         expr = daily_expression.by_id(snap.data[0]["expr_id"])
-        if expr:
+        if expr and expr.level == effective_level:
             return expr
         # 카탈로그에서 빠진 id. 조용히 넘기면 화면에 표현이 사라지므로 다시 뽑아
         # 덮어쓰고, 왜 바뀌었는지 로그에 남긴다.
-        logging.warning(
-            "daily expression %s is no longer in the catalog; re-picking",
-            snap.data[0]["expr_id"],
-        )
+        if expr:
+            logging.info("daily expression level changed from %s to %s; re-picking", expr.level, effective_level)
+        else:
+            logging.warning(
+                "daily expression %s is no longer in the catalog; re-picking",
+                snap.data[0]["expr_id"],
+            )
 
     expr = daily_expression.pick_for_day(user_id, date_kst, level)
     try:
@@ -3092,7 +3091,7 @@ def _today_messages_by_role(sb, user_id: str, date_kst: str) -> tuple:
 
 
 @app.get("/api/daily-expression")
-async def get_daily_expression(user_id: str = Depends(get_current_user_id)):
+async def get_daily_expression(include_usage: bool = True, user_id: str = Depends(get_current_user_id)):
     """오늘의 표현 1개 + 오늘 Pally 와 사용자가 각각 그걸 썼는지.
 
     상태가 두 개인 이유는 카드 문구가 3단계로 갈리기 때문이다:
@@ -3106,8 +3105,7 @@ async def get_daily_expression(user_id: str = Depends(get_current_user_id)):
     sb = get_supabase()
     date_kst = _kst_date()
     expr = _daily_expression(sb, user_id, date_kst, _user_level(sb, user_id))
-    user_msgs, pally_msgs = _today_messages_by_role(sb, user_id, date_kst)
-    return {
+    response = {
         "date": date_kst,
         "timezone": "Asia/Seoul",
         "expression": {
@@ -3118,9 +3116,14 @@ async def get_daily_expression(user_id: str = Depends(get_current_user_id)):
             "example_en": expr.example_en,
             "example_ko": expr.example_ko,
         },
-        "used_today": _spoke_daily_expression(expr, user_msgs),
-        "pally_used_today": _spoke_daily_expression(expr, pally_msgs),
     }
+    # The home card only needs the prompt. Avoid reading conversation history
+    # unless the caller explicitly needs the usage verdicts (legacy default).
+    if include_usage:
+        user_msgs, pally_msgs = _today_messages_by_role(sb, user_id, date_kst)
+        response["used_today"] = _spoke_daily_expression(expr, user_msgs)
+        response["pally_used_today"] = _spoke_daily_expression(expr, pally_msgs)
+    return response
 
 
 # (category, title, description)

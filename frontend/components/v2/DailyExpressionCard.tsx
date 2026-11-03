@@ -3,14 +3,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import { pallyApi, type DailyExpressionResponse } from "@/lib/api";
+import { getCurrentUserId, invalidateDailyExpression, loadDailyExpression, peekDailyExpressionSnapshot } from "@/lib/api/route-data";
 import { cn } from "@/lib/utils";
 
-import { IconCheck, IconSpinner, IconVolume } from "./icons";
+import { IconSpinner, IconVolume } from "./icons";
 
 const CARD_CLASS = "flex flex-col gap-p-1 rounded-p-card border border-p-border bg-p-surface px-p-4 py-p-3";
 
 export function DailyExpressionCard() {
-  const [data, setData] = useState<DailyExpressionResponse | null>(null);
+  const [snapshot] = useState(peekDailyExpressionSnapshot);
+  const [data, setData] = useState<DailyExpressionResponse | null>(snapshot?.data ?? null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
@@ -19,19 +21,23 @@ export function DailyExpressionCard() {
     let request = 0;
     let midnightTimer: ReturnType<typeof setTimeout>;
 
-    const refresh = async () => {
+    const refresh = async (force = false) => {
       const current = ++request;
       clearTimeout(midnightTimer);
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
       setData((previous) => previous?.date === today ? previous : null);
       setError(false);
       try {
-        const response = await pallyApi.getDailyExpression();
+        const userId = await getCurrentUserId();
+        if (!active || request !== current) return;
+        if (snapshot && snapshot.userId !== userId) setData(null);
+        if (force) invalidateDailyExpression(userId);
+        const response = await loadDailyExpression(userId);
         if (!active || request !== current) return;
         setData(response);
         // The server's KST bucket changes at midnight, even with this page open.
         const midnight = Date.parse(`${response.date}T00:00:00+09:00`) + 86_400_000;
-        midnightTimer = setTimeout(() => void refresh(), Math.max(1_000, midnight - Date.now()));
+        midnightTimer = setTimeout(() => void refresh(true), Math.max(1_000, midnight - Date.now()));
       } catch (caught: unknown) {
         console.error("Daily expression load failed", caught);
         if (active && request === current) {
@@ -41,7 +47,7 @@ export function DailyExpressionCard() {
       }
     };
     const onVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") void refresh(true);
     };
 
     void refresh();
@@ -51,7 +57,7 @@ export function DailyExpressionCard() {
       clearTimeout(midnightTimer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [attempt]);
+  }, [attempt, snapshot]);
 
   if (data) {
     return <DailyExpressionContent data={data} key={`${data.date}:${data.expression.id}:${data.expression.example_en}`} />;
@@ -175,9 +181,7 @@ export function DailyExpressionContent({ data }: { data: DailyExpressionResponse
       <p className="font-p-brand text-p-title-en tracking-[-0.02em] text-p-text [overflow-wrap:anywhere]" lang="en" style={{ fontVariationSettings: '"SOFT" 0, "WONK" 1' }}>{expression.text}</p>
       <p className="text-p-small text-p-text-secondary">{expression.meaning_ko}</p>
       <p className="text-p-small text-p-text-secondary [overflow-wrap:anywhere]" lang="en">{expression.example_en}</p>
-      <p className={cn("flex items-center gap-p-1 text-p-caption", data.used_today ? "text-p-success" : "text-p-text-muted")} role="status">
-        {data.used_today ? <><IconCheck size={16} />오늘 사용했어요</> : "오늘 대화에서 한번 써보세요"}
-      </p>
+      <p className="text-p-caption text-p-text-muted">오늘 대화에서 한번 써보세요</p>
       {error ? <p className="text-p-caption text-p-error" role="alert">{error}</p> : null}
     </section>
   );

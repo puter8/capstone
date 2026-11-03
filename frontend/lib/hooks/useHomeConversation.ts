@@ -32,6 +32,7 @@ import {
   invalidateProfile,
   invalidateUsage,
   loadConversationPage,
+  loadDailyExpression,
   loadProfile,
   loadSubscription,
   loadUsage,
@@ -170,6 +171,9 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         setPaintedFromSnapshot(false);
       }
       rememberUser(userId);
+      // Start the prompt read before baseline/profile restoration so the card
+      // can paint cached data as soon as home is ready.
+      void loadDailyExpression(userId).catch((error: unknown) => console.error("Daily expression prefetch failed", error));
       const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
       const storedId = window.localStorage.getItem(CONVERSATION_KEY);
       const conversationId = requestedId ?? storedId;
