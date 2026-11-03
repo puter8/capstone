@@ -200,6 +200,9 @@ function currentPallyAxes(): Axes {
 }
 
 export const mockPallyApi: PallyApi = {
+  async getDailyExpression() {
+    throw new PallyApiError(503, "service_unavailable", "오늘의 표현은 실제 서버 연결이 필요해요.");
+  },
   // mock 서버는 음성 Energy 를 제공하지 않는다. disabled 를 돌려주면 화면이
   // 등록 UI 를 띄우지 않으므로, 실서버 없이도 기존 흐름이 그대로 돈다.
   async getEnergyBaseline() { return { status: "disabled", baseline: null, prompts: [], limits: null }; },

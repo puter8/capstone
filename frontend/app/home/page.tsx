@@ -312,7 +312,7 @@ export default function HomeV2Page() {
         {usage ? <UsagePopover className="right-p-4" id={usagePopoverId} onClose={() => setUsageOpen(false)} open={usageOpen} usage={usage} /> : null}
       </div>
       <div className="flex min-h-[184px] flex-1 flex-col items-center justify-center">
-        <Stage axes={home.axes} size="compact" state={stageState} />
+        <Stage axes={home.axes} size="conversation" state={stageState} />
       </div>
       <div className="flex flex-col gap-p-4 px-p-5 pb-p-2">
         {isRecording ? (

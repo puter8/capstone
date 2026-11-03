@@ -73,7 +73,10 @@ export default function RankingV2Page() {
     return () => { active = false; };
   }, [router, snapshot]);
 
-  const tasks = data?.daily_tasks ?? [];
+  // Pin expression practice regardless of completion, preserving the other tasks' order.
+  const tasks = data ? [...data.daily_tasks].sort((a, b) => (
+    Number(b.title === "오늘의 표현 직접 써보기") - Number(a.title === "오늘의 표현 직접 써보기")
+  )) : [];
   const doneCount = tasks.filter((task) => task.status === "completed").length;
 
   return (
