@@ -37,11 +37,11 @@
 
 ### 스크린샷
 
-| 대화중 | 문법 교정 | 세션 후 Pally 변화 |
+| 홈 · 오늘의 표현 | 대화 화면 | 발화별 피드백 |
 |:---:|:---:|:---:|
-| ![대화중](assets/screenshots/demo-conversation.png) | ![문법 교정](assets/screenshots/demo-correction.png) | ![Pally 변화](assets/screenshots/demo-pally-change.png) |
+| ![홈과 오늘의 표현](assets/screenshots/design-home.png) | ![대화 화면](assets/screenshots/design-conversation.png) | ![발화별 피드백](assets/screenshots/design-feedback.png) |
 
-> "Yesterday I go to the store" → Pally가 "you went to the store"로 자연스럽게 교정. 세션 종료 후 에너지·호기심 축 상승 → 별 모양 초록 Pally로 변환.
+> 현재 UI의 [Figma 디자인 시안](https://www.figma.com/design/4kLxDLD2LdbB5BiY2QT5qU?node-id=1360-750)입니다. 홈의 오늘의 표현 카드, Pally와의 대화, 발화별 교정·대안 표현 화면을 보여줍니다. 시안 속 이름·날짜·대화는 예시입니다.
 
 ### 데모에서 확인할 수 있는 흐름
 
