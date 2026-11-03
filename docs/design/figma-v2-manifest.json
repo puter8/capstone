@@ -3,6 +3,40 @@
   "fileKey": "4kLxDLD2LdbB5BiY2QT5qU",
   "page": { "id": "1360:750", "name": "1023_디자인 업그레이드 v2" },
   "sourcePage": { "id": "1283:1532", "name": "1015_새디자인", "nodeCountBefore": 3271, "nodeCountAfter": 3271 },
+  "dailyExpressionDesign": {
+    "date": "2026-10-29",
+    "timezone": "Asia/Seoul",
+    "status": "fixed example and bundled Google TTS playback implemented; daily selection not implemented",
+    "releaseRequestedAt": "2026-11-03",
+    "releaseBranch": "feat/daily-expression-card",
+    "releaseWorkflow": ".github/workflows/deploy-frontend.yml",
+    "placement": "home greeting → daily expression → Pally stage → talk CTA → bottom nav; hidden in conversation",
+    "example": { "expression": "I’m into ~", "meaning": "~에 푹 빠져 있어요", "sentence": "I’m into baking these days.", "hint": "오늘 대화에서 한번 써보세요" },
+    "cards": [
+      { "screenId": "1365:866", "areaId": "1458:2701", "cardId": "1458:2702", "width": 320 },
+      { "screenId": "1365:917", "areaId": "1459:2704", "cardId": "1459:2705", "width": 320 },
+      { "screenId": "1368:1262", "areaId": "1459:2717", "cardId": "1459:2718", "width": 320 },
+      { "screenId": "1375:2545", "areaId": "1459:2730", "cardId": "1459:2731", "width": 350 },
+      { "screenId": "1375:2642", "areaId": "1459:2743", "cardId": "1459:2744", "width": 280 },
+      { "screenId": "1378:2957", "areaId": "1459:2758", "cardId": "1459:2759", "width": 320 },
+      { "screenId": "1378:3110", "areaId": "1459:2771", "cardId": "1459:2772", "width": 320 },
+      { "screenId": "1378:3160", "areaId": "1459:2784", "cardId": "1459:2785", "width": 320 },
+      { "screenId": "1378:3210", "areaId": "1459:2797", "cardId": "1459:2798", "width": 320 },
+      { "screenId": "1378:3260", "areaId": "1459:2810", "cardId": "1459:2811", "width": 320 }
+    ],
+    "cardHeight": 182,
+    "listenTarget": 44,
+    "implementation": {
+      "component": "frontend/components/v2/DailyExpressionCard.tsx",
+      "page": "frontend/app/home/page.tsx",
+      "audio": "frontend/public/audio/daily-expression-into.mp3",
+      "audioSource": "existing Railway /api/tts; Google Cloud en-US-Chirp3-HD-Leda",
+      "audioBytes": 6624,
+      "audioSeconds": 1.656,
+      "validation": { "browser": "Aside", "viewports": ["320x720", "360x800", "390x844"], "playbackVerified": true, "manualStopVerified": true, "navigationPauseVerified": true, "conversationDbFlowVerified": false, "deployed": false }
+    },
+    "validation": { "renderedScreens": 10, "unchangedOtherScreens": 73, "cardTextOverflow": 0, "stageContentOverflow": 0, "unboundSolidCardFills": 0, "prototypeReactionsPreserved": 92, "flowStartingPointsPreserved": 3, "browserPlaybackVerified": false }
+  },
   "flows": [
     { "nodeId": "1371:1642", "name": "v2 · 시작과 온보딩" },
     { "nodeId": "1365:866", "name": "v2 · 대화와 피드백" },

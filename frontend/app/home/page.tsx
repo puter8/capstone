@@ -1,11 +1,12 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useState, useSyncExternalStore } from "react";
 
 import { AppFrame } from "@/components/v2/AppFrame";
 import { BottomNav } from "@/components/v2/BottomNav";
 import { Bubble } from "@/components/v2/Bubble";
 import { Button } from "@/components/v2/Button";
+import { DailyExpressionCard } from "@/components/v2/DailyExpressionCard";
 import { Dock, type DockState } from "@/components/v2/Dock";
 import { IconMicOff, IconSpinner, IconVolume } from "@/components/v2/icons";
 import { Sheet } from "@/components/v2/Sheet";
@@ -28,6 +29,22 @@ const HOME_ROUTES: HomeRoutes = {
 };
 
 const WORDMARK_STYLE = { fontVariationSettings: '"SOFT" 0, "WONK" 1' } as const;
+
+const COMPACT_HOME_QUERY = "(max-width: 359px)";
+
+function subscribeToCompactHome(onChange: () => void) {
+  const query = window.matchMedia(COMPACT_HOME_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function isCompactHome() {
+  return window.matchMedia(COMPACT_HOME_QUERY).matches;
+}
+
+function defaultCompactHome() {
+  return false;
+}
 
 function formatTodayLabel(): string {
   return new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long", timeZone: "Asia/Seoul" }).format(new Date());
@@ -91,6 +108,7 @@ function DateDivider({ iso }: { iso: string }) {
 
 export default function HomeV2Page() {
   const home = useHomeConversation(HOME_ROUTES);
+  const compactHome = useSyncExternalStore(subscribeToCompactHome, isCompactHome, defaultCompactHome);
   const [usageOpen, setUsageOpen] = useState(false);
   const usagePopoverId = useId();
   const { state, usage, subscription } = home;
@@ -187,7 +205,7 @@ export default function HomeV2Page() {
   if (!inConversation) {
     const ctaDisabled = controlsLocked || home.quotaExhausted;
     return (
-      <AppFrame withBottomNav>
+      <AppFrame className="pb-[calc(70px+var(--p-space-4)+env(safe-area-inset-bottom))]" withBottomNav>
         <header className="relative flex items-center px-p-5 pt-p-4">
           <Wordmark className="flex-1" />
           {usage || plan === "pro" ? (
@@ -202,14 +220,19 @@ export default function HomeV2Page() {
           ) : null}
           {usage ? <UsagePopover id={usagePopoverId} onClose={() => setUsageOpen(false)} open={usageOpen} usage={usage} /> : null}
         </header>
-        <section className="flex flex-col gap-p-2 px-p-5 pt-[28px]">
+        <section className="flex flex-col gap-p-2 px-p-5 pt-p-4">
           <p className="text-p-eyebrow text-p-text-muted">{formatTodayLabel()}</p>
-          <h1 className="text-p-heading tracking-[-0.02em] text-p-text">
-            {home.displayName ? `${home.displayName}, 오늘은 어떤 이야기를 해볼까요?` : "오늘은 어떤 이야기를 해볼까요?"}
+          <h1 className="text-p-section tracking-[-0.02em] text-p-text">
+            {home.displayName ? `${home.displayName}, 오늘은 어떤 ` : "오늘은 어떤 "}
+            <br />
+            이야기를 해볼까요?
           </h1>
         </section>
-        <div className="flex flex-1 flex-col items-center justify-center gap-p-1 py-p-4">
-          <Stage axes={home.axes} size="large" state="idle" />
+        <div className="px-p-5 pt-p-3">
+          <DailyExpressionCard />
+        </div>
+        <div className="flex flex-1 flex-col items-center justify-center gap-p-1">
+          <Stage axes={home.axes} className="h-[220px] shrink-0 max-[359px]:h-[140px]" size={compactHome ? "compact" : "large"} state="idle" />
           <p className="font-p-brand text-p-quote italic text-p-text-secondary" lang="en">
             Pally&apos;s here to chat!
           </p>
