@@ -11,7 +11,7 @@ import { Sheet } from "@/components/v2/Sheet";
 import { Toast } from "@/components/v2/Toast";
 import { TopBar } from "@/components/v2/TopBar";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import { cacheProfile, getCurrentUserId, loadProfile } from "@/lib/api/route-data";
+import { cacheProfile, getCurrentUserId, loadDailyExpression, loadProfile } from "@/lib/api/route-data";
 import type { Level } from "@/lib/types/session";
 import { routes } from "@/lib/v2/routes";
 
@@ -63,6 +63,7 @@ export default function LevelSettingsV2Page() {
     try {
       const response = await pallyApi.updateProfile({ english_level: level });
       cacheProfile(userId, response);
+      void loadDailyExpression(userId).catch((caught: unknown) => console.error("Updated level expression prefetch failed", caught));
       setLevel(response.profile.english_level);
       setSavedLevel(response.profile.english_level);
       setCompletedLevel(response.profile.english_level);

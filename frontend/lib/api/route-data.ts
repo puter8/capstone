@@ -2,6 +2,7 @@ import type {
   AchievementsResponse,
   ConversationDetailResponse,
   ConversationListResponse,
+  DailyExpressionResponse,
   ProfileResponse,
   SubscriptionResponse,
   UsageQuota,
@@ -21,6 +22,7 @@ const ROUTE_DATA_TTL_MS = 60_000;
 const CACHE_KEYS = {
   achievements: "achievements",
   conversation: "conversation:",
+  dailyExpression: "daily-expression:",
   history: "history:",
   profile: "profile",
   subscription: "subscription",
@@ -102,6 +104,26 @@ export function peekProfileSnapshot(): RouteSnapshot<ProfileResponse> | null {
   return peekRouteSnapshot(CACHE_KEYS.profile);
 }
 
+function expressionDate(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+export function peekDailyExpressionSnapshot(): RouteSnapshot<DailyExpressionResponse> | null {
+  const snapshot = peekRouteSnapshot<DailyExpressionResponse>(`${CACHE_KEYS.dailyExpression}${expressionDate()}`);
+  if (!snapshot || snapshot.data.date !== expressionDate()) return null;
+  const profile = peekStale<ProfileResponse>(snapshot.userId, CACHE_KEYS.profile);
+  if (profile && profile.profile.english_level !== snapshot.data.expression.level) return null;
+  return snapshot;
+}
+
+export function loadDailyExpression(userId: string): Promise<DailyExpressionResponse> {
+  return read(userId, `${CACHE_KEYS.dailyExpression}${expressionDate()}`, ROUTE_DATA_TTL_MS, () => pallyApi.getDailyExpression());
+}
+
+export function invalidateDailyExpression(userId: string): void {
+  evict(userId, CACHE_KEYS.dailyExpression);
+}
+
 export function usageFromQuota(current: UsageResponse | null | undefined, quota: UsageQuota): UsageResponse {
   return {
     plan: quota.daily_limit === null ? "pro" : "free",
@@ -141,6 +163,11 @@ export function loadProfile(userId: string): Promise<ProfileResponse> {
 }
 
 export function cacheProfile(userId: string, response: ProfileResponse): void {
+  const previous = peekStale<ProfileResponse>(userId, CACHE_KEYS.profile);
+  if (previous?.profile.english_level !== response.profile.english_level) {
+    invalidateDailyExpression(userId);
+    evict(userId, CACHE_KEYS.achievements);
+  }
   write(userId, CACHE_KEYS.profile, ROUTE_DATA_TTL_MS, response);
 }
 
@@ -206,6 +233,7 @@ export async function prefetchRouteData(href: string, userId?: string): Promise<
   if (href.startsWith("/home")) {
     await Promise.all([
       loadProfile(scope),
+      loadDailyExpression(scope),
       prefetch(scope, CACHE_KEYS.usage, USAGE_TTL_MS, () => pallyApi.getUsage()),
       prefetch(scope, CACHE_KEYS.subscription, ROUTE_DATA_TTL_MS, () => pallyApi.getSubscription()),
     ]);

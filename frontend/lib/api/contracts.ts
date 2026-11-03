@@ -119,8 +119,6 @@ export interface DailyExpressionResponse {
     example_en: string;
     example_ko: string;
   };
-  used_today: boolean;
-  pally_used_today: boolean;
 }
 
 export interface OpenerResponse {

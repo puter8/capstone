@@ -224,7 +224,7 @@ export const httpPallyApi: PallyApi = {
   },
 
   getAchievements: () => apiRequest("/api/achievements", { schema: achievementsResponseSchema }),
-  getDailyExpression: () => apiRequest("/api/daily-expression", { schema: dailyExpressionResponseSchema }),
+  getDailyExpression: () => apiRequest("/api/daily-expression?include_usage=false", { schema: dailyExpressionResponseSchema }),
 
   getBillingProducts: () => apiRequest("/api/billing/products", { schema: billingProductsResponseSchema }),
 

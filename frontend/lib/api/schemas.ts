@@ -238,8 +238,6 @@ export const dailyExpressionResponseSchema = z.object({
     example_en: z.string().trim().min(1),
     example_ko: z.string().trim().min(1),
   }),
-  used_today: z.boolean(),
-  pally_used_today: z.boolean(),
 });
 
 export const billingProductsResponseSchema = z.object({

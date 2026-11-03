@@ -528,6 +528,7 @@ def _opener_client(monkeypatch, *, session, first_message, text="Hey! What music
     monkeypatch.setattr(main, "_owned_session", lambda *_: session)
     monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
     monkeypatch.setattr(main, "_recent_session_texts", lambda *_: [])
+    monkeypatch.setattr(main, "_user_level", lambda *_: session["level"])
 
     async def fake_generate(axes, level, recent_texts, expression_rule=None):
         calls.append((axes, level, recent_texts, expression_rule))
@@ -799,7 +800,11 @@ class _FakeAchievementQuery:
 
     def upsert(self, row, **_):
         self.data.setdefault("writes", []).append((self.table, row))
-        self.data.setdefault(self.table, []).append(row)
+        if self.table == "daily_expression_snapshots":
+            # These fixtures are scoped to one user/day; upsert replaces that row.
+            self.data[self.table] = [row]
+        else:
+            self.data.setdefault(self.table, []).append(row)
         return self
 
     def execute(self):
@@ -1032,6 +1037,61 @@ def test_daily_expression_repicks_when_the_stored_id_left_the_catalog():
     assert expr is not None and expr.level == "B1"
     assert [row["expr_id"] for t, row in data["writes"]
             if t == "daily_expression_snapshots"] == [expr.id]
+
+
+def test_daily_expression_tracks_level_changes_and_reuses_each_level_on_return():
+    sb, _ctx, date_kst, data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], snapshots=[{"expr_id": "b1-into"}])
+    for level in ("B2", "C1", "A2", "B1"):
+        expr = main._daily_expression(sb, "user-1", date_kst, level)
+        assert expr == main.daily_expression.pick_for_day("user-1", date_kst, level)
+        assert expr.level == level
+        writes = len(data["writes"])
+        assert main._daily_expression(sb, "user-1", date_kst, level) == expr
+        assert len(data["writes"]) == writes
+
+
+def test_expression_prompt_does_not_query_conversation_history(monkeypatch):
+    import asyncio
+    sb, _ctx, date_kst, _data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], snapshots=[{"expr_id": "b1-into"}])
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_kst_date", lambda: date_kst)
+
+    def unexpected_history(*_):
+        raise AssertionError("Prompt-only reads must not scan messages")
+
+    monkeypatch.setattr(main, "_today_messages_by_role", unexpected_history)
+    response = asyncio.run(main.get_daily_expression(include_usage=False, user_id="user-1"))
+    assert response["expression"]["id"] == "b1-into"
+    assert "used_today" not in response and "pally_used_today" not in response
+
+
+def test_expression_usage_default_and_f1_follow_current_profile_level(monkeypatch):
+    import asyncio
+    sb, ctx, date_kst, _data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[{"role": "user", "transcript": "I'm into music"}],
+        level="B2", snapshots=[{"expr_id": "b1-into"}])
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_kst_date", lambda: date_kst)
+    monkeypatch.setattr(main, "_today_messages_by_role", lambda *_: ([{"transcript": "I'm into music"}], []))
+    response = asyncio.run(main.get_daily_expression(user_id="user-1"))
+    assert response["expression"]["level"] == "B2"
+    assert response["used_today"] is False
+    assert response["pally_used_today"] is False
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
+
+
+def test_old_conversation_opener_uses_the_current_profile_expression(monkeypatch):
+    client, _inserted, calls = _opener_client(
+        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None)
+    _tts(monkeypatch)
+    monkeypatch.setattr(main, "_user_level", lambda *_: "B2")
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+    assert response.status_code == 201
+    expr = main.daily_expression.pick_for_day("caller-id", main._kst_date(), "B2")
+    assert response.json()["daily_expression"]["id"] == expr.id
+    assert calls[0][3] == main.daily_expression.opener_rule(expr)
 
 
 def test_f1_is_fixed_every_day_for_every_user():
