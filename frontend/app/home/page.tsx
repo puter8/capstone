@@ -14,7 +14,7 @@ import { Sheet } from "@/components/v2/Sheet";
 import { Stage, type StageState } from "@/components/v2/Stage";
 import { TalkCta } from "@/components/v2/TalkCta";
 import { Toast } from "@/components/v2/Toast";
-import { TopBar, type ConversationStatus } from "@/components/v2/TopBar";
+import { TopBar } from "@/components/v2/TopBar";
 import { UsageChip } from "@/components/v2/UsageChip";
 import { UsagePopover } from "@/components/v2/UsagePopover";
 import type { PallySegment } from "@/lib/api/contracts";
@@ -124,7 +124,6 @@ export default function HomeV2Page() {
   const remaining = usage?.remaining_turns ?? 0;
 
   const stageState: StageState = isSpeaking ? "speaking" : isRecording ? "listening" : isProcessing || home.isClosing ? "thinking" : "idle";
-  const topStatus: ConversationStatus = home.isClosing ? "closing" : isSpeaking ? "speaking" : isRecording ? "listening" : isPreparingOpener ? "opening" : isProcessing ? "processing" : "idle";
   const dockState: DockState = home.quotaExhausted && rec.kind === "idle" && !home.replaying
     ? "disabled"
     : isSpeaking
@@ -283,7 +282,6 @@ export default function HomeV2Page() {
           onEnd={() => {
             void home.endSession();
           }}
-          status={topStatus}
           trailing={
             usage || plan === "pro" ? (
               <UsageChip

@@ -26,9 +26,9 @@ const openerDock = renderToStaticMarkup(createElement(Dock, { ...dockProps, stat
 match(openerDock, /aria-label="Pally 인사 준비 중"[^>]*disabled=""/, "The greeting wait keeps the mic disabled");
 match(openerDock, /Pally가 인사를 준비하고 있어요/);
 doesNotMatch(openerDock, /답변/);
-const openerBar = renderToStaticMarkup(createElement(TopBar, { variant: "conversation", status: "opening", onEnd: () => {} }));
-match(openerBar, /인사 준비 중/);
-doesNotMatch(openerBar, /답변 준비|내 차례/);
+const openerBar = renderToStaticMarkup(createElement(TopBar, { variant: "conversation", onEnd: () => {} }));
+match(openerBar, />Pally</);
+doesNotMatch(openerBar, /내 차례|말하는 중|듣는 중|인사 준비 중|답변 준비 중|저장 중/);
 
 const received = reducer(opening, { type: "opener/received", pallyMsg: {
   id: "opener", sessionId: "conversation", role: "pally", transcript: "Hi! How are you?", createdAt: "2026-11-03T00:00:00Z",
