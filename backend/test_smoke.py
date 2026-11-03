@@ -803,6 +803,10 @@ class _FakeAchievementQuery:
         if self.table == "daily_expression_snapshots":
             # These fixtures are scoped to one user/day; upsert replaces that row.
             self.data[self.table] = [row]
+        elif self.table == "activity_events":
+            rows = self.data.setdefault(self.table, [])
+            rows[:] = [saved for saved in rows if (saved.get("user_id"), saved.get("event_id")) != (row["user_id"], row["event_id"])]
+            rows.append(row)
         else:
             self.data.setdefault(self.table, []).append(row)
         return self
@@ -814,6 +818,11 @@ class _FakeAchievementQuery:
             # select("session_id") + role=user → 전체 기간 발화 세션 / 그 외 → 오늘 메시지
             key = "spoken" if self.columns.strip() == "session_id" else "today"
             return SimpleNamespace(data=self.data[key])
+        if self.table == "activity_events" and self.columns == "received_at":
+            rows = self.data.get(self.table, [])
+            for column, value in self.filters:
+                rows = [row for row in rows if row.get(column) == value]
+            return SimpleNamespace(data=rows)
         return SimpleNamespace(data=self.data.get(self.table, []))
 
 
@@ -1067,7 +1076,7 @@ def test_expression_prompt_does_not_query_conversation_history(monkeypatch):
     assert "used_today" not in response and "pally_used_today" not in response
 
 
-def test_expression_usage_default_and_f1_follow_current_profile_level(monkeypatch):
+def test_expression_usage_tracks_current_level_but_f1_keeps_previous_completion(monkeypatch):
     import asyncio
     sb, ctx, date_kst, _data = _achievement_ctx(
         [], spoken_ids=[], today_msgs=[{"role": "user", "transcript": "I'm into music"}],
@@ -1079,7 +1088,7 @@ def test_expression_usage_default_and_f1_follow_current_profile_level(monkeypatc
     assert response["expression"]["level"] == "B2"
     assert response["used_today"] is False
     assert response["pally_used_today"] is False
-    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is True
 
 
 def test_old_conversation_opener_uses_the_current_profile_expression(monkeypatch):
@@ -1092,6 +1101,117 @@ def test_old_conversation_opener_uses_the_current_profile_expression(monkeypatch
     expr = main.daily_expression.pick_for_day("caller-id", main._kst_date(), "B2")
     assert response.json()["daily_expression"]["id"] == expr.id
     assert calls[0][3] == main.daily_expression.opener_rule(expr)
+
+
+def test_f1_completion_survives_level_changes_and_keeps_its_timestamp():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music", "created_at": start}],
+        snapshots=[{"expr_id": "b1-into"}])
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+    completed_at = ctx["expression_task_completed_at"]
+    for level in ("B2", "C1", "A2", "B1"):
+        data["profiles"][0]["english_level"] = level
+        assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+        assert ctx["expression_task_completed_at"] == completed_at
+    events = [row for table, row in data["writes"] if table == "activity_events"]
+    assert len(events) == 1
+    assert events[0]["event_type"] == main._EXPRESSION_TASK_COMPLETED_EVENT
+    assert main._expression_task_completed_at(sb, "other-user", day) is None
+    tomorrow = (main.datetime.fromisoformat(day).date() + main.timedelta(days=1)).isoformat()
+    assert main._expression_task_completed_at(sb, "user-1", tomorrow) is None
+
+
+def test_level_change_preserves_a_use_before_achievements_was_opened():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm really into music", "created_at": start}],
+        level="B2", snapshots=[{"expr_id": "b1-into"}])
+    new_expr = main._daily_expression(sb, "user-1", day, "B2")
+    assert new_expr.level == "B2"
+    assert main._expression_task_completed_at(sb, "user-1", day) is not None
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+    assert [table for table, _row in data["writes"]] == ["activity_events", "daily_expression_snapshots"]
+
+
+def test_level_changes_do_not_complete_an_unused_expression():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[
+            {"role": "pally", "session_id": "s-1", "transcript": "I'm into music", "created_at": start},
+            {"role": "user", "session_id": "s-1", "transcript": "Hello Pally", "created_at": start},
+        ], level="B2", snapshots=[{"expr_id": "b1-into"}])
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is False
+    assert data["activity_events"] == []
+
+
+def test_f1_is_not_completed_the_next_day():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music", "created_at": start}],
+        snapshots=[{"expr_id": "b1-into"}])
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+    tomorrow = (main.datetime.fromisoformat(day).date() + main.timedelta(days=1)).isoformat()
+    assert main._eval_task(sb, "user-1", tomorrow, "F1", {**ctx, "user_msgs": []}) is False
+    assert len(data["activity_events"]) == 1
+
+
+def test_completion_write_failure_cannot_replace_the_old_assignment(monkeypatch):
+    import pytest
+    start, _end = _today_window()
+    sb, _ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music"}],
+        level="B2", snapshots=[{"expr_id": "b1-into"}])
+
+    def fail(*_):
+        raise main.AppError(503, "persistence_failed", "Failed to persist completion")
+
+    monkeypatch.setattr(main, "_record_expression_task_completion", fail)
+    with pytest.raises(main.AppError):
+        main._daily_expression(sb, "user-1", day, "B2")
+    assert data["daily_expression_snapshots"] == [{"expr_id": "b1-into"}]
+
+
+def test_server_completion_events_cannot_be_forged_by_the_public_route():
+    from fastapi.testclient import TestClient
+    main.app.dependency_overrides[main.get_current_user_id] = lambda: "user-1"
+    try:
+        response = TestClient(main.app).post("/api/activity-events", headers={"Idempotency-Key": "claim"}, json={
+            "event_id": main._expression_completion_id("user-1", main._kst_date()),
+            "event_type": main._EXPRESSION_TASK_COMPLETED_EVENT,
+        })
+    finally:
+        main.app.dependency_overrides.pop(main.get_current_user_id)
+    assert response.status_code == 422
+    assert main._EXPRESSION_TASK_COMPLETED_EVENT not in main._ALLOWED_EVENT_TYPES
+
+
+def test_f1_completion_remains_done_in_the_achievements_response(monkeypatch):
+    import asyncio
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music", "created_at": start}],
+        snapshots=[{"expr_id": "b1-into"}])
+    evaluate = main._eval_task
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_kst_date", lambda: day)
+    monkeypatch.setattr(main, "_resolve_daily_task_ids", lambda *_: ["A1", "F1", "A3"])
+    monkeypatch.setattr(main, "_gather_achievement_context", lambda *_: dict(ctx))
+    monkeypatch.setattr(main, "_eval_task", lambda s, u, d, t, c: evaluate(s, u, d, t, c) if t == "F1" else True)
+    monkeypatch.setattr(main, "_compute_streak", lambda *_: 1)
+    first = asyncio.run(main.get_achievements(user_id="user-1"))
+    data["profiles"][0]["english_level"] = "B2"
+    second = asyncio.run(main.get_achievements(user_id="user-1"))
+    assert first["daily_tasks"][1] == second["daily_tasks"][1]
+    assert second["daily_tasks"][1]["status"] == "completed"
+    assert second["streak_count"] == 1
+    assert data["streak_days"][-1]["qualified"] is True
 
 
 def test_f1_is_fixed_every_day_for_every_user():
