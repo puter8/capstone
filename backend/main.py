@@ -3010,6 +3010,48 @@ async def reopen_conversation(
 
 # ── 오늘의 표현 (daily expression) ───────────────────────────────────────────
 
+_EXPRESSION_TASK_COMPLETED_EVENT = "daily_expression_task_completed"
+
+
+def _expression_completion_id(user_id: str, date_kst: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pally:{user_id}:{date_kst}:expression-task-completed"))
+
+
+def _expression_task_completed_at(sb, user_id: str, date_kst: str) -> Optional[str]:
+    try:
+        rows = (sb.table("activity_events").select("received_at")
+                .eq("user_id", user_id).eq("event_id", _expression_completion_id(user_id, date_kst))
+                .eq("event_type", _EXPRESSION_TASK_COMPLETED_EVENT).limit(1).execute())
+    except Exception as e:
+        logging.error(f"expression task completion read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load expression task completion")
+    return rows.data[0]["received_at"] if rows.data else None
+
+
+def _record_expression_task_completion(sb, user_id: str, date_kst: str) -> str:
+    completed_at = _now_iso()
+    try:
+        # This event type is server-only. The public event route cannot forge it
+        # and insert-or-ignore there cannot overwrite this daily completion.
+        sb.table("activity_events").upsert({
+            "user_id": user_id,
+            "event_id": _expression_completion_id(user_id, date_kst),
+            "event_type": _EXPRESSION_TASK_COMPLETED_EVENT,
+            "received_at": completed_at,
+        }, on_conflict="user_id,event_id").execute()
+    except Exception as e:
+        logging.error(f"expression task completion write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to persist expression task completion")
+    return completed_at
+
+
+def _preserve_expression_task_completion(sb, user_id: str, date_kst: str, expr) -> None:
+    if _expression_task_completed_at(sb, user_id, date_kst):
+        return
+    user_msgs, _pally_msgs = _today_messages_by_role(sb, user_id, date_kst)
+    if _spoke_daily_expression(expr, user_msgs):
+        _record_expression_task_completion(sb, user_id, date_kst)
+
 
 def _user_level(sb, user_id: str) -> str:
     """profiles.english_level. 프로필이 없으면 B1 (create_conversation 과 동일)."""
@@ -3040,6 +3082,9 @@ def _daily_expression(sb, user_id: str, date_kst: str, level: str):
         # 덮어쓰고, 왜 바뀌었는지 로그에 남긴다.
         if expr:
             logging.info("daily expression level changed from %s to %s; re-picking", expr.level, effective_level)
+            # Capture a successful use before replacing the old assignment, even
+            # when the learner never opened achievements after speaking.
+            _preserve_expression_task_completion(sb, user_id, date_kst, expr)
         else:
             logging.warning(
                 "daily expression %s is no longer in the catalog; re-picking",
@@ -3426,7 +3471,12 @@ def _eval_task(sb, user_id: str, date_kst: str, task_id: str, ctx: dict) -> bool
         # 표현은 여기서 읽는다 — ctx 에 넣으면 F1 이 안 뽑힌 날에도 매번 조회한다.
         # um 이 이미 오늘치 발화라 발화 조회는 추가되지 않는다.
         expr = _daily_expression(sb, user_id, date_kst, _user_level(sb, user_id))
-        return _spoke_daily_expression(expr, um)
+        completed_at = _expression_task_completed_at(sb, user_id, date_kst)
+        if completed_at is None and _spoke_daily_expression(expr, um):
+            completed_at = _record_expression_task_completion(sb, user_id, date_kst)
+        if completed_at is not None:
+            ctx["expression_task_completed_at"] = completed_at
+        return completed_at is not None
 
     return False
 
@@ -3477,7 +3527,7 @@ def _build_achievements(user_id: str) -> dict:
             "title": title,
             "description": desc,
             "status": "completed" if done else "default",
-            "completed_at": completed_at if done else None,
+            "completed_at": (ctx.get("expression_task_completed_at", completed_at) if tid == "F1" else completed_at) if done else None,
         })
 
     # 3. Streak: 오늘 자격 여부 기록 + 연속 카운트
