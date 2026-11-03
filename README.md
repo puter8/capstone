@@ -45,6 +45,8 @@
 
 ### 데모에서 확인할 수 있는 흐름
 
+대화 시작 전 홈의 **오늘의 표현** 카드에서 표현·뜻·예문을 확인할 수 있습니다. 듣기 버튼을 누르면 예문 음성이 재생되고, 다시 누르면 중지됩니다.
+
 1. 홈 화면에서 마이크 버튼(rec)을 누르면 브라우저 권한 요청 후 녹음 시작
 2. 영어로 한 문장 말하기 → STT(Google Cloud) → Gemini 2.5 Flash 응답
 3. 발화 텍스트가 5축으로 분석되고 → CHARACTER MATRIX 통과 → Pally 외형과 말투가 즉시 변함
@@ -83,6 +85,7 @@
 
 ## 주요 기능
 
+- **오늘의 표현 카드** — 홈에서 영어 표현·한국어 뜻·예문을 확인하고, Google Cloud TTS로 생성한 예문 음성을 재생·중지. 대화를 시작하거나 다른 화면으로 이동하면 재생 종료
 - **음성 입력/출력** — 브라우저 마이크 → Google Cloud Speech-to-Text(EN) → Gemini 2.5 Flash → Google Cloud Text-to-Speech(EN) → 즉시 재생
 - **CHARACTER MATRIX 엔진** — 발화 1턴마다 5축 점수를 다시 계산하고, EMA(alpha=0.7)로 부드럽게 누적해 캐릭터 파라미터에 반영
 - **Pally 실시간 변형** — Canvas2D Superformula 도형이 형태·색·표정으로 5축 변화를 시각화
@@ -91,6 +94,9 @@
 - **익명 세션** — Supabase `sessions` / `messages` 테이블에 세션 ID 기반으로 모든 턴·5축·캐릭터 파라미터를 JSONB로 저장. RLS는 `session_id` 기준
 
 ## 기술 솔루션
+
+> **최근 반영 — 2026-11-03 · [PR #139](https://github.com/puter8/capstone/pull/139)**
+> 오늘의 표현 카드는 현재 고정 예시 `I’m into ~`(“~에 푹 빠져 있어요”)와 `I’m into baking these days.`를 제공합니다. 매일 자동 변경·레벨별 선정·사용 여부 판정은 아직 구현하지 않았습니다.
 
 현재 MVP의 핵심은 `CHARACTER MATRIX 엔진`입니다.
 
@@ -163,6 +169,9 @@
 - Supabase service-role 클라이언트로 `sessions` / `messages` 테이블에 모든 턴 영속화
 
 **Frontend (`frontend/`, Next.js 14 App Router · Vercel 배포 중)**
+
+- 오늘의 표현 카드 — 홈의 인사 아래에 표현·뜻·예문 표시, 앱에 포함된 MP3 재생·중지 및 재생 실패 안내
+- 모바일 홈 배치 — 320/360/390px에서 카드·Pally·시작 버튼·하단 메뉴 배치 확인 (PR #139 검증 기록)
 - 메인 홈 화면 (rec 버튼 · 채팅 영역 · 인라인 한국어 힌트) — 모바일 폭 ~360px 최적화
 - 브라우저 마이크 녹음 → `/api/stt` → `/api/chat` → `/api/tts` 자동 재생 E2E 연결
 - Canvas2D Superformula Pally 렌더러 (5축 → 형태·색·표정 변형)
@@ -176,11 +185,13 @@
 - `session_id` 기반 RLS 정책 (익명 세션)
 
 **Infra**
-- Vercel (FE) + Railway (BE) — `main` push 시 자동 배포
-- 데모 URL 두 곳 모두 200 OK (헬스 체크 통과)
+- Frontend: `main` push → GitHub Actions `Deploy frontend` → Vercel production 배포
+- Backend: Railway Git 연동 자동 배포
+- PR #139 운영 배포 후 360px 홈에서 카드 표시·실제 예문 음성 재생·중지 확인 (2026-11-03, PR 검증 기록 기준)
 
 ### 향후 확장 예정
 
+- 오늘의 표현 카드의 매일 자동 변경·레벨별 선정·사용 여부 판정
 - LLM 기반 축 분석기 보완 또는 대체 (현재는 규칙 기반)
 - 사용자별 장기 상태 저장 (Supabase pgvector)
 - 슬랭 RAG 파이프라인 (Reddit PRAW)
@@ -202,7 +213,8 @@ capstone/
 │  ├─ components/
 │  │  ├─ audio/               TalkButton, 녹음 상태 UI
 │  │  ├─ chat/                ChatBubble, MessageRow
-│  │  └─ pally/               Canvas2D Superformula 렌더러
+│  │  ├─ pally/               Canvas2D Superformula 렌더러
+│  │  └─ v2/                  현재 UI 컴포넌트 (DailyExpressionCard 등)
 │  ├─ lib/                    타입(`Message`, `Session`), Supabase 클라이언트, mock transport
 │  └─ .env.example
 │
@@ -246,7 +258,7 @@ capstone/
 | Backend | FastAPI · Python 3.11 · Pydantic v2 · httpx |
 | AI | Google Cloud STT/TTS · Gemini 2.5 Flash (Google AI Studio) · 자체 5축 분석기(Python) |
 | Database | Supabase (PostgreSQL · Auth · RLS) |
-| Infra | Vercel (FE) · Railway (BE) — 둘 다 `main` push로 자동 배포 |
+| Infra | Vercel (FE, GitHub Actions) · Railway (BE, Git 연동) — `main` push로 자동 배포 |
 
 ---
 
