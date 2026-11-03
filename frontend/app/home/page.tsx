@@ -9,6 +9,7 @@ import { Button } from "@/components/v2/Button";
 import { DailyExpressionCard } from "@/components/v2/DailyExpressionCard";
 import { Dock, type DockState } from "@/components/v2/Dock";
 import { IconMicOff, IconSpinner, IconVolume } from "@/components/v2/icons";
+import { ProcessingBubbles } from "@/components/v2/ProcessingBubbles";
 import { Sheet } from "@/components/v2/Sheet";
 import { Stage, type StageState } from "@/components/v2/Stage";
 import { TalkCta } from "@/components/v2/TalkCta";
@@ -79,21 +80,6 @@ function SegmentLegend({ segments }: { segments: PallySegment[] }) {
   );
 }
 
-function ThinkingBubble() {
-  return (
-    <div className="flex w-full flex-col items-start gap-[6px]">
-      <span className="text-p-caption text-p-text-muted">Pally</span>
-      <div className="rounded-[20px] rounded-tl-[6px] bg-p-surface px-p-4 py-p-3" role="status" aria-label="답변을 준비하고 있어요">
-        <span aria-hidden="true" className="flex h-[26px] items-center gap-[6px]">
-          {[0, 1, 2].map((index) => (
-            <span className="size-[6px] animate-pulse rounded-p-full bg-p-text-muted motion-reduce:animate-none" key={index} style={{ animationDelay: `${index * 150}ms` }} />
-          ))}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function DateDivider({ iso }: { iso: string }) {
   const label = formatDividerDate(iso);
   if (!label) return null;
@@ -130,6 +116,7 @@ export default function HomeV2Page() {
 
   const isRecording = rec.kind === "recording";
   const isProcessing = rec.kind === "processing";
+  const isPreparingOpener = isProcessing && rec.phase === "opener";
   const isSpeaking = rec.kind === "speaking" || home.replaying;
   const hasError = rec.kind === "error";
   const inConversation = state.messages.length > 0 || isRecording || isProcessing;
@@ -137,18 +124,20 @@ export default function HomeV2Page() {
   const remaining = usage?.remaining_turns ?? 0;
 
   const stageState: StageState = isSpeaking ? "speaking" : isRecording ? "listening" : isProcessing || home.isClosing ? "thinking" : "idle";
-  const topStatus: ConversationStatus = home.isClosing ? "closing" : isSpeaking ? "speaking" : isRecording ? "listening" : isProcessing ? "processing" : "idle";
+  const topStatus: ConversationStatus = home.isClosing ? "closing" : isSpeaking ? "speaking" : isRecording ? "listening" : isPreparingOpener ? "opening" : isProcessing ? "processing" : "idle";
   const dockState: DockState = home.quotaExhausted && rec.kind === "idle" && !home.replaying
     ? "disabled"
     : isSpeaking
       ? "speaking"
       : isRecording
         ? "recording"
-        : isProcessing
-          ? "processing"
-          : hasError
-            ? "retry"
-            : "ready";
+        : isPreparingOpener
+          ? "opening"
+          : isProcessing
+            ? "processing"
+            : hasError
+              ? "retry"
+              : "ready";
 
   const handleMic = () => {
     switch (dockState) {
@@ -271,7 +260,7 @@ export default function HomeV2Page() {
               text={message.transcript}
             />
           ))}
-          {isProcessing ? <ThinkingBubble /> : null}
+          {isProcessing ? <ProcessingBubbles phase={rec.phase} showUserPlaceholder={false} /> : null}
         </div>
         <div className="sticky bottom-0 bg-p-bg px-p-5 pb-[calc(var(--p-space-6)+env(safe-area-inset-bottom))] pt-p-2">
           <Button fullWidth onClick={home.toggleHistory} variant="secondary">
@@ -321,10 +310,7 @@ export default function HomeV2Page() {
             <Bubble placeholder speaker="me" text="" />
           </>
         ) : isProcessing ? (
-          <>
-            <Bubble emphasis="past" placeholder speaker="me" text="" />
-            <ThinkingBubble />
-          </>
+          <ProcessingBubbles phase={rec.phase} />
         ) : (
           <>
             {lastUser ? <Bubble emphasis={pastPair ? "past" : "current"} speaker="me" text={lastUser.transcript} /> : null}
