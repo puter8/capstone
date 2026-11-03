@@ -5,6 +5,9 @@ import type { ApiWarning } from "@/lib/api/contracts";
 // Screens show `PallyApiError.message` as-is, so the API client converts them here.
 
 export const NETWORK_ERROR_MESSAGE = "인터넷 연결을 확인하고 다시 시도해 주세요.";
+// A request that ran past its budget is not a connection problem, and saying so sends
+// the user to check their wifi over a server that is simply slow.
+export const TIMEOUT_ERROR_MESSAGE = "응답이 너무 오래 걸렸어요. 잠시 후 다시 시도해 주세요.";
 export const UNREADABLE_RESPONSE_MESSAGE = "서버 응답을 읽지 못했어요. 잠시 후 다시 시도해 주세요.";
 export const SESSION_ERROR_MESSAGE = "로그인 정보를 확인하지 못했어요. 다시 로그인해 주세요.";
 export const SIGN_IN_ERROR_MESSAGE = "로그인을 완료하지 못했어요. 다시 시도해 주세요.";

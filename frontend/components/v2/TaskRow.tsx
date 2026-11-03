@@ -9,7 +9,10 @@ type TaskRowProps = {
   className?: string;
 };
 
-/** daily_tasks[] item. Done shows a butter check and a "완료" label, not color alone. */
+/**
+ * daily_tasks[] item. The check mark alone carries the state visually; the status
+ * word stays in the tree for screen readers, which cannot see the aria-hidden mark.
+ */
 export function TaskRow({ title, description, done, className }: TaskRowProps) {
   return (
     <li className={cn("flex items-center gap-p-3 rounded-p-card bg-p-surface p-p-4", className)}>
@@ -24,7 +27,7 @@ export function TaskRow({ title, description, done, className }: TaskRowProps) {
         <span className="text-p-button text-p-text">{title}</span>
         <span className="text-p-small text-p-text-secondary">{description}</span>
       </span>
-      <span className={cn("shrink-0 text-p-eyebrow text-p-secondary", !done && "sr-only")}>{done ? "완료" : "미완료"}</span>
+      <span className="sr-only">{done ? "완료" : "미완료"}</span>
     </li>
   );
 }

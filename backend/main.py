@@ -3447,12 +3447,14 @@ def _compute_streak(sb, user_id: str, today_kst: str) -> int:
     return count
 
 
-@app.get("/api/achievements")
-async def get_achievements(user_id: str = Depends(get_current_user_id)):
-    """
-    오늘의 Daily Task 3개(완료 상태 포함) + Streak. 서버 계산만 신뢰 (클라이언트 못 씀).
-    D6(achievements_opened)은 이 화면 진입 이벤트라, 이 API 자체로는 완료되지 않는다
-    — 프론트가 POST /api/activity-events(achievements_opened)를 보낸 뒤 반영됨.
+def _build_achievements(user_id: str) -> dict:
+    """GET /api/achievements 의 동기 본문. 호출자가 스레드로 넘긴다.
+
+    Supabase 동기 client 호출이 순차로 열 번 가까이 일어난다. 이벤트 루프 위에서
+    돌면 그 동안 다른 사용자의 요청이 전부 대기한다 — 한 명이 업적 화면을 여는
+    사이 다른 한 명의 turn 이 멈춘다. 한 줄씩 offload 하지 않고 본문째 넘기는
+    이유는, 중간에 await 가 끼면 그 틈에 다른 요청이 같은 snapshot 을 다시
+    뽑아 덮어쓸 수 있어서다. 블로킹 구간을 통째로 스레드에 두면 그 경합이 없다.
     """
     sb = get_supabase()
     date_kst = _kst_date()
@@ -3494,6 +3496,16 @@ async def get_achievements(user_id: str = Depends(get_current_user_id)):
         "streak_count": streak_count,
         "daily_tasks": daily_tasks,
     }
+
+
+@app.get("/api/achievements")
+async def get_achievements(user_id: str = Depends(get_current_user_id)):
+    """
+    오늘의 Daily Task 3개(완료 상태 포함) + Streak. 서버 계산만 신뢰 (클라이언트 못 씀).
+    D6(achievements_opened)은 이 화면 진입 이벤트라, 이 API 자체로는 완료되지 않는다
+    — 프론트가 POST /api/activity-events(achievements_opened)를 보낸 뒤 반영됨.
+    """
+    return await asyncio.to_thread(_build_achievements, user_id)
 
 
 # ── Sandbox recurring subscriptions ──────────────────────────────────────────
