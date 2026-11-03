@@ -99,7 +99,7 @@
 > **최근 반영 — 2026-11-03 · [PR #139](https://github.com/puter8/capstone/pull/139)**
 > 오늘의 표현 카드는 현재 고정 예시 `I’m into ~`(“~에 푹 빠져 있어요”)와 `I’m into baking these days.`를 제공합니다. 매일 자동 변경·레벨별 선정·사용 여부 판정은 아직 구현하지 않았습니다.
 
-현재 MVP의 핵심은 `CHARACTER MATRIX 엔진`입니다.
+현재 모델의 핵심은 `CHARACTER MATRIX 엔진`입니다.
 
 ---
 
