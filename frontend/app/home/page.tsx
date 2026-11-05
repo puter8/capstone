@@ -61,7 +61,7 @@ function formatDividerDate(iso: string): string {
 
 function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cn("font-p-brand text-[40px] font-semibold leading-[1.1] tracking-[-0.02em] text-p-text", className)} lang="en" style={WORDMARK_STYLE}>
+    <span className={cn("font-p-brand text-[28px] font-semibold leading-[1.1] tracking-[-0.02em] text-p-text", className)} lang="en" style={WORDMARK_STYLE}>
       Pally
     </span>
   );
