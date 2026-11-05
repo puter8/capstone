@@ -25,23 +25,35 @@ export function usageChipLabel(plan: "free" | "pro", remaining: number, context:
 export function UsageChip({ plan, remaining, context = "home", controls, expanded, className, ...props }: UsageChipProps) {
   const label = usageChipLabel(plan, remaining, context);
   const exhausted = plan === "free" && remaining <= 0;
-  const accessibleName = plan === "pro" ? "Pro 요금제, 대화 무제한, 자세히 보기" : `오늘 남은 대화 ${Math.max(remaining, 0)}회, 자세히 보기`;
+  const pill = (
+    <span className="flex h-[36px] items-center gap-p-2 rounded-p-full border border-p-border bg-p-surface pl-p-3 pr-[14px]">
+      <span
+        aria-hidden="true"
+        className={cn("size-[6px] rounded-p-full", exhausted ? "bg-p-text-muted" : plan === "pro" ? "bg-p-secondary" : "bg-p-primary")}
+      />
+      <span className="whitespace-nowrap text-p-eyebrow text-p-text-secondary">{label}</span>
+    </span>
+  );
+
+  // Pro has no daily limit, so there is no usage card to open: render a plain badge, not a button.
+  if (plan === "pro") {
+    return (
+      <div aria-label="Pro 요금제, 대화 무제한" className={cn("flex min-h-p-target items-center py-[4px]", className)} role="img">
+        {pill}
+      </div>
+    );
+  }
+
   return (
     <button
       aria-controls={controls}
       aria-expanded={expanded}
-      aria-label={accessibleName}
+      aria-label={`오늘 남은 대화 ${Math.max(remaining, 0)}회, 자세히 보기`}
       className={cn("flex min-h-p-target items-center py-[4px]", className)}
       type="button"
       {...props}
     >
-      <span className="flex h-[36px] items-center gap-p-2 rounded-p-full border border-p-border bg-p-surface pl-p-3 pr-[14px]">
-        <span
-          aria-hidden="true"
-          className={cn("size-[6px] rounded-p-full", exhausted ? "bg-p-text-muted" : plan === "pro" ? "bg-p-secondary" : "bg-p-primary")}
-        />
-        <span className="whitespace-nowrap text-p-eyebrow text-p-text-secondary">{label}</span>
-      </span>
+      {pill}
     </button>
   );
 }

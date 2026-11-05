@@ -206,7 +206,7 @@ export default function HomeV2Page() {
               remaining={remaining}
             />
           ) : null}
-          {usage ? <UsagePopover id={usagePopoverId} onClose={() => setUsageOpen(false)} open={usageOpen} usage={usage} /> : null}
+          {usage && plan !== "pro" ? <UsagePopover id={usagePopoverId} onClose={() => setUsageOpen(false)} open={usageOpen} usage={usage} /> : null}
         </header>
         <section className="flex flex-col gap-p-2 px-p-5 pt-p-4">
           <p className="text-p-eyebrow text-p-text-muted">{formatTodayLabel()}</p>
@@ -292,7 +292,7 @@ export default function HomeV2Page() {
           }
           variant="conversation"
         />
-        {usage ? <UsagePopover className="right-p-4" id={usagePopoverId} onClose={() => setUsageOpen(false)} open={usageOpen} usage={usage} /> : null}
+        {usage && plan !== "pro" ? <UsagePopover className="right-p-4" id={usagePopoverId} onClose={() => setUsageOpen(false)} open={usageOpen} usage={usage} /> : null}
       </div>
       <div className="flex min-h-[184px] flex-1 flex-col items-center justify-center">
         <Stage axes={home.axes} size="conversation" state={stageState} />
