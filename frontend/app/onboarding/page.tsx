@@ -280,7 +280,6 @@ export default function OnboardingV2Page() {
   if (isLoadingVoice) {
     return (
       <AppFrame className="items-center justify-center gap-p-4">
-        <Stage glow={false} size="compact" />
         <p className="flex items-center gap-p-2 text-p-label text-p-text-secondary" role="status">
           <IconSpinner className="animate-spin motion-reduce:animate-none" size={20} />
           목소리 등록 상태를 확인하고 있어요
