@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 export function TraitChip({ trait, className }: { trait: string; className?: string }) {
   return (
     <li
-      className={cn("rounded-p-full border border-p-border px-[14px] py-[6px] font-p-brand text-p-quote-sm italic text-p-text", className)}
+      className={cn("min-w-0 rounded-p-full bg-p-primary px-p-1 py-p-2 text-center font-p-brand text-p-quote-sm italic text-p-on-primary max-[359px]:text-[14px]", className)}
       lang="en"
       style={{ fontVariationSettings: '"SOFT" 0, "WONK" 1' }}
     >

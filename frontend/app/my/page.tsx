@@ -237,9 +237,9 @@ export default function MyV2Page() {
               <div className="flex flex-col gap-[10px]">
                 <h3 className="text-p-eyebrow text-p-text-muted">대화하며 생긴 내 Pally의 성격</h3>
                 {profile.traits.length > 0 ? (
-                  <ul className="flex flex-wrap gap-[6px]">
-                    {profile.traits.map((trait) => (
-                      <TraitChip key={trait} trait={trait} />
+                  <ul className="grid grid-cols-6 gap-p-2">
+                    {profile.traits.map((trait, index) => (
+                      <TraitChip className={index < 2 ? "col-span-3" : "col-span-2"} key={trait} trait={trait} />
                     ))}
                   </ul>
                 ) : (

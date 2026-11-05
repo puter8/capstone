@@ -181,7 +181,6 @@ export function DailyExpressionContent({ data }: { data: DailyExpressionResponse
       <p className="font-p-brand text-p-title-en tracking-[-0.02em] text-p-text [overflow-wrap:anywhere]" lang="en" style={{ fontVariationSettings: '"SOFT" 0, "WONK" 1' }}>{expression.text}</p>
       <p className="text-p-small text-p-text-secondary">{expression.meaning_ko}</p>
       <p className="text-p-small text-p-text-secondary [overflow-wrap:anywhere]" lang="en">{expression.example_en}</p>
-      <p className="text-p-caption text-p-text-muted">오늘 대화에서 한번 써보세요</p>
       {error ? <p className="text-p-caption text-p-error" role="alert">{error}</p> : null}
     </section>
   );

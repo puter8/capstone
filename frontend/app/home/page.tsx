@@ -8,7 +8,7 @@ import { Bubble } from "@/components/v2/Bubble";
 import { Button } from "@/components/v2/Button";
 import { DailyExpressionCard } from "@/components/v2/DailyExpressionCard";
 import { Dock, type DockState } from "@/components/v2/Dock";
-import { IconMicOff, IconSpinner, IconVolume } from "@/components/v2/icons";
+import { IconMicOff, IconSpinner } from "@/components/v2/icons";
 import { ProcessingBubbles } from "@/components/v2/ProcessingBubbles";
 import { Sheet } from "@/components/v2/Sheet";
 import { Stage, type StageState } from "@/components/v2/Stage";
@@ -61,7 +61,7 @@ function formatDividerDate(iso: string): string {
 
 function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cn("font-p-brand text-p-title-en text-p-text", className)} lang="en" style={WORDMARK_STYLE}>
+    <span className={cn("font-p-brand text-[40px] font-semibold leading-[1.1] tracking-[-0.02em] text-p-text", className)} lang="en" style={WORDMARK_STYLE}>
       Pally
     </span>
   );
@@ -223,10 +223,6 @@ export default function HomeV2Page() {
           <Stage axes={home.axes} className="h-[220px] shrink-0 max-[359px]:h-[140px]" size={compactHome ? "compact" : "large"} state="idle" />
           <p className="font-p-brand text-p-quote italic text-p-text-secondary" lang="en">
             Pally&apos;s here to chat!
-          </p>
-          <p className="flex items-center gap-[6px] pt-[6px] text-p-caption text-p-text-muted">
-            <IconVolume size={16} />
-            소리를 켜고 시작해 주세요
           </p>
         </div>
         <div className="px-p-5 pb-p-4 pt-p-2">
