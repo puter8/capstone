@@ -20,7 +20,7 @@ type SessionCardProps = {
 };
 
 export function sessionTitle(item: Pick<ConversationListItem, "title">): string {
-  return item.title ?? "Pally와 나눈 대화";
+  return item.title ?? "Chat with Pally";
 }
 
 /**

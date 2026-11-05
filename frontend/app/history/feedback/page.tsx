@@ -196,7 +196,7 @@ export default function FeedbackV2Page() {
   }, []);
 
   const totalCorrections = feedback.reduce((sum, group) => sum + group.items.length, 0);
-  const title = conversation?.title ?? "Pally와 나눈 대화";
+  const title = conversation?.title ?? "Chat with Pally";
 
   return (
     <AppFrame withBottomNav>
