@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { AppFrame } from "@/components/v2/AppFrame";
 import { Button } from "@/components/v2/Button";
 import { IconSpinner } from "@/components/v2/icons";
-import { Stage } from "@/components/v2/Stage";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import { signInErrorMessage } from "@/lib/api/error-messages";
 import { supabase } from "@/lib/supabase/client";
@@ -55,7 +54,6 @@ export default function AuthCallbackV2Page() {
 
   return (
     <AppFrame className="items-center justify-center gap-p-4 px-p-5 text-center">
-      <Stage glow={false} size="compact" />
       {isLoading ? (
         <p className="flex items-center gap-p-2 text-p-label text-p-text-secondary" role="status">
           <IconSpinner className="animate-spin motion-reduce:animate-none" size={20} />
