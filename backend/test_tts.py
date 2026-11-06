@@ -17,8 +17,17 @@ from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
 
 @pytest.fixture(autouse=True)
 def disable_session_feedback_poller(monkeypatch):
-    # These tests exercise turn/TTS responses, not the separate database worker.
+    # These tests exercise turn/TTS responses, not the separate database workers.
     monkeypatch.setenv("PALLY_SESSION_FEEDBACK_WORKER_ENABLED", "false")
+    monkeypatch.setenv("PALLY_STALE_CONVERSATION_WORKER_ENABLED", "false")
+
+
+@pytest.fixture
+def signed_in():
+    # /api/tts requires a verified user; these tests exercise synthesis, not auth.
+    main.app.dependency_overrides[main.get_current_user_id] = lambda: "user-1"
+    yield
+    del main.app.dependency_overrides[main.get_current_user_id]
 
 
 def test_chat_prompt_includes_spoken_corrections_and_name_exemption():
@@ -48,7 +57,38 @@ def _install_transport(monkeypatch, handler):
     return clients
 
 
-def test_default_voice_reuses_connection_pool_and_closes_on_shutdown(monkeypatch):
+def test_tts_rejects_anonymous_callers(monkeypatch):
+    calls = []
+    _install_transport(monkeypatch, lambda request: calls.append(request) or httpx.Response(200, json={"audioContent": "bXAz"}))
+    with TestClient(main.app) as api:
+        response = api.post("/api/tts", json={"text": "Hello!"})
+    assert response.status_code == 401
+    assert calls == []  # Google is never called for an anonymous request.
+
+
+def test_tts_rejects_unbounded_text_and_other_voices(monkeypatch, signed_in):
+    calls = []
+    _install_transport(monkeypatch, lambda request: calls.append(request) or httpx.Response(200, json={"audioContent": "bXAz"}))
+    monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Chirp3-HD-Leda")
+    with TestClient(main.app) as api:
+        assert api.post("/api/tts", json={"text": "a" * 501}).status_code == 422
+        assert api.post("/api/tts", json={"text": "Hello!", "voice": "en-US-Studio-O"}).status_code == 422
+        assert api.post("/api/tts", json={"text": "Hello!", "speaking_rate": 4.0}).status_code == 422
+    assert calls == []
+
+
+def test_tts_provider_error_does_not_leak_gcp_details(monkeypatch, signed_in):
+    def synthesize(_request):
+        return httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED", "message": "billing disabled for project 123"}})
+
+    _install_transport(monkeypatch, synthesize)
+    with TestClient(main.app) as api:
+        response = api.post("/api/tts", json={"text": "Hello!"})
+    assert response.status_code == 502
+    assert "billing" not in response.text and "project" not in response.text
+
+
+def test_default_voice_reuses_connection_pool_and_closes_on_shutdown(monkeypatch, signed_in):
     requests = []
 
     def synthesize(request):
@@ -72,7 +112,8 @@ def test_default_voice_reuses_connection_pool_and_closes_on_shutdown(monkeypatch
     assert main.app.state.http_client is None
 
 
-def test_journey_configuration_rollback_and_explicit_override(monkeypatch):
+def test_journey_configuration_rollback_and_explicit_default_voice(monkeypatch, signed_in):
+    # The configured default stays switchable by env; clients may name it but no other voice.
     voices = []
 
     def synthesize(request):
@@ -83,10 +124,10 @@ def test_journey_configuration_rollback_and_explicit_override(monkeypatch):
     monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Journey-F")
     with TestClient(main.app) as api:
         default = api.post("/api/tts", json={"text": "Hello!", "voice": None})
-        explicit = api.post("/api/tts", json={"text": "Hello!", "voice": "en-US-Chirp3-HD-Leda"})
+        explicit = api.post("/api/tts", json={"text": "Hello!", "voice": "en-US-Journey-F"})
     assert default.json()["voice"] == "en-US-Journey-F"
-    assert explicit.json()["voice"] == "en-US-Chirp3-HD-Leda"
-    assert voices == ["en-US-Journey-F", "en-US-Chirp3-HD-Leda"]
+    assert explicit.json()["voice"] == "en-US-Journey-F"
+    assert voices == ["en-US-Journey-F", "en-US-Journey-F"]
 
 
 @pytest.mark.parametrize("worker_fails", [False, True])
@@ -308,7 +349,7 @@ def test_inflight_turn_cannot_save_into_a_closed_or_reopened_session(monkeypatch
     review_generation.assert_not_called()
 
 
-def test_provider_failure_does_not_break_next_synthesis(monkeypatch):
+def test_provider_failure_does_not_break_next_synthesis(monkeypatch, signed_in):
     calls = []
 
     def synthesize(request):
@@ -450,3 +491,26 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     assert [(m.role, m.content) for m in sent_history] == [
         ("user", "say 1"), ("pally", "reply to 1"), ("user", "say 2"), ("pally", "reply to 2"),
     ]
+
+
+@pytest.mark.parametrize("production,configured,frontends,expected", [
+    (False, "", "", ["*"]),
+    (True, "", "https://yourpally.app,https://capstone-eight-virid.vercel.app",
+     ["https://yourpally.app", "https://capstone-eight-virid.vercel.app"]),
+    (True, "https://a.example, https://b.example", "https://ignored.example",
+     ["https://a.example", "https://b.example"]),
+    (True, "*", "", ["*"]),
+])
+def test_cors_origins_default_to_frontend_domains_in_production(monkeypatch, production, configured, frontends, expected):
+    monkeypatch.setattr(main, "_IS_PRODUCTION", production)
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", configured)
+    monkeypatch.setenv("BILLING_FRONTEND_ORIGINS", frontends)
+    assert main._cors_origins() == expected
+
+
+def test_production_without_any_frontend_origin_refuses_to_start(monkeypatch):
+    monkeypatch.setattr(main, "_IS_PRODUCTION", True)
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.delenv("BILLING_FRONTEND_ORIGINS", raising=False)
+    with pytest.raises(RuntimeError):
+        main._cors_origins()

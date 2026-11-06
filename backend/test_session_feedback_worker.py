@@ -126,11 +126,13 @@ def isolated_worker(monkeypatch):
     review._inflight.clear()
     review._retry_at.clear()
     review._failures.clear()
+    review._turn_failures.clear()
     monkeypatch.setattr(review, "generate_session_feedback", successful)
     yield
     review._inflight.clear()
     review._retry_at.clear()
     review._failures.clear()
+    review._turn_failures.clear()
 
 
 def test_closed_session_saves_review_and_existing_results_are_untouched():
@@ -210,6 +212,33 @@ def test_provider_failure_preserves_null_and_backoff_then_retries(monkeypatch):
     now[0] += 31
     monkeypatch.setattr(review, "generate_session_feedback", successful)
     assert review.process_session(lambda: db, "s1", build_turns)["processed"] == 1
+
+
+def test_repeatedly_ungrounded_turn_stops_retrying_with_lenient_grounding(monkeypatch):
+    # Production saw two turns re-billed every 5 minutes for 15 hours: the model kept
+    # returning one ungrounded item, so strict grounding failed the turn forever.
+    db = DB()
+    db.pair()
+    now = [100.0]
+    calls = []
+    monkeypatch.setattr(review.time, "monotonic", lambda: now[0])
+
+    def stubborn(pairs, level, lenient_turn_ids=frozenset()):
+        calls.append(lenient_turn_ids)
+        if "u1" in lenient_turn_ids:
+            return [{"turn_id": "u1", "items": [], "failed": False}]
+        return [{"turn_id": "u1", "items": [], "failed": True}]
+
+    monkeypatch.setattr(review, "generate_session_feedback", stubborn)
+    for _ in range(review._STRICT_GROUNDING_ATTEMPTS):
+        assert review.process_session(lambda: db, "s1", build_turns)["failed"] == 1
+        assert db.rows["messages"][0]["feedback"] is None
+        now[0] += review._MAX_RETRY_SECONDS + 1
+    assert review.process_session(lambda: db, "s1", build_turns)["processed"] == 1
+    assert db.rows["messages"][0]["feedback"] == []
+    assert calls[-1] == frozenset({"u1"})
+    assert all(not lenient for lenient in calls[:-1])
+    assert "u1" not in review._turn_failures
 
 
 def test_save_failure_preserves_null_for_retry():

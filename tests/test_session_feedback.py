@@ -173,6 +173,20 @@ def test_ungrounded_item_fails_its_turn_without_hiding_other_turns(monkeypatch):
     ]
 
 
+def test_lenient_turn_drops_ungrounded_items_instead_of_failing(monkeypatch):
+    valid = _item()
+    _provider_returns(monkeypatch, [
+        {"turn_id": "mixed", "items": [valid, _item("he want", "he wants")]},
+        {"turn_id": "strict", "items": [valid, _item("he want", "he wants")]},
+    ])
+
+    assert feedback_module.generate_session_feedback(
+        [_turn("mixed"), _turn("strict")], lenient_turn_ids=frozenset({"mixed"}),
+    ) == [
+        _result("mixed", [valid]), _result("strict", failed=True),
+    ]
+
+
 @pytest.mark.parametrize("field", ["original", "corrected", "explanation_ko"])
 @pytest.mark.parametrize("invalid", [None, 123, True, [], {}, "", "   "])
 def test_invalid_item_fields_fail_batch_instead_of_coercing_or_dropping(monkeypatch, field, invalid):

@@ -22,7 +22,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, RedirectResponse
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Dict, Literal, Optional
 
 load_dotenv()
@@ -39,11 +39,11 @@ from ai.analyzer import analyze_utterance
 from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
 from ai import daily_expression
 from ai.intimacy import compute_intimacy_from_access_days
-from ai.matrix_engine import apply_ema, conversation_mean, replay_cumulative, compute_character, describe_character
+from ai.matrix_engine import conversation_mean, replay_cumulative, compute_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
-from lib import billing, kakaopay, session_feedback, voice_energy
+from lib import billing, kakaopay, session_feedback, stale_conversations, voice_energy
 from ai.voice_energy import MAX_SECONDS, MAX_WAV_BYTES, MIN_BASELINE_SECONDS
 
 
@@ -136,6 +136,7 @@ async def lifespan(application: FastAPI):
         task = None
         feedback_task = None
         energy_task = None
+        stale_task = None
         try:
             if os.getenv("BILLING_PROVIDER") == "kakaopay" and os.getenv("BILLING_WORKER_ENABLED") == "true":
                 task = asyncio.create_task(billing.worker(get_supabase, stop))
@@ -144,6 +145,11 @@ async def lifespan(application: FastAPI):
                 feedback_task = asyncio.create_task(
                     session_feedback.worker(get_supabase, stop, _conversation_turns),
                 )
+            if (os.getenv("PALLY_STALE_CONVERSATION_WORKER_ENABLED", "true").lower() != "false"
+                    and os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")):
+                stale_task = asyncio.create_task(stale_conversations.worker(
+                    get_supabase, stop, _stale_completion(asyncio.get_running_loop()),
+                ))
             if _voice_energy_enabled():
                 # librosa/numba 는 첫 호출에서 JIT 컴파일을 한다 — 실측 7.9초.
                 # 부팅 때 한 번 돌려두지 않으면 그 시간을 온보딩에서 기준을 등록하는
@@ -155,6 +161,8 @@ async def lifespan(application: FastAPI):
             stop.set()
             if energy_task is not None:
                 await energy_task
+            if stale_task is not None:
+                await stale_task
             try:
                 if task is not None:
                     await task
@@ -166,12 +174,32 @@ async def lifespan(application: FastAPI):
                     application.state.http_client = None
 
 
-app = FastAPI(title="Pally Backend API", version="1.0.0", lifespan=lifespan)
+# Railway sets RAILWAY_ENVIRONMENT=production on the deployed service; local runs have no such variable.
+_IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") == "production"
 
-# CORS 허용 origin: 기본 "*"(개발). 프로덕션은 CORS_ALLOW_ORIGINS 에 프론트 도메인을
-# 콤마로 넣어 제한한다. 예: CORS_ALLOW_ORIGINS=https://capstone-eight-virid.vercel.app
-_cors_env = os.getenv("CORS_ALLOW_ORIGINS", "*").strip()
-_allow_origins = ["*"] if _cors_env == "*" else [o.strip() for o in _cors_env.split(",") if o.strip()]
+# The interactive API docs list every route; keep them for local work only.
+app = FastAPI(
+    title="Pally Backend API", version="1.0.0", lifespan=lifespan,
+    **({"docs_url": None, "redoc_url": None, "openapi_url": None} if _IS_PRODUCTION else {}),
+)
+
+
+def _cors_origins() -> list[str]:
+    """CORS 허용 origin. CORS_ALLOW_ORIGINS 가 있으면 그 값(콤마 구분, "*" 가능)을 쓴다.
+    없으면 운영은 결제 복귀용으로 이미 관리하는 BILLING_FRONTEND_ORIGINS(프론트 도메인 목록)를,
+    로컬 개발은 "*" 를 쓴다 — 운영 API 가 아무 웹사이트에서나 호출되지 않게."""
+    configured = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if configured:
+        return ["*"] if configured == "*" else [o.strip() for o in configured.split(",") if o.strip()]
+    if not _IS_PRODUCTION:
+        return ["*"]
+    frontends = [o.strip() for o in os.getenv("BILLING_FRONTEND_ORIGINS", "").split(",") if o.strip()]
+    if not frontends:
+        raise RuntimeError("Production needs CORS_ALLOW_ORIGINS or BILLING_FRONTEND_ORIGINS")
+    return frontends
+
+
+_allow_origins = _cors_origins()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allow_origins,
@@ -224,6 +252,23 @@ def _pct(values: list, p: int):
     s = sorted(values)
     k = min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1))))
     return round(s[k])
+
+
+# The largest legitimate body is the voice baseline: three 30-second WAV clips.
+_MAX_REQUEST_BYTES = MAX_WAV_BYTES * 4
+
+
+@app.middleware("http")
+async def reject_oversized_body(request: Request, call_next):
+    # Refuse huge uploads before Starlette spools them to memory/disk.
+    # Chunked uploads without Content-Length are still capped per file by read(MAX_WAV_BYTES + 1).
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > _MAX_REQUEST_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content=_error_body("payload_too_large", "요청이 너무 커요.", _request_id(request)),
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -394,55 +439,16 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 # ── Request / Response Models ────────────────────────────────────────────────
 
 
-class FeedbackRequest(BaseModel):
-    utterance: str
-    session_id: Optional[str] = None
-    current_axes: Optional[Dict[str, int]] = None  # EMA용 이전 누적 축 점수
-
-
-class FeedbackResponse(BaseModel):
-    status: str
-    axes: Dict[str, int]             # EMA 적용 후 누적 축 점수
-    character: Dict[str, int]        # 캐릭터 파라미터
-    character_labels: Dict[str, str]
-    feedback: Dict[str, str]         # correction / tone_feedback / practice_prompt
-    tts_audio: Optional[str] = None  # base64 MP3 (correction 문장 TTS)
-
-
 class TTSRequest(BaseModel):
-    text: str
+    # Bounded so one authenticated call cannot request an unbounded Google TTS bill.
+    text: str = Field(max_length=500)
     voice: Optional[str] = None
-    speaking_rate: Optional[float] = 1.0
+    speaking_rate: Optional[float] = Field(default=1.0, ge=0.5, le=2.0)
 
 
 class ChatMessage(BaseModel):
     role: str   # "user" | "pally"
     content: str
-
-
-class ChatRequest(BaseModel):
-    utterance: str                              # STT 결과 텍스트 (FE에서 /api/stt 호출 후 전달)
-    session_id: Optional[str] = None
-    current_axes: Optional[Dict[str, int]] = None
-    conversation_history: Optional[list[ChatMessage]] = None
-    character_name: Optional[str] = "Pally"
-    level: Optional[str] = "B1"                # A2 / B1 / B2 / C1
-
-
-class InlineHintKo(BaseModel):
-    hint: str        # 한국어 힌트 (교정 설명 또는 칭찬)
-    expression: str  # 올바른 영어 표현
-
-
-class ChatResponse(BaseModel):
-    status: str
-    transcript: str                            # 사용자 발화 텍스트 (echo)
-    reply: str                                 # Pally 응답 텍스트
-    tts_audio: Optional[str] = None           # base64 MP3 (Pally 응답 TTS)
-    axes: Dict[str, int]
-    character: Dict[str, int]
-    character_labels: Dict[str, str]
-    hint_ko: Optional[InlineHintKo] = None    # 인라인 한국어 힌트
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
@@ -545,85 +551,6 @@ def _join_stt_results(results: list[dict]) -> tuple[str, float]:
     return transcript, min(a.get("confidence", 1.0) for a in alts)
 
 
-@app.post("/api/stt")
-async def stt(audio: UploadFile = File(...)):
-    """
-    오디오 파일 → 텍스트 변환 (Google Cloud Speech-to-Text v1)
-
-    - FE: MediaRecorder로 녹음한 webm/opus 파일을 multipart/form-data로 전송
-    - 응답: { transcript, confidence }
-    - 제한: 동기 인식은 최대 60초. 그 이상은 longrunningrecognize 사용 필요.
-    """
-    if not GOOGLE_CLOUD_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
-
-    audio_bytes = await audio.read()
-
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Empty audio file")
-
-    # WAV 감지: RIFF 매직 바이트로 판별 (Content-Type보다 신뢰도 높음)
-    wav_parsed = _parse_wav(audio_bytes)
-    if wav_parsed:
-        pcm_bytes, sample_rate, num_channels = wav_parsed
-        encoding = "LINEAR16"
-        audio_bytes = pcm_bytes  # WAV 헤더 제거 — raw PCM만 Google STT에 전달
-        logging.info(
-            f"STT WAV detected: sample_rate={sample_rate}, channels={num_channels}, "
-            f"pcm_size={len(audio_bytes)} bytes"
-        )
-    else:
-        encoding = _detect_encoding(audio.content_type or "")
-        sample_rate = None
-        num_channels = None
-        logging.info(
-            f"STT request: content_type={audio.content_type!r}, "
-            f"size={len(audio_bytes)} bytes, encoding={encoding}"
-        )
-
-    # latest_short is optimized for <2s voice commands and returns empty for longer speech.
-    # Use latest_long for WAV/LINEAR16 (browser recordings are typically 3-30s).
-    model = "latest_long" if encoding == "LINEAR16" else "latest_short"
-    config: dict = {
-        "encoding": encoding,
-        "languageCode": "en-US",
-        "model": model,
-        "enableAutomaticPunctuation": True,
-    }
-    if encoding == "LINEAR16" and sample_rate:
-        config["sampleRateHertz"] = sample_rate
-    if encoding == "WEBM_OPUS":
-        config["sampleRateHertz"] = 48000
-    if num_channels and num_channels > 1:
-        config["audioChannelCount"] = num_channels
-
-    payload = {
-        "config": config,
-        "audio": {"content": base64.b64encode(audio_bytes).decode()},
-    }
-
-    resp = await app.state.http_client.post(
-        f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_CLOUD_API_KEY}",
-        json=payload,
-        timeout=30.0,
-    )
-
-    if resp.status_code != 200:
-        logging.error(
-            f"Google STT failed: status={resp.status_code}, "
-            f"content_type={audio.content_type!r}, size={len(audio_bytes)}, "
-            f"encoding={encoding}, google_response={resp.text[:500]}"
-        )
-        raise HTTPException(status_code=502, detail=f"Google STT error: {resp.text}")
-
-    results = resp.json().get("results", [])
-    if not results:
-        return {"transcript": "", "confidence": 0.0}
-
-    transcript, confidence = _join_stt_results(results)
-    return {"transcript": transcript, "confidence": confidence}
-
-
 # ── TTS — Google Cloud Text-to-Speech ────────────────────────────────────────
 
 
@@ -672,7 +599,10 @@ async def _call_google_tts(
     )
 
     if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=_format_google_tts_error(resp))
+        # Provider details (key restrictions, billing state) go to the server log only;
+        # clients get a generic message so the error cannot be used to probe our GCP setup.
+        logging.error("Google TTS failed: %s", _format_google_tts_error(resp))
+        raise HTTPException(status_code=502, detail="Text-to-speech is temporarily unavailable.")
 
     return resp.json()["audioContent"]  # base64 MP3
 
@@ -712,153 +642,6 @@ def _format_google_tts_error(resp: httpx.Response) -> dict:
         "status": error.get("status"),
         "reason": reason,
         "help": help_text,
-    }
-
-
-@app.post("/api/tts")
-async def tts(req: TTSRequest):
-    """
-    텍스트 → MP3 오디오 (Google Cloud Text-to-Speech)
-
-    - 응답: { audio_b64, voice, encoding }
-    - FE: audio_b64를 Audio() 또는 <audio> 태그로 재생
-    """
-    if not GOOGLE_CLOUD_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
-    if not req.text.strip():
-        raise HTTPException(status_code=400, detail="text is required")
-
-    voice = req.voice or DEFAULT_TTS_VOICE
-    audio_b64 = await _call_google_tts(
-        _strip_emoji(req.text),
-        voice,
-        req.speaking_rate or 1.0,
-    )
-    return {"audio_b64": audio_b64, "voice": voice, "encoding": "MP3"}
-
-
-# ── Feedback — 5축 분석 + Gemini 피드백 + TTS ────────────────────────────────
-
-_FEEDBACK_SYSTEM_PROMPT = """\
-You are Pally, a friendly English conversation tutor.
-Analyze the user's utterance and provide structured feedback.
-
-Return ONLY valid JSON with exactly these three fields:
-{
-  "correction": "A natural alternative phrasing or minor correction. If already natural, offer a slight variation.",
-  "tone_feedback": "One encouraging sentence about their tone, energy, or humor style.",
-  "practice_prompt": "One engaging follow-up question for them to practice responding to."
-}
-
-Rules:
-- Each field: 1-2 sentences max.
-- Be warm, encouraging, and specific.
-- Do NOT mention the numeric scores directly.
-"""
-
-
-async def _call_gemini_feedback(utterance: str, axes: dict) -> dict:
-    """Gemini 2.5 Flash REST API 호출 → 피드백 JSON 반환"""
-    user_prompt = (
-        f'User utterance: "{utterance}"\n'
-        f"Style analysis — Formality: {axes['Formality']}/100, "
-        f"Energy: {axes['Energy']}/100, Intimacy: {axes['Intimacy']}/100, "
-        f"Humor: {axes['Humor']}/100, Curiosity: {axes['Curiosity']}/100\n\n"
-        "Provide feedback JSON:"
-    )
-
-    payload = {
-        "system_instruction": {"parts": [{"text": _FEEDBACK_SYSTEM_PROMPT}]},
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.7,
-            "maxOutputTokens": 512,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-
-    resp = await app.state.http_client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
-        json=payload,
-        timeout=30.0,
-    )
-
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text}")
-
-    parts = resp.json()["candidates"][0]["content"]["parts"]
-    raw = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    return json.loads(raw)
-
-
-_FEEDBACK_FALLBACK = {
-    "correction": "Great attempt! Try to vary your sentence structure for more natural flow.",
-    "tone_feedback": "Your expression is coming through clearly — keep it up!",
-    "practice_prompt": "Can you try expressing the same idea in a different way?",
-}
-
-
-@app.post("/api/feedback", response_model=FeedbackResponse)
-async def feedback(req: FeedbackRequest):
-    """
-    utterance → 5축 분석 → EMA → 캐릭터 파라미터 → Gemini 피드백 → TTS
-
-    흐름:
-      1. analyze_utterance()  → raw 5축 점수
-      2. apply_ema()          → 이전 축 점수 반영 (current_axes 있을 때)
-      3. compute_character()  → 캐릭터 파라미터
-      4. Gemini 2.5 Flash     → correction / tone_feedback / practice_prompt
-      5. Google TTS           → correction 문장을 MP3로 변환 (tts_audio)
-    """
-    if not GOOGLE_AI_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY not configured")
-    if not req.utterance.strip():
-        raise HTTPException(status_code=400, detail="utterance is required")
-
-    # 1. 5축 분석
-    raw_axes = _analyze_axes(req.utterance)
-
-    # 2. EMA — 이전 누적 점수가 있을 때만 적용
-    smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
-
-    # 3. 캐릭터 파라미터
-    character = compute_character(smoothed_axes)
-    tone_label, energy_label, humor_label = describe_character(character)
-
-    # 4. Gemini 피드백 (실패 시 fallback)
-    try:
-        feedback_data = await _call_gemini_feedback(req.utterance, smoothed_axes)
-        for key in ("correction", "tone_feedback", "practice_prompt"):
-            if key not in feedback_data:
-                raise ValueError(f"Missing key: {key}")
-    except Exception as e:
-        logging.warning(f"Gemini fallback triggered: {e}")
-        feedback_data = _FEEDBACK_FALLBACK
-
-    # 5. TTS — correction 문장을 음성으로 (실패해도 피드백은 정상 반환)
-    tts_audio: Optional[str] = None
-    correction_text = feedback_data.get("correction", "")
-    if correction_text:
-        try:
-            tts_audio = await _call_google_tts(correction_text)
-        except Exception:
-            tts_audio = None
-
-    return {
-        "status": "ok",
-        "axes": smoothed_axes,
-        "character": character,
-        "character_labels": {
-            "tone": tone_label,
-            "energy": energy_label,
-            "humor": humor_label,
-        },
-        "feedback": feedback_data,
-        "tts_audio": tts_audio,
     }
 
 
@@ -1023,175 +806,6 @@ async def _call_gemini_chat_segments(
     return reply, None
 
 
-_HINT_KO_SYSTEM_PROMPT = """\
-You are a Korean-speaking English tutor assistant. Given the user's English utterance and Pally's reply,
-identify whether Pally implicitly corrected a grammar or vocabulary mistake (by naturally using the correct form).
-Explain briefly in Korean, or give praise if no correction was needed.
-
-Return ONLY valid JSON:
-{
-  "hint": "한국어 설명 1-2문장. 교정이 있으면 무엇이 어떻게 교정됐는지 설명. 없으면 '자연스러운 표현이에요!'처럼 칭찬.",
-  "expression": "올바른 영어 표현 (짧은 구나 문장. 교정 없으면 사용자 표현 그대로)"
-}
-"""
-
-_HINT_KO_FALLBACK = InlineHintKo(
-    hint="잘 표현했어요! 계속 연습하면 더 자연스러워질 거예요.",
-    expression="Keep it up!",
-)
-
-
-async def _call_gemini_hint_ko(utterance: str, pally_reply: str) -> InlineHintKo:
-    """사용자 발화 + Pally 응답 → 한국어 인라인 힌트 (Gemini 2.5 Flash)"""
-    user_prompt = (
-        f'User said: "{utterance}"\n'
-        f'Pally replied: "{pally_reply}"\n\n'
-        "Provide Korean hint JSON:"
-    )
-    payload = {
-        "system_instruction": {"parts": [{"text": _HINT_KO_SYSTEM_PROMPT}]},
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.3,
-            "maxOutputTokens": 512,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-    resp = await app.state.http_client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
-        json=payload,
-        timeout=20.0,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini hint error {resp.status_code}: {resp.text}")
-    parts = resp.json()["candidates"][0]["content"]["parts"]
-    raw = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    data = json.loads(raw)
-    return InlineHintKo(hint=data.get("hint", ""), expression=data.get("expression", ""))
-
-
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
-    """
-    utterance(텍스트) → 5축 분석 → EMA → 캐릭터 파라미터 → Gemini 대화 응답 → TTS + 한국어 힌트
-
-    흐름:
-      1. Supabase 세션 조회/생성 + 대화 이력 로드 (session_id 있을 때)
-      2. analyze_utterance()  → raw 5축 점수
-      3. apply_ema()          → EMA 평활화 (alpha=0.7)
-      4. compute_character()  → 캐릭터 파라미터
-      5. Gemini 2.5 Flash     → Pally 대화 응답 (자연스러운 교정 포함)
-      6. TTS + 한국어 힌트    → asyncio.gather()로 병렬 실행
-      7. Supabase 저장        → user + pally 메시지
-    """
-    if not GOOGLE_AI_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY not configured")
-    if not req.utterance.strip():
-        raise HTTPException(status_code=400, detail="utterance is required")
-
-    # 1. Supabase 세션 & 대화 이력
-    # Phase 1C에서는 frontend가 anonymous client UUID로 session_id를 보내면
-    # 동일 세션의 이전 messages가 DB에서 로드되고 이후 요청에 conversation_history로 이어집니다.
-    character_name = req.character_name or "Pally"
-    level = req.level or "B1"
-    history: list[ChatMessage] = req.conversation_history or []
-
-    if req.session_id and _SUPABASE_ENABLED:
-        try:
-            sb = get_supabase()
-            session_res = sb.table("sessions").select("id, character_name, level").eq("id", req.session_id).execute()
-            if getattr(session_res, "error", None):
-                raise RuntimeError(getattr(session_res.error, "message", repr(session_res.error)))
-            if session_res.data:
-                character_name = session_res.data[0]["character_name"]
-                level = session_res.data[0]["level"]
-            else:
-                insert_session_res = sb.table("sessions").insert({
-                    "id": req.session_id,
-                    "character_name": character_name,
-                    "level": level,
-                }).execute()
-                if getattr(insert_session_res, "error", None):
-                    raise RuntimeError(getattr(insert_session_res.error, "message", repr(insert_session_res.error)))
-            msg_res = sb.table("messages").select("id, role, transcript, created_at").eq("session_id", req.session_id).order("created_at").execute()
-            if getattr(msg_res, "error", None):
-                raise RuntimeError(getattr(msg_res.error, "message", repr(msg_res.error)))
-            if msg_res.data:
-                history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in _in_turn_order(msg_res.data)]
-        except Exception as e:
-            logging.warning(f"Supabase session load failed: {e}")
-
-    # 2. 5축 분석
-    raw_axes = _analyze_axes(req.utterance)
-
-    # 3. EMA
-    smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
-
-    # 4. 캐릭터 파라미터
-    character = compute_character(smoothed_axes)
-    tone_label, energy_label, humor_label = describe_character(character)
-
-    # 5. Gemini 대화 응답
-    try:
-        reply = await _call_gemini_chat(req.utterance, history, character_name, level, smoothed_axes)
-    except Exception as e:
-        logging.warning(f"Gemini chat fallback: {e}")
-        reply = "I see! Tell me more."
-    # 답변 길이 정형화 (TTS·응답 모두 shaped 버전 사용)
-    reply = shape_reply(reply)
-
-    # 6. TTS — 이모지 제거 후 호출
-    tts_result = await asyncio.gather(
-        _call_google_tts(_strip_emoji(reply)),
-        return_exceptions=True,
-    )
-    tts_audio = tts_result[0] if not isinstance(tts_result[0], Exception) else None
-
-    # 7. Supabase 저장
-    if req.session_id and _SUPABASE_ENABLED:
-        try:
-            sb = get_supabase()
-            save_res = sb.table("messages").insert([
-                {
-                    "session_id": req.session_id,
-                    "role": "user",
-                    "transcript": req.utterance,
-                    "axes": smoothed_axes,
-                    "character": character,
-                },
-                {
-                    "session_id": req.session_id,
-                    "role": "pally",
-                    "transcript": reply,
-                    "axes": None,
-                    "character": character,
-                },
-            ]).execute()
-            if getattr(save_res, "error", None):
-                raise RuntimeError(getattr(save_res.error, "message", repr(save_res.error)))
-        except Exception as e:
-            logging.warning(f"Supabase save failed: {e}")
-
-    return {
-        "status": "ok",
-        "transcript": req.utterance,
-        "reply": reply,
-        "tts_audio": tts_audio,
-        "axes": smoothed_axes,
-        "character": character,
-        "character_labels": {
-            "tone": tone_label,
-            "energy": energy_label,
-            "humor": humor_label,
-        },
-        "hint_ko": None,
-    }
-
-
 # ── Auth — Supabase JWT 검증 ──────────────────────────────────────────────────
 
 
@@ -1246,6 +860,32 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
 def get_current_user(authorization: Optional[str] = Header(None)):
     """검증된 user 객체 반환 (id + user_metadata). 프로필 사진 등 메타데이터가 필요할 때."""
     return _verify_bearer_user(authorization)
+
+
+@app.post("/api/tts", dependencies=[Depends(get_current_user_id)])
+async def tts(req: TTSRequest):
+    """
+    텍스트 → MP3 오디오 (Google Cloud Text-to-Speech)
+
+    - 로그인 사용자만 호출할 수 있다 (유료 API 를 익명으로 쓰지 못하게).
+    - voice 는 서버 기본 음성만 허용한다 (비싼 음성을 임의로 지정하지 못하게).
+    - 응답: { audio_b64, voice, encoding }
+    - FE: audio_b64를 Audio() 또는 <audio> 태그로 재생
+    """
+    if not GOOGLE_CLOUD_API_KEY:
+        raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+    if req.voice is not None and req.voice != DEFAULT_TTS_VOICE:
+        raise AppError(422, "invalid_voice", "Unsupported voice")
+
+    voice = DEFAULT_TTS_VOICE
+    audio_b64 = await _call_google_tts(
+        _strip_emoji(req.text),
+        voice,
+        req.speaking_rate or 1.0,
+    )
+    return {"audio_b64": audio_b64, "voice": voice, "encoding": "MP3"}
 
 
 # OAuth provider 별로 프사 URL 이 들어가는 메타데이터 키가 달라(구글=avatar_url/picture,
@@ -1587,7 +1227,6 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
     """
     오디오 bytes → (transcript, confidence). turn 처리 전용 STT 어댑터 호출부.
     무음/인식실패 → ("", 0.0). Google API 비-200 → RuntimeError.
-    (기존 /api/stt 는 건드리지 않고, turn 용으로 동일 파이프라인을 별도 호출한다.)
     """
     wav_parsed = _parse_wav(audio_bytes)
     if wav_parsed:
@@ -1766,7 +1405,18 @@ async def _generate_opener_text(
     ) from last
 
 
-@app.post("/api/conversations/{conversation_id}/opener", status_code=201)
+def _valid_conversation_id(conversation_id: str) -> None:
+    """HTTP 입구에서 경로의 conversation_id 형식을 검증한다. 형식이 틀린 id 를 uuid 컬럼에
+    보내면 PostgREST 오류가 503 이 되고, 503 핸들러가 전역 Supabase 클라이언트를 폐기한다.
+    사용자 입력 하나로 모든 요청이 느려지지 않도록 DB 전에 404 로 끊는다 (존재 숨김과 같은 응답)."""
+    try:
+        uuid.UUID(conversation_id)
+    except ValueError:
+        raise AppError(404, "not_found", "Conversation not found")
+
+
+@app.post("/api/conversations/{conversation_id}/opener", status_code=201,
+          dependencies=[Depends(_valid_conversation_id)])
 async def create_conversation_opener(
     conversation_id: str,
     user_id: str = Depends(get_current_user_id),
@@ -2016,6 +1666,14 @@ async def record_activity_event(
         raise AppError(422, "validation_error", f"event_type must be one of {sorted(_ALLOWED_EVENT_TYPES)}")
     if not (req.event_id or "").strip():
         raise AppError(422, "validation_error", "event_id is required")
+    # Both columns are uuid: a malformed value would otherwise surface as a 503.
+    for field, value in (("event_id", req.event_id), ("feedback_item_id", req.feedback_item_id)):
+        if value is None:
+            continue
+        try:
+            uuid.UUID(value)
+        except ValueError:
+            raise AppError(422, "validation_error", f"{field} must be a UUID")
 
     if req.occurred_at:
         try:
@@ -2081,7 +1739,8 @@ def _replayed_turn(sb, conversation_id: str, u: dict) -> dict:
     }
 
 
-@app.post("/api/conversations/{conversation_id}/turns", status_code=201)
+@app.post("/api/conversations/{conversation_id}/turns", status_code=201,
+          dependencies=[Depends(_valid_conversation_id)])
 async def create_turn(
     conversation_id: str,
     request: Request,
@@ -2125,8 +1784,11 @@ async def create_turn(
         return _replayed_turn(sb, conversation_id, dup.data[0])
 
     # 3. 오디오
-    # 음성 Energy 를 켜면 원음이 작업 입력으로 잠시 저장되므로 크기를 제한한다.
-    audio_bytes = await audio.read(MAX_WAV_BYTES + 1) if _voice_energy_enabled() else await audio.read()
+    # 클라이언트는 최대 30초 16kHz 모노 WAV 를 보낸다. 그보다 큰 업로드는 메모리·STT 비용만
+    # 쓰므로 상한까지만 읽고 거절한다 (음성 Energy 저장 여부와 무관하게 항상).
+    audio_bytes = await audio.read(MAX_WAV_BYTES + 1)
+    if len(audio_bytes) > MAX_WAV_BYTES:
+        raise AppError(413, "audio_too_large", "녹음이 너무 길어요. 30초 이내로 말해 주세요.")
     if not audio_bytes:
         raise AppError(400, "invalid_audio", "Empty audio file")
     energy_input = None
@@ -2742,7 +2404,7 @@ async def list_conversations(
     return {"items": items, "next_cursor": next_cursor}
 
 
-@app.get("/api/conversations/{conversation_id}")
+@app.get("/api/conversations/{conversation_id}", dependencies=[Depends(_valid_conversation_id)])
 async def get_conversation(
     conversation_id: str,
     user_id: str = Depends(get_current_user_id),
@@ -2842,7 +2504,7 @@ def _turn_detail(user_msg: Optional[dict], pally_msg: Optional[dict], seq: int) 
     }
 
 
-@app.post("/api/conversations/{conversation_id}/complete")
+@app.post("/api/conversations/{conversation_id}/complete", dependencies=[Depends(_valid_conversation_id)])
 async def complete_conversation(
     conversation_id: str,
     background_tasks: BackgroundTasks,
@@ -2856,6 +2518,36 @@ async def complete_conversation(
     """
     sb = get_supabase()
     session = _owned_session(sb, conversation_id, user_id)
+    session, warnings = _complete_session(sb, session, user_id)
+
+    # The RPC marks exact saved user IDs atomically with session closure.
+    # The synchronous task runs in Starlette's thread pool after the response;
+    # the worker can rediscover these marks even after a restart or reopening.
+    background_tasks.add_task(
+        session_feedback.process_session, get_supabase, conversation_id,
+        _conversation_turns,
+    )
+
+    if not session.get("title"):
+        background_tasks.add_task(_assign_conversation_title, conversation_id)
+
+    return {"conversation": {
+        "id": session["id"],
+        "status": "completed",
+        "completed_at": session.get("ended_at"),
+    }, "warnings": warnings,
+        # 음성 Energy 를 켤 때만 확정된 5축과 측정 상태를 함께 공개한다.
+        **({"current_axes": session["current_axes"], "energy": session["energy"]}
+           if _voice_energy_enabled() else {})}
+
+
+def _complete_session(sb, session: dict, user_id: str) -> tuple[dict, list]:
+    """대화 종료의 공통 본문 — 사용자 종료(/complete)와 방치된 대화 자동 종료가 같이 쓴다.
+
+    표 기록 → 종료 RPC(피드백 대상 표시, Energy 확정) → 표 재기록 → 성향 갱신 순서다.
+    종료된 세션 행과 화면 경고를 돌려주고, 피드백·제목 생성은 호출자가 예약한다.
+    """
+    conversation_id = session["id"]
     warnings: list = []
 
     was_active = not session.get("ended_at")
@@ -2912,26 +2604,18 @@ async def complete_conversation(
         if not _refresh_profile_traits(sb, user_id):
             warnings.append({"code": "traits_update_failed",
                              "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
+    return session, warnings
 
-    # The RPC marks exact saved user IDs atomically with session closure.
-    # The synchronous task runs in Starlette's thread pool after the response;
-    # the worker can rediscover these marks even after a restart or reopening.
-    background_tasks.add_task(
-        session_feedback.process_session, get_supabase, conversation_id,
-        _conversation_turns,
-    )
 
-    if not session.get("title"):
-        background_tasks.add_task(_assign_conversation_title, conversation_id)
-
-    return {"conversation": {
-        "id": session["id"],
-        "status": "completed",
-        "completed_at": session.get("ended_at"),
-    }, "warnings": warnings,
-        # 음성 Energy 를 켤 때만 확정된 5축과 측정 상태를 함께 공개한다.
-        **({"current_axes": session["current_axes"], "energy": session["energy"]}
-           if _voice_energy_enabled() else {})}
+def _stale_completion(loop: asyncio.AbstractEventLoop):
+    """방치된 대화 자동 종료용 콜백. 워커 스레드에서 /complete 와 같은 본문을 실행하고,
+    피드백은 같은 스레드에서, 제목(async, 공유 HTTP 클라이언트 사용)은 메인 루프에서 만든다."""
+    def complete(sb, session: dict, user_id: str) -> None:
+        closed, _warnings = _complete_session(sb, session, user_id)
+        session_feedback.process_session(get_supabase, closed["id"], _conversation_turns)
+        if not closed.get("title"):
+            asyncio.run_coroutine_threadsafe(_assign_conversation_title(closed["id"]), loop)
+    return complete
 
 
 def _refresh_profile_traits(sb, user_id: str) -> bool:
@@ -2964,7 +2648,7 @@ def _refresh_profile_traits(sb, user_id: str) -> bool:
     return False
 
 
-@app.post("/api/conversations/{conversation_id}/reopen")
+@app.post("/api/conversations/{conversation_id}/reopen", dependencies=[Depends(_valid_conversation_id)])
 async def reopen_conversation(
     conversation_id: str,
     user_id: str = Depends(get_current_user_id),
