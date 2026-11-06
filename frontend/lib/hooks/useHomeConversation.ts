@@ -142,10 +142,15 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   const [displayName, setDisplayName] = useState<string | null>(snapshot?.profile.display_name ?? null);
   const [canReplay, setCanReplay] = useState(false);
   const [replaying, setReplaying] = useState(false);
+  // A failed first load (cold start, redeploy, timeout) left every control disabled
+  // with no way back but a reload. Dismissing that error re-runs the restore.
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const restoreFailedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
     let cancelPrefetch: (() => void) | null = null;
+    restoreFailedRef.current = false;
 
     const restoreConversation = async () => {
       const auth = await supabase.auth.getSession();
@@ -189,8 +194,16 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
 
       const usagePromise = loadUsage(userId);
       const profilePromise = loadProfile(userId);
+      // A stale stored id (deleted conversation, another account on this device) must not
+      // take usage/profile down with it: drop the id and continue to a fresh home.
       const detailPromise = conversationId
-        ? loadConversationPage(userId, conversationId)
+        ? loadConversationPage(userId, conversationId).catch((caught: unknown) => {
+          if (caught instanceof PallyApiError && caught.code === "not_found") {
+            window.localStorage.removeItem(CONVERSATION_KEY);
+            return null;
+          }
+          throw caught;
+        })
         : Promise.resolve(null);
 
       void loadSubscription(userId)
@@ -225,7 +238,11 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       setHasRestoredPally(true);
 
       cancelPrefetch = schedulePrimaryRoutePrefetch(userId);
-      if (!conversationId || !detail) return;
+      if (!conversationId || !detail) {
+        // The id was stale: also clear ?conversation_id so a reload does not retry it.
+        if (requestedId) router.replace(routes.home);
+        return;
+      }
 
       if (detail.conversation.status !== "active") {
         window.localStorage.removeItem(CONVERSATION_KEY);
@@ -252,7 +269,10 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
           return;
         }
         if (active) {
-          dispatch({ type: "rec/error", reason: "generic", message: caught instanceof Error ? caught.message : "대화를 불러오지 못했어요." });
+          console.error("Home restore failed", caught);
+          restoreFailedRef.current = true;
+          const reason = caught instanceof Error ? caught.message : "대화를 불러오지 못했어요.";
+          dispatch({ type: "rec/error", reason: "generic", message: `${reason} 눌러서 다시 시도해 주세요.` });
         }
       })
       .finally(() => {
@@ -262,7 +282,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       active = false;
       cancelPrefetch?.();
     };
-  }, [resetAxes, restoreAxes, router, routes.home, routes.login, routes.onboardingVoice, snapshot, updateFromChatResponse]);
+  }, [resetAxes, restoreAttempt, restoreAxes, router, routes.home, routes.login, routes.onboardingVoice, snapshot, updateFromChatResponse]);
 
   const ensureConversation = useCallback(async () => {
     if (conversationIdRef.current) return conversationIdRef.current;
@@ -393,6 +413,13 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       closingRef.current = true;
       openerRequestRef.current += 1;
       stopPlayback();
+      // iOS Safari caps live AudioContexts; each visit to home opens one on first tap,
+      // so an unclosed context per visit eventually breaks TTS and WAV conversion.
+      const context = audioContextRef.current;
+      audioContextRef.current = null;
+      if (context) {
+        void context.close().catch((caught: unknown) => console.error("Home audio cleanup failed", caught));
+      }
     };
   }, [stopPlayback]);
 
@@ -452,6 +479,21 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         if (error instanceof PallyApiError && error.code === "quota_exceeded") {
           setQuotaExhausted(true);
           setLimitSheetOpen(true);
+        }
+        if (error instanceof PallyApiError && error.code === "conversation_closed") {
+          // The server closes conversations left idle for an hour (saved to History with
+          // feedback). Keeping this screen would fail every retry, so return to a fresh home.
+          conversationIdRef.current = null;
+          firstUserTranscriptRef.current = null;
+          openerKeyRef.current = null;
+          lastAudioRef.current = null;
+          setCanReplay(false);
+          window.localStorage.removeItem(CONVERSATION_KEY);
+          const userId = userIdRef.current;
+          if (userId) invalidateUsage(userId);
+          dispatch({ type: "session/end" });
+          setWarning("오래 쉬어서 지난 대화는 기록에 저장했어요. 새 대화를 시작해 주세요.");
+          return;
         }
         dispatch({
           type: "rec/error",
@@ -708,7 +750,13 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
     dispatch({ type: "history/toggle" });
   }, [state.historyOpen]);
 
-  const dismissError = useCallback(() => dispatch({ type: "rec/dismissError" }), []);
+  const dismissError = useCallback(() => {
+    dispatch({ type: "rec/dismissError" });
+    if (restoreFailedRef.current) {
+      setIsRestoring(true);
+      setRestoreAttempt((attempt) => attempt + 1);
+    }
+  }, []);
   const dismissWarning = useCallback(() => setWarning(null), []);
   const closeLimitSheet = useCallback(() => setLimitSheetOpen(false), []);
 

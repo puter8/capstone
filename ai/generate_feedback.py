@@ -410,6 +410,7 @@ def generate_feedback(utterance: str, pally_reply: str, level: str) -> Tuple[Lis
 
 def generate_session_feedback(
     turns: Sequence[FeedbackTurn | dict], level: str = "B1",
+    lenient_turn_ids: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Extract saved session feedback in batches, preserving per-turn provenance.
 
@@ -417,6 +418,11 @@ def generate_session_feedback(
     failure marks each affected turn failed; successful empty results remain
     distinct. Submit only finalized pairs from a stable session snapshot. On
     resume, the caller can submit newly completed pairs or retry failed IDs.
+
+    Grounding is strict by default so a suspect answer stays retryable. Turns in
+    lenient_turn_ids have already failed grounding repeatedly: their ungrounded
+    items are dropped instead, so one stubborn model answer cannot keep a turn
+    pending (and re-billed) forever.
     """
     validated = TypeAdapter(list[FeedbackTurn]).validate_python(turns)
     ids = [turn.turn_id for turn in validated]
@@ -443,6 +449,7 @@ def generate_session_feedback(
                 items = _ground_feedback(
                     [item.model_dump() for item in by_id[turn.turn_id]],
                     turn.user_transcript, turn.pally_text,
+                    strict=turn.turn_id not in lenient_turn_ids,
                 )
                 results.append({"turn_id": turn.turn_id, "items": items, "failed": False})
             except Exception as exc:

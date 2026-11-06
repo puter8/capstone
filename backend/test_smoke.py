@@ -548,14 +548,16 @@ def _tts(monkeypatch, audio="BASE64AUDIO"):
     monkeypatch.setattr(main, "_call_google_tts", fake_tts)
 
 
-_OPENER_URL = "/api/conversations/conversation-1/opener"
+# Conversation routes reject malformed ids before the database, so use a real UUID.
+_OPENER_CONVERSATION_ID = "11111111-1111-4111-8111-111111111111"
+_OPENER_URL = f"/api/conversations/{_OPENER_CONVERSATION_ID}/opener"
 _OPENER_HEADERS = {"Authorization": "Bearer test", "Idempotency-Key": "key-1"}
 
 
 def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
     """오프너는 role=pally 메시지로 저장되고, 사용량은 차감하지 않는다."""
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "A2", "ended_at": None}, first_message=None
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "A2", "ended_at": None}, first_message=None
     )
     _tts(monkeypatch)
     reserved = []
@@ -576,7 +578,7 @@ def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
     }
     assert [name for name, _ in inserted] == ["messages"]
     row = inserted[0][1]
-    assert row["role"] == "pally" and row["session_id"] == "conversation-1"
+    assert row["role"] == "pally" and row["session_id"] == _OPENER_CONVERSATION_ID
     assert row["transcript"] == "Hey! What music do you like?"
     assert row["axes"] is None  # axes 는 user 발화의 것. 오프너에는 없다
     assert reserved == []  # quota 차감 없음
@@ -595,7 +597,7 @@ def test_opener_is_refused_once_the_user_has_spoken_even_if_one_is_saved(monkeyp
     읽어주면 Pally 가 대화 중간에 첫인사를 반복한다.
     """
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message={"role": "user", "transcript": "I ate pizza"},
     )
     _tts(monkeypatch)
@@ -611,7 +613,7 @@ def test_opener_is_idempotent_without_calling_the_model_again(monkeypatch):
     """다시 호출하면 저장된 오프너를 쓴다 — 모델 재호출·중복 저장 없음."""
     saved = {"role": "pally", "transcript": "Hey! Seen any good shows?"}
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=saved
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=saved
     )
     _tts(monkeypatch)
 
@@ -626,7 +628,7 @@ def test_opener_rejected_after_a_user_turn_or_on_a_closed_conversation(monkeypat
     """뒤늦게 오프너를 끼워 넣지 않는다: 사용자 발화가 있거나 끝난 대화면 409."""
     client, inserted, _ = _opener_client(
         monkeypatch,
-        session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message={"role": "user", "transcript": "I ate pizza"},
     )
     _tts(monkeypatch)
@@ -636,7 +638,7 @@ def test_opener_rejected_after_a_user_turn_or_on_a_closed_conversation(monkeypat
 
     client, _, _ = _opener_client(
         monkeypatch,
-        session={"id": "conversation-1", "level": "B1", "ended_at": "2026-10-05T00:00:00Z"},
+        session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": "2026-10-05T00:00:00Z"},
         first_message=None,
     )
     _tts(monkeypatch)
@@ -649,7 +651,7 @@ def test_opener_rejected_after_a_user_turn_or_on_a_closed_conversation(monkeypat
 def test_opener_tts_failure_keeps_the_text_and_warns(monkeypatch):
     """TTS 실패는 턴과 같게 non-fatal: 텍스트는 주고 audio=null + tts_failed."""
     client, inserted, _ = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=None
     )
     _tts(monkeypatch, audio=None)
 
@@ -669,7 +671,7 @@ def test_opener_requires_authentication_and_idempotency_key(monkeypatch):
     assert TestClient(main.app).post(_OPENER_URL).status_code == 401
 
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=None
     )
     _tts(monkeypatch)
     response = client.post(_OPENER_URL, headers={"Authorization": "Bearer test"})
@@ -682,7 +684,7 @@ def test_opener_failure_does_not_store_a_fallback_line(monkeypatch):
     from ai.opener import OpenerRejected
 
     client, inserted, _ = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message=None, patch_generate=False,
     )
     _tts(monkeypatch)
@@ -713,7 +715,7 @@ def test_opener_ladder_does_not_outlast_the_old_two_attempt_budget(monkeypatch):
     from ai.opener import OpenerRejected
 
     client, inserted, _ = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message=None, patch_generate=False,
     )
     _tts(monkeypatch)
@@ -741,7 +743,7 @@ def test_opener_retries_once_and_keeps_a_valid_second_try(monkeypatch):
     from ai.opener import OpenerRejected
 
     client, inserted, _ = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message=None, patch_generate=False,
     )
     _tts(monkeypatch)
@@ -1093,7 +1095,7 @@ def test_expression_usage_tracks_current_level_but_f1_keeps_previous_completion(
 
 def test_old_conversation_opener_uses_the_current_profile_expression(monkeypatch):
     client, _inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None)
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=None)
     _tts(monkeypatch)
     monkeypatch.setattr(main, "_user_level", lambda *_: "B2")
     response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)

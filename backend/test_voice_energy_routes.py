@@ -22,6 +22,7 @@ BASELINE = {"user_id": "user-1", "range_st": 4.0, "method": core.ALGORITHM_VERSI
 def isolated_enabled_routes(monkeypatch):
     monkeypatch.setenv("PALLY_VOICE_ENERGY_ENABLED", "true")
     monkeypatch.setenv("PALLY_SESSION_FEEDBACK_WORKER_ENABLED", "false")
+    monkeypatch.setenv("PALLY_STALE_CONVERSATION_WORKER_ENABLED", "false")
     monkeypatch.setenv("BILLING_WORKER_ENABLED", "false")
     monkeypatch.setattr(main, "get_supabase", Mock(return_value=Mock()))
 
@@ -138,6 +139,54 @@ def test_turn_durably_inserts_pending_audio_without_pitch_inference_and_preserve
     assert base64.b64decode(pending["audio_base64"]) == audio
     assert "voice_energy" not in pally
     measure.assert_not_called()
+
+
+@pytest.mark.parametrize("energy_enabled", ["true", "false"])
+def test_oversized_turn_audio_is_rejected_before_stt_quota_or_insert(monkeypatch, energy_enabled):
+    monkeypatch.setenv("PALLY_VOICE_ENERGY_ENABLED", energy_enabled)
+    _, messages = install_turn(monkeypatch)
+    with pytest.raises(main.AppError) as caught:
+        asyncio.run(main.create_turn("conversation-1", Request({"type": "http"}),
+                                     upload(b"\0" * (core.MAX_WAV_BYTES + 1)), "user-1", "key"))
+    assert caught.value.status_code == 413
+    main._stt_from_bytes.assert_not_called()
+    main._reserve_turn.assert_not_called()
+    messages.insert.assert_not_called()
+
+
+def test_oversized_request_body_is_refused_by_declared_length():
+    from fastapi.testclient import TestClient
+    with TestClient(main.app) as api:
+        response = api.post("/api/conversations/any/turns", content=b"x",
+                            headers={"content-length": str(main._MAX_REQUEST_BYTES + 1)})
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "payload_too_large"
+
+
+@pytest.mark.parametrize("method,path", [
+    ("get", "/api/conversations/not-a-uuid"),
+    ("post", "/api/conversations/not-a-uuid/turns"),
+    ("post", "/api/conversations/not-a-uuid/opener"),
+    ("post", "/api/conversations/not-a-uuid/complete"),
+    ("post", "/api/conversations/not-a-uuid/reopen"),
+])
+def test_malformed_conversation_id_is_404_without_touching_the_database(monkeypatch, method, path):
+    # A malformed id used to reach the uuid column, come back as a 503, and make the
+    # 503 handler throw away the shared Supabase client for every user.
+    from fastapi.testclient import TestClient
+    sb = Mock()
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    reset = Mock()
+    monkeypatch.setattr(main, "_reset_supabase_client", reset)
+    main.app.dependency_overrides[main.get_current_user_id] = lambda: "user-1"
+    try:
+        with TestClient(main.app) as api:
+            response = getattr(api, method)(path, headers={"Idempotency-Key": "k"})
+    finally:
+        del main.app.dependency_overrides[main.get_current_user_id]
+    assert response.status_code == 404
+    sb.table.assert_not_called()
+    reset.assert_not_called()
 
 
 def test_missing_baseline_stops_before_stt_quota_or_insert(monkeypatch):
