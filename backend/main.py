@@ -9,6 +9,7 @@ import sys
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import hashlib
+import secrets
 import time
 import uuid
 from collections import deque
@@ -26,6 +27,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Dict, Literal, Optional
 
 load_dotenv()
+# 루트 로거에 설정이 없으면 레벨이 WARNING 이고 핸들러도 없다. uvicorn 기본 로그
+# 설정은 uvicorn.* 로거만 건드려 root 를 그대로 두므로, 설정하지 않으면
+# logging.info 로 남기는 turn_metrics 가 운영에서 출력되지 않는다.
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(message)s")
+
+# httpx 는 INFO 에서 요청 URL 을 찍는다. Gemini/STT/TTS 를 쿼리스트링에 키를 넣어
+# 호출하므로 켜두면 API 키가 로그에 평문으로 쌓인다.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -210,6 +221,10 @@ app.add_middleware(
 # production에서만 debug route를 숨기려면 PALLY_DEBUG_ENDPOINTS=1 을 설정한 환경에서만 등록.
 # Railway 운영 환경에는 이 변수를 두지 않아 /api/debug-keys 가 노출되지 않는다.
 _DEBUG_ENDPOINTS_ENABLED = os.getenv("PALLY_DEBUG_ENDPOINTS") == "1"
+
+# /api/metrics 는 debug 게이트가 아니라 자체 공유 토큰으로 보호한다. 미설정이면
+# 라우트 자체를 등록하지 않는다.
+_METRICS_TOKEN = os.getenv("PALLY_METRICS_TOKEN", "")
 
 # 무료 일일 turn 한도. 하드코딩하지 않고 config 로 빼서 정책 변경 시 재배포 없이 조정.
 FREE_DAILY_TURNS = int(os.getenv("FREE_DAILY_TURNS", "20"))
@@ -460,15 +475,18 @@ def health():
     return {"status": "ok", "version": app.version}
 
 
-if _DEBUG_ENDPOINTS_ENABLED:
-    # debug-keys 와 동일하게 조건부 등록 → 프로덕션에선 라우트 자체가 없어 openapi 에도 안 뜬다.
+if _METRICS_TOKEN:
+    # PALLY_METRICS_TOKEN 미설정이면 라우트 자체가 없어 openapi 에도 안 뜬다.
+    # 운영 성능 데이터라 debug 게이트가 아니라 공유 토큰으로 보호한다 — 토큰을
+    # 모르는 요청은 403, 토큰을 모르면 URL만으로는 조회할 수 없다.
     @app.get("/api/metrics")
-    def metrics():
+    def metrics(x_metrics_token: str = Header(..., alias="X-Metrics-Token")):
         """
         최근 turn 파이프라인 latency 요약 (STT/Gemini/TTS/save/total 의 p50·p95·평균).
-        운영 데이터라 debug 게이트(PALLY_DEBUG_ENDPOINTS=1) 뒤에 둔다.
         단일 프로세스 메모리 기준(최근 200 turn). 다중 인스턴스면 인스턴스별로만 집계됨.
         """
+        if not secrets.compare_digest(x_metrics_token, _METRICS_TOKEN):
+            raise AppError(403, "forbidden", "Invalid metrics token")
         turns = list(_TURN_METRICS)
         stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms", "total_ms")
         summary = {}
