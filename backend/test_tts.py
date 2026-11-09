@@ -17,8 +17,17 @@ from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
 
 @pytest.fixture(autouse=True)
 def disable_session_feedback_poller(monkeypatch):
-    # These tests exercise turn/TTS responses, not the separate database worker.
+    # These tests exercise turn/TTS responses, not the separate database workers.
     monkeypatch.setenv("PALLY_SESSION_FEEDBACK_WORKER_ENABLED", "false")
+    monkeypatch.setenv("PALLY_STALE_CONVERSATION_WORKER_ENABLED", "false")
+
+
+@pytest.fixture
+def signed_in():
+    # /api/tts requires a verified user; these tests exercise synthesis, not auth.
+    main.app.dependency_overrides[main.get_current_user_id] = lambda: "user-1"
+    yield
+    del main.app.dependency_overrides[main.get_current_user_id]
 
 
 def test_chat_prompt_includes_spoken_corrections_and_name_exemption():
@@ -48,7 +57,38 @@ def _install_transport(monkeypatch, handler):
     return clients
 
 
-def test_default_voice_reuses_connection_pool_and_closes_on_shutdown(monkeypatch):
+def test_tts_rejects_anonymous_callers(monkeypatch):
+    calls = []
+    _install_transport(monkeypatch, lambda request: calls.append(request) or httpx.Response(200, json={"audioContent": "bXAz"}))
+    with TestClient(main.app) as api:
+        response = api.post("/api/tts", json={"text": "Hello!"})
+    assert response.status_code == 401
+    assert calls == []  # Google is never called for an anonymous request.
+
+
+def test_tts_rejects_unbounded_text_and_other_voices(monkeypatch, signed_in):
+    calls = []
+    _install_transport(monkeypatch, lambda request: calls.append(request) or httpx.Response(200, json={"audioContent": "bXAz"}))
+    monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Chirp3-HD-Leda")
+    with TestClient(main.app) as api:
+        assert api.post("/api/tts", json={"text": "a" * 501}).status_code == 422
+        assert api.post("/api/tts", json={"text": "Hello!", "voice": "en-US-Studio-O"}).status_code == 422
+        assert api.post("/api/tts", json={"text": "Hello!", "speaking_rate": 4.0}).status_code == 422
+    assert calls == []
+
+
+def test_tts_provider_error_does_not_leak_gcp_details(monkeypatch, signed_in):
+    def synthesize(_request):
+        return httpx.Response(403, json={"error": {"status": "PERMISSION_DENIED", "message": "billing disabled for project 123"}})
+
+    _install_transport(monkeypatch, synthesize)
+    with TestClient(main.app) as api:
+        response = api.post("/api/tts", json={"text": "Hello!"})
+    assert response.status_code == 502
+    assert "billing" not in response.text and "project" not in response.text
+
+
+def test_default_voice_reuses_connection_pool_and_closes_on_shutdown(monkeypatch, signed_in):
     requests = []
 
     def synthesize(request):
@@ -72,7 +112,8 @@ def test_default_voice_reuses_connection_pool_and_closes_on_shutdown(monkeypatch
     assert main.app.state.http_client is None
 
 
-def test_journey_configuration_rollback_and_explicit_override(monkeypatch):
+def test_journey_configuration_rollback_and_explicit_default_voice(monkeypatch, signed_in):
+    # The configured default stays switchable by env; clients may name it but no other voice.
     voices = []
 
     def synthesize(request):
@@ -83,10 +124,10 @@ def test_journey_configuration_rollback_and_explicit_override(monkeypatch):
     monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Journey-F")
     with TestClient(main.app) as api:
         default = api.post("/api/tts", json={"text": "Hello!", "voice": None})
-        explicit = api.post("/api/tts", json={"text": "Hello!", "voice": "en-US-Chirp3-HD-Leda"})
+        explicit = api.post("/api/tts", json={"text": "Hello!", "voice": "en-US-Journey-F"})
     assert default.json()["voice"] == "en-US-Journey-F"
-    assert explicit.json()["voice"] == "en-US-Chirp3-HD-Leda"
-    assert voices == ["en-US-Journey-F", "en-US-Chirp3-HD-Leda"]
+    assert explicit.json()["voice"] == "en-US-Journey-F"
+    assert voices == ["en-US-Journey-F", "en-US-Journey-F"]
 
 
 @pytest.mark.parametrize("worker_fails", [False, True])
@@ -131,10 +172,11 @@ def test_billing_worker_and_http_pool_share_lifecycle(monkeypatch, worker_fails)
 def test_complete_atomically_marks_review_work_before_scheduling_and_retries_idempotently(monkeypatch):
     completed_at = "2026-10-05T09:00:00+00:00"
     opened = {"id": "conversation-1", "user_id": "user-1", "ended_at": None, "title": None}
-    closed = {**opened, "ended_at": completed_at}
+    closed = {**opened, "ended_at": completed_at, "axes_contribution": {"mean": None, "turns": 1, "first_completed_at": completed_at}}
     sb = Mock()
     sb.rpc.return_value.execute.return_value = SimpleNamespace(data=closed)
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=1))
     monkeypatch.setattr(main, "_owned_session", Mock(side_effect=[opened, closed]))
     now = Mock(side_effect=AssertionError("Completion must use the database clock and work marker"))
     monkeypatch.setattr(main, "_now_iso", now)
@@ -177,7 +219,7 @@ def test_complete_atomically_marks_review_work_before_scheduling_and_retries_ide
             })
         sb.table.assert_not_called()
         now.assert_not_called()
-        refresh_traits.assert_called_once_with(sb, "user-1", "conversation-1")
+        refresh_traits.assert_called_once_with(sb, "user-1")
         assert closed["ended_at"] == completed_at
 
     asyncio.run(scenario())
@@ -188,10 +230,12 @@ def test_repeated_complete_with_existing_title_only_reschedules_review(monkeypat
     session = {
         "id": "conversation-1", "user_id": "user-1", "ended_at": completed_at,
         "title": "Cookie time", "reopen_count": 3,
+        "axes_contribution": {"mean": None, "turns": 1, "first_completed_at": completed_at},
     }
     sb = Mock()
     sb.rpc.return_value.execute.return_value = SimpleNamespace(data=session)
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=1))
     monkeypatch.setattr(main, "_owned_session", Mock(return_value=session))
     process_review = Mock()
     monkeypatch.setattr(main.session_feedback, "process_session", process_review)
@@ -234,6 +278,7 @@ def test_complete_rpc_failure_does_not_schedule_background_work(
     monkeypatch.setattr(main, "_owned_session", Mock(return_value={
         "id": "conversation-1", "user_id": "user-1", "ended_at": None, "reopen_count": 0,
     }))
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=1))
     refresh_traits = Mock()
     monkeypatch.setattr(main, "_refresh_profile_traits", refresh_traits)
     tasks = BackgroundTasks()
@@ -259,7 +304,7 @@ def test_inflight_turn_cannot_save_into_a_closed_or_reopened_session(monkeypatch
     }
     sessions, messages = Mock(), Mock()
     for query in (sessions, messages):
-        for method in ("select", "eq", "order", "insert"):
+        for method in ("select", "eq", "order", "insert", "range"):
             getattr(query, method).return_value = query
     sessions.execute.side_effect = [
         SimpleNamespace(data=[original]),
@@ -275,7 +320,8 @@ def test_inflight_turn_cannot_save_into_a_closed_or_reopened_session(monkeypatch
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "GOOGLE_CLOUD_API_KEY", "test-key")
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
-    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     release_turn = Mock()
     monkeypatch.setattr(main, "_release_turn", release_turn)
@@ -303,7 +349,7 @@ def test_inflight_turn_cannot_save_into_a_closed_or_reopened_session(monkeypatch
     review_generation.assert_not_called()
 
 
-def test_provider_failure_does_not_break_next_synthesis(monkeypatch):
+def test_provider_failure_does_not_break_next_synthesis(monkeypatch, signed_in):
     calls = []
 
     def synthesize(request):
@@ -325,7 +371,7 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
     timestamp = "2026-09-15T00:00:00+00:00"
     sessions, messages = Mock(), Mock()
     for query in (sessions, messages):
-        for method in ("select", "eq", "order", "insert"):
+        for method in ("select", "eq", "order", "insert", "range"):
             getattr(query, method).return_value = query
     sessions.execute.return_value = SimpleNamespace(data=[{
         "id": "conversation-1", "user_id": "user-1", "ended_at": None,
@@ -339,7 +385,8 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
     sb.table.side_effect = lambda name: {"sessions": sessions, "messages": messages}[name]
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
-    monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Chirp3-HD-Leda")
@@ -403,7 +450,7 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     first, second = "2026-10-07T04:04:19.641016+00:00", "2026-10-07T04:05:03.506262+00:00"
     sessions, messages = Mock(), Mock()
     for query in (sessions, messages):
-        for method in ("select", "eq", "order", "insert"):
+        for method in ("select", "eq", "order", "insert", "range"):
             getattr(query, method).return_value = query
     sessions.execute.return_value = SimpleNamespace(data=[{
         "id": "conversation-1", "user_id": "user-1", "ended_at": None,
@@ -427,6 +474,8 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "GOOGLE_CLOUD_API_KEY", "test-key")
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
     monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("say 3", 1.0)))
     chat = AsyncMock(return_value="A fresh reply to 3")
     monkeypatch.setattr(main, "_call_gemini_chat", chat)
@@ -442,3 +491,26 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     assert [(m.role, m.content) for m in sent_history] == [
         ("user", "say 1"), ("pally", "reply to 1"), ("user", "say 2"), ("pally", "reply to 2"),
     ]
+
+
+@pytest.mark.parametrize("production,configured,frontends,expected", [
+    (False, "", "", ["*"]),
+    (True, "", "https://yourpally.app,https://capstone-eight-virid.vercel.app",
+     ["https://yourpally.app", "https://capstone-eight-virid.vercel.app"]),
+    (True, "https://a.example, https://b.example", "https://ignored.example",
+     ["https://a.example", "https://b.example"]),
+    (True, "*", "", ["*"]),
+])
+def test_cors_origins_default_to_frontend_domains_in_production(monkeypatch, production, configured, frontends, expected):
+    monkeypatch.setattr(main, "_IS_PRODUCTION", production)
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", configured)
+    monkeypatch.setenv("BILLING_FRONTEND_ORIGINS", frontends)
+    assert main._cors_origins() == expected
+
+
+def test_production_without_any_frontend_origin_refuses_to_start(monkeypatch):
+    monkeypatch.setattr(main, "_IS_PRODUCTION", True)
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.delenv("BILLING_FRONTEND_ORIGINS", raising=False)
+    with pytest.raises(RuntimeError):
+        main._cors_origins()

@@ -15,11 +15,13 @@ import { PallyApiError } from "@/lib/api/contracts";
 import {
   NETWORK_ERROR_MESSAGE,
   SESSION_ERROR_MESSAGE,
+  TIMEOUT_ERROR_MESSAGE,
   UNREADABLE_RESPONSE_MESSAGE,
   userFacingErrorMessage,
 } from "@/lib/api/error-messages";
 import {
   achievementsResponseSchema,
+  dailyExpressionResponseSchema,
   energyBaselineResponseSchema,
   deleteAccountResponseSchema,
   deleteConversationHistoryResponseSchema,
@@ -44,6 +46,16 @@ import {
 import { supabase } from "@/lib/supabase/client";
 
 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
+
+/**
+ * Without a budget a request can hang until the browser or some proxy gives up,
+ * and the user is left on a spinner with no way to tell a slow server from a dead
+ * one. Reads get a short budget; the voice path gets a long one because the
+ * backend itself allows STT, Gemini and TTS up to 30s each in sequence, so
+ * cutting a turn off early would throw away a reply that was still coming.
+ */
+const DEFAULT_TIMEOUT_MS = 15_000;
+const VOICE_TIMEOUT_MS = 90_000;
 
 function createIdempotencyKey(): string {
   return crypto.randomUUID();
@@ -73,6 +85,7 @@ type RequestOptions<TSchema extends z.ZodType> = {
   contentType?: "application/json";
   idempotencyKey?: string;
   accountBinding?: AccountBinding;
+  timeoutMs?: number;
 };
 
 async function apiRequest<TSchema extends z.ZodType>(path: string, options: RequestOptions<TSchema>): Promise<z.infer<TSchema>> {
@@ -83,14 +96,23 @@ async function apiRequest<TSchema extends z.ZodType>(path: string, options: Requ
   if (options.contentType) headers.set("Content-Type", options.contentType);
   if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
 
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let response: Response;
   try {
     response = await fetch(`${backendUrl}${path}`, {
       method: options.method ?? "GET",
       headers,
       body: options.body,
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
+    // AbortSignal.timeout rejects with a TimeoutError; anything else here means the
+    // request never reached a response at all. The two need different wording, and
+    // the logged path is what tells us which endpoint stalled.
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      console.error("API request timed out", { path, timeoutMs });
+      throw new PallyApiError(0, "timeout", TIMEOUT_ERROR_MESSAGE);
+    }
     console.error("API request could not reach the server", { path, error });
     throw new PallyApiError(0, "network_error", NETWORK_ERROR_MESSAGE);
   }
@@ -105,9 +127,9 @@ async function apiRequest<TSchema extends z.ZodType>(path: string, options: Requ
     if (!parsedError.success) {
       throw new PallyApiError(response.status, "invalid_response", `서버 오류 응답 형식이 올바르지 않아요. (${response.status})`);
     }
-    const { code, message, request_id: requestId } = parsedError.data.error;
+    const { code, message, request_id: requestId, details } = parsedError.data.error;
     console.error("API request failed", { path, status: response.status, code, message, requestId });
-    throw new PallyApiError(response.status, code, userFacingErrorMessage(response.status, code, message), requestId);
+    throw new PallyApiError(response.status, code, userFacingErrorMessage(response.status, code, message), requestId, details);
   }
 
   const parsed = options.schema.safeParse(payload);
@@ -172,6 +194,7 @@ export const httpPallyApi: PallyApi = {
       method: "POST",
       idempotencyKey: input.idempotency_key,
       body: formData,
+      timeoutMs: VOICE_TIMEOUT_MS,
     });
   },
 
@@ -179,6 +202,7 @@ export const httpPallyApi: PallyApi = {
     schema: openerResponseSchema,
     method: "POST",
     idempotencyKey,
+    timeoutMs: VOICE_TIMEOUT_MS,
   }),
 
   synthesizeSpeech: (text: string) => apiRequest("/api/tts", {
@@ -186,6 +210,7 @@ export const httpPallyApi: PallyApi = {
     method: "POST",
     contentType: "application/json",
     body: JSON.stringify({ text }),
+    timeoutMs: VOICE_TIMEOUT_MS,
   }),
 
   completeConversation: (conversationId: string) => apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}/complete`, {
@@ -223,6 +248,7 @@ export const httpPallyApi: PallyApi = {
   },
 
   getAchievements: () => apiRequest("/api/achievements", { schema: achievementsResponseSchema }),
+  getDailyExpression: () => apiRequest("/api/daily-expression?include_usage=false", { schema: dailyExpressionResponseSchema }),
 
   getBillingProducts: () => apiRequest("/api/billing/products", { schema: billingProductsResponseSchema }),
 

@@ -1,0 +1,44 @@
+name: Deploy frontend
+
+# The Vercel team is on Hobby with the owner as its only member, so Vercel's
+# Git integration rejects commits authored by teammates. Production is
+# deployed from here with the owner's token instead (frontend/vercel.json
+# turns the Git integration's automatic deployments off).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: vercel-production
+  cancel-in-progress: false
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: team_83eNw7JyGY6blYp7AHijLHxU
+      VERCEL_PROJECT_ID: prj_2PEiXAqGjPbSa7C5yBBWJlnefZZi
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Require VERCEL_TOKEN
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::Repository secret VERCEL_TOKEN is not set. The Vercel team owner must add it."
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@65.1.0
+
+      # Build remotely on Vercel so the project's Root Directory (frontend),
+      # environment variables and system variables apply as before.
+      - name: Deploy to production
+        run: vercel deploy --prod --yes --token="$VERCEL_TOKEN"

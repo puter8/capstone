@@ -24,10 +24,17 @@ _MESSAGE_PAGE_SIZE = 500
 _SESSION_PAGE_SIZE = 10
 _RETRY_SECONDS = 30.0
 _MAX_RETRY_SECONDS = 300.0
+# After this many failed attempts a turn is extracted with lenient grounding:
+# ungrounded items are dropped instead of failing the turn. Without this cap a
+# model that keeps returning one unverifiable item re-bills Gemini every 5 minutes
+# forever and the turn's review never appears. Provider outages are unaffected:
+# lenient grounding only changes how a successful answer is filtered.
+_STRICT_GROUNDING_ATTEMPTS = 3
 _guard = threading.Lock()
 _inflight: set[str] = set()
 _retry_at: dict[str, float] = {}
 _failures: dict[str, int] = {}
+_turn_failures: dict[str, int] = {}
 
 
 def _claim(conversation_id: str) -> bool:
@@ -117,7 +124,15 @@ def process_session(get_db, conversation_id: str, build_turns) -> dict:
         counts["skipped"] = len(pending_ids) - len(pairs)
         if not pairs:
             return counts  # Incomplete pairs stay NULL, never become "no correction".
-        extracted = generate_session_feedback(pairs, session["level"])
+        with _guard:
+            lenient = frozenset(
+                pair["turn_id"] for pair in pairs
+                if _turn_failures.get(pair["turn_id"], 0) >= _STRICT_GROUNDING_ATTEMPTS
+            )
+        if lenient:
+            extracted = generate_session_feedback(pairs, session["level"], lenient_turn_ids=lenient)
+        else:
+            extracted = generate_session_feedback(pairs, session["level"])
         ids = [entry["turn_id"] for entry in extracted]
         if len(ids) != len(set(ids)) or set(ids) != {pair["turn_id"] for pair in pairs}:
             raise ValueError("Feedback extraction returned mismatched turn IDs")
@@ -125,7 +140,11 @@ def process_session(get_db, conversation_id: str, build_turns) -> dict:
             if entry["failed"]:
                 counts["failed"] += 1
                 retry = True
+                with _guard:
+                    _turn_failures[entry["turn_id"]] = _turn_failures.get(entry["turn_id"], 0) + 1
                 continue
+            with _guard:
+                _turn_failures.pop(entry["turn_id"], None)
             try:
                 feedback = _with_stable_ids(conversation_id, entry["turn_id"], entry["items"])
                 saved = (db.table("messages").update({"feedback": feedback})

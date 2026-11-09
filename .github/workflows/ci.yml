@@ -57,5 +57,11 @@ jobs:
           npm run check:query-cache
           npm run check:conversation-order
           npm run check:opener
+          npm run check:opener-loading
+          npm run check:daily-expression
           npm run check:home-snapshot
           npm run check:inline-feedback
+          npm run check:name-edit-dialog
+          npm run check:pally-segments
+          npm run check:v2-tokens
+          npm run check:v2-routes

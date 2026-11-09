@@ -8,13 +8,9 @@ import type { Message } from "../lib/types/message";
 // The script runner compiles JSX with the classic transform, which looks up a global React.
 (globalThis as { React?: typeof React }).React = React;
 
-// Feedback is generated after a conversation ends. While it is pending the chat bubble
-// must show no feedback notice: it only took space from the message area and clipped
-// Pally's reply.
+// Feedback panels stay out of chat bubbles, even when saved feedback is available.
+// The conversation itself remains visible in both short and expanded views.
 async function main(): Promise<void> {
-  // ChatBubble reaches the API client through the analytics helper, which needs these at import time.
-  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://fixture.supabase.invalid";
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "fixture-public-anon-key";
   const { ChatBubble } = await import("../components/chat/ChatBubble");
 
   const conversation = (feedback: NonNullable<Message["feedback"]>): Message[] => [
@@ -29,6 +25,7 @@ async function main(): Promise<void> {
     const view = expanded ? "expanded" : "short";
     const pending = render(conversation({ items: [], pending: true }), expanded);
     ok(pending.includes("wolf down"), `${view}: the conversation is rendered`);
+    ok(pending.includes("It means to eat something very quickly!"), `${view}: Pally's reply is rendered`);
     ok(!pending.includes("대화를 종료하면"), `${view}: no pending notice`);
     ok(!pending.includes("이번 발화 피드백"), `${view}: no feedback panel while pending`);
 
@@ -36,7 +33,11 @@ async function main(): Promise<void> {
       items: [{ original: "I go", corrected: "I went", explanation_ko: "과거 시제를 써요." }],
       pending: false,
     }), expanded);
-    ok(corrected.includes("I went"), `${view}: a saved correction is listed`);
+    ok(corrected.includes("wolf down"), `${view}: saved feedback preserves the user message`);
+    ok(corrected.includes("It means to eat something very quickly!"), `${view}: saved feedback preserves Pally's reply`);
+    ok(!corrected.includes("I went"), `${view}: no saved correction card`);
+    ok(!corrected.includes("피드백 보기"), `${view}: no feedback button`);
+    ok(!corrected.includes("이번 발화 피드백"), `${view}: no saved feedback panel`);
   }
   console.log("Inline feedback checks passed.");
 }

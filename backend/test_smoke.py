@@ -105,11 +105,11 @@ def test_default_traits_match_the_default_pally_shown_to_new_users():
     """신규 가입자 기본 태그(DB default)는 홈 화면의 기본 Pally 모습과 같아야 한다.
 
     frontend/lib/types/character.ts 의 DEFAULT_AXES 를 태그 규칙에 넣은 결과가
-    supabase/migrations/20260922000000_profiles_default_traits.sql 의 기본값이다.
+    supabase/migrations/20261027000000_profiles_default_traits_neutral.sql 의 기본값이다.
     둘 중 하나를 바꾸면 이 테스트와 다른 쪽도 함께 바꿔야 한다.
     """
-    frontend_default_axes = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
-    assert main._axes_to_traits(frontend_default_axes) == ["acquaint", "serious", "calm", "indifferent", "casual"]
+    frontend_default_axes = {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
+    assert main._axes_to_traits(frontend_default_axes) == ["acquaint", "funny", "lively", "curious", "casual"]
 
 
 def test_axes_to_traits_always_returns_five_unique_tags():
@@ -259,7 +259,7 @@ def test_delete_conversation_history_requires_authentication():
 
 def test_default_traits_constant_matches_migration_default():
     """코드의 복원값과 DB 기본값(마이그레이션)이 같아야 한다."""
-    frontend_default_axes = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+    frontend_default_axes = {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
 
     assert main._DEFAULT_TRAITS == main._axes_to_traits(frontend_default_axes)
 
@@ -508,6 +508,10 @@ def _opener_client(monkeypatch, *, session, first_message, text="Hey! What music
         query.eq.side_effect = eq
 
         def execute():
+            # messages 외의 테이블(오늘의 표현 snapshot, profiles 등)은 비어 있다.
+            # 전부 같은 행을 돌려주면 snapshot 조회가 메시지 행을 받아 깨진다.
+            if name != "messages":
+                return SimpleNamespace(data=[])
             user_probe = ("role", "user") in filters
             rows = [first_message] if first_message else []
             if user_probe:
@@ -524,9 +528,10 @@ def _opener_client(monkeypatch, *, session, first_message, text="Hey! What music
     monkeypatch.setattr(main, "_owned_session", lambda *_: session)
     monkeypatch.setattr(main, "_carried_over_axes", lambda *_: None)
     monkeypatch.setattr(main, "_recent_session_texts", lambda *_: [])
+    monkeypatch.setattr(main, "_user_level", lambda *_: session["level"])
 
-    async def fake_generate(axes, level, recent_texts):
-        calls.append((axes, level, recent_texts))
+    async def fake_generate(axes, level, recent_texts, expression_rule=None):
+        calls.append((axes, level, recent_texts, expression_rule))
         return text
 
     calls = []
@@ -543,14 +548,16 @@ def _tts(monkeypatch, audio="BASE64AUDIO"):
     monkeypatch.setattr(main, "_call_google_tts", fake_tts)
 
 
-_OPENER_URL = "/api/conversations/conversation-1/opener"
+# Conversation routes reject malformed ids before the database, so use a real UUID.
+_OPENER_CONVERSATION_ID = "11111111-1111-4111-8111-111111111111"
+_OPENER_URL = f"/api/conversations/{_OPENER_CONVERSATION_ID}/opener"
 _OPENER_HEADERS = {"Authorization": "Bearer test", "Idempotency-Key": "key-1"}
 
 
 def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
     """오프너는 role=pally 메시지로 저장되고, 사용량은 차감하지 않는다."""
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "A2", "ended_at": None}, first_message=None
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "A2", "ended_at": None}, first_message=None
     )
     _tts(monkeypatch)
     reserved = []
@@ -559,17 +566,29 @@ def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
     response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
 
     assert response.status_code == 201
-    assert response.json() == {
-        "text": "Hey! What music do you like?", "audio": "BASE64AUDIO", "warnings": [],
+    body = response.json()
+    assert (body["text"], body["audio"], body["warnings"]) == (
+        "Hey! What music do you like?", "BASE64AUDIO", [])
+    # 채팅 화면이 "이번엔 써볼 차례" 를 띄울 시점을 고르려면 오프너가 표현을
+    # 실제로 말했는지 알아야 한다. 이 가짜 오프너 문장에는 표현이 없으므로 False.
+    today = main.daily_expression.pick_for_day("caller-id", main._kst_date(), "A2")
+    assert body["daily_expression"] == {
+        "id": today.id, "text": today.text, "meaning_ko": today.meaning_ko,
+        "spoken": False,
     }
     assert [name for name, _ in inserted] == ["messages"]
     row = inserted[0][1]
-    assert row["role"] == "pally" and row["session_id"] == "conversation-1"
+    assert row["role"] == "pally" and row["session_id"] == _OPENER_CONVERSATION_ID
     assert row["transcript"] == "Hey! What music do you like?"
     assert row["axes"] is None  # axes 는 user 발화의 것. 오프너에는 없다
     assert reserved == []  # quota 차감 없음
     # 축 출발점은 완료 대화가 없을 때 첫 Pally 와 같은 _INITIAL_AXES, 레벨은 세션 레벨
-    assert calls == [(dict(main._INITIAL_AXES), "A2", [])]
+    axes, level, recent, expression_rule = calls[0]
+    assert (axes, level, recent) == (dict(main._INITIAL_AXES), "A2", [])
+    # 오늘의 표현은 오프너가 들려준다 — 그 규칙이 실제로 전달되는지까지 본다.
+    today = main.daily_expression.pick_for_day("caller-id", main._kst_date(), "A2")
+    assert expression_rule == main.daily_expression.opener_rule(today)
+    assert today.text in expression_rule
 
 
 def test_opener_is_refused_once_the_user_has_spoken_even_if_one_is_saved(monkeypatch):
@@ -578,7 +597,7 @@ def test_opener_is_refused_once_the_user_has_spoken_even_if_one_is_saved(monkeyp
     읽어주면 Pally 가 대화 중간에 첫인사를 반복한다.
     """
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message={"role": "user", "transcript": "I ate pizza"},
     )
     _tts(monkeypatch)
@@ -594,7 +613,7 @@ def test_opener_is_idempotent_without_calling_the_model_again(monkeypatch):
     """다시 호출하면 저장된 오프너를 쓴다 — 모델 재호출·중복 저장 없음."""
     saved = {"role": "pally", "transcript": "Hey! Seen any good shows?"}
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=saved
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=saved
     )
     _tts(monkeypatch)
 
@@ -609,7 +628,7 @@ def test_opener_rejected_after_a_user_turn_or_on_a_closed_conversation(monkeypat
     """뒤늦게 오프너를 끼워 넣지 않는다: 사용자 발화가 있거나 끝난 대화면 409."""
     client, inserted, _ = _opener_client(
         monkeypatch,
-        session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message={"role": "user", "transcript": "I ate pizza"},
     )
     _tts(monkeypatch)
@@ -619,7 +638,7 @@ def test_opener_rejected_after_a_user_turn_or_on_a_closed_conversation(monkeypat
 
     client, _, _ = _opener_client(
         monkeypatch,
-        session={"id": "conversation-1", "level": "B1", "ended_at": "2026-10-05T00:00:00Z"},
+        session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": "2026-10-05T00:00:00Z"},
         first_message=None,
     )
     _tts(monkeypatch)
@@ -632,7 +651,7 @@ def test_opener_rejected_after_a_user_turn_or_on_a_closed_conversation(monkeypat
 def test_opener_tts_failure_keeps_the_text_and_warns(monkeypatch):
     """TTS 실패는 턴과 같게 non-fatal: 텍스트는 주고 audio=null + tts_failed."""
     client, inserted, _ = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=None
     )
     _tts(monkeypatch, audio=None)
 
@@ -652,7 +671,7 @@ def test_opener_requires_authentication_and_idempotency_key(monkeypatch):
     assert TestClient(main.app).post(_OPENER_URL).status_code == 401
 
     client, inserted, calls = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None}, first_message=None
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=None
     )
     _tts(monkeypatch)
     response = client.post(_OPENER_URL, headers={"Authorization": "Bearer test"})
@@ -661,11 +680,11 @@ def test_opener_requires_authentication_and_idempotency_key(monkeypatch):
 
 
 def test_opener_failure_does_not_store_a_fallback_line(monkeypatch):
-    """모델이 두 번 다 실패하면 폴백 문구를 저장하지 않고 503 (§6 #3)."""
+    """모델이 매번 실패하면 폴백 문구를 저장하지 않고 503 (§6 #3)."""
     from ai.opener import OpenerRejected
 
     client, inserted, _ = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message=None, patch_generate=False,
     )
     _tts(monkeypatch)
@@ -681,7 +700,41 @@ def test_opener_failure_does_not_store_a_fallback_line(monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "opener_failed"
-    assert len(attempts) == 2  # 1회 재시도
+    # 오늘의 표현 지시로 2회 + 지시를 뺀 1회. 긴 표현이 레벨 단어 수에 안 들어가
+    # 거부되는 경우가 있어, 표현 때문에 오프너 전체가 막히지 않게 한 단계를 더 둔다.
+    assert len(attempts) == 3
+    assert inserted == []
+
+
+def test_opener_ladder_does_not_outlast_the_old_two_attempt_budget(monkeypatch):
+    """시도가 3회로 늘어도 사용자가 기다리는 최악 시간은 2회분을 넘지 않는다.
+
+    대화 시작 로딩이라 15초까지 늘어나면 안 된다. 예산이 소진되면 남은 시도를
+    건너뛰고 503 으로 끝낸다.
+    """
+    from ai.opener import OpenerRejected
+
+    client, inserted, _ = _opener_client(
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
+        first_message=None, patch_generate=False,
+    )
+    _tts(monkeypatch)
+    attempts = []
+    clock = {"now": 0.0}
+    monkeypatch.setattr(main.time, "monotonic", lambda: clock["now"])
+
+    def slow_and_rejected(*_args, **_kwargs):
+        attempts.append(1)
+        clock["now"] += main._OPENER_TOTAL_TIMEOUT_S  # 매 시도가 예산을 꽉 쓴다
+        raise OpenerRejected("too_long")
+
+    monkeypatch.setattr(main, "generate_opener", slow_and_rejected)
+
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+
+    assert response.status_code == 503
+    # 2회분 예산이 끝났으므로 3회차는 아예 시작하지 않는다.
+    assert len(attempts) == 2
     assert inserted == []
 
 
@@ -690,7 +743,7 @@ def test_opener_retries_once_and_keeps_a_valid_second_try(monkeypatch):
     from ai.opener import OpenerRejected
 
     client, inserted, _ = _opener_client(
-        monkeypatch, session={"id": "conversation-1", "level": "B1", "ended_at": None},
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None},
         first_message=None, patch_generate=False,
     )
     _tts(monkeypatch)
@@ -747,6 +800,19 @@ class _FakeAchievementQuery:
     def limit(self, *_):
         return self
 
+    def upsert(self, row, **_):
+        self.data.setdefault("writes", []).append((self.table, row))
+        if self.table == "daily_expression_snapshots":
+            # These fixtures are scoped to one user/day; upsert replaces that row.
+            self.data[self.table] = [row]
+        elif self.table == "activity_events":
+            rows = self.data.setdefault(self.table, [])
+            rows[:] = [saved for saved in rows if (saved.get("user_id"), saved.get("event_id")) != (row["user_id"], row["event_id"])]
+            rows.append(row)
+        else:
+            self.data.setdefault(self.table, []).append(row)
+        return self
+
     def execute(self):
         from types import SimpleNamespace
 
@@ -754,10 +820,15 @@ class _FakeAchievementQuery:
             # select("session_id") + role=user → 전체 기간 발화 세션 / 그 외 → 오늘 메시지
             key = "spoken" if self.columns.strip() == "session_id" else "today"
             return SimpleNamespace(data=self.data[key])
+        if self.table == "activity_events" and self.columns == "received_at":
+            rows = self.data.get(self.table, [])
+            for column, value in self.filters:
+                rows = [row for row in rows if row.get(column) == value]
+            return SimpleNamespace(data=rows)
         return SimpleNamespace(data=self.data.get(self.table, []))
 
 
-def _achievement_ctx(sessions, spoken_ids, today_msgs):
+def _achievement_ctx(sessions, spoken_ids, today_msgs, level="B1", snapshots=None):
     from unittest.mock import Mock
 
     date_kst = main._kst_date()
@@ -767,10 +838,12 @@ def _achievement_ctx(sessions, spoken_ids, today_msgs):
         "today": today_msgs,
         "activity_events": [],
         "usage_daily": [],
+        "profiles": [{"english_level": level}],
+        "daily_expression_snapshots": list(snapshots or []),
     }
     sb = Mock()
     sb.table.side_effect = lambda name: _FakeAchievementQuery(name, data)
-    return sb, main._gather_achievement_context(sb, "user-1", date_kst), date_kst
+    return sb, main._gather_achievement_context(sb, "user-1", date_kst), date_kst, data
 
 
 def _today_window():
@@ -783,7 +856,7 @@ def test_daily_tasks_do_not_count_a_conversation_the_user_never_spoke_in():
     start, _end = _today_window()
     opener_only = {"id": "s-opener", "created_at": start, "ended_at": start, "reopened_at": None}
 
-    sb, ctx, date_kst = _achievement_ctx([opener_only], spoken_ids=[], today_msgs=[])
+    sb, ctx, date_kst, _data = _achievement_ctx([opener_only], spoken_ids=[], today_msgs=[])
 
     assert ctx["sessions_today"] == [] and ctx["completed_today"] == []
     assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is False  # 오늘 대화 시작
@@ -798,7 +871,7 @@ def test_daily_tasks_count_a_conversation_once_the_user_speaks():
     msgs = [{"session_id": "s-spoke", "role": "user", "transcript": "i went to the park",
              "axes": None, "character": None, "created_at": start, "feedback": None}]
 
-    sb, ctx, date_kst = _achievement_ctx([spoke, opener_only], spoken_ids=["s-spoke"], today_msgs=msgs)
+    sb, ctx, date_kst, _data = _achievement_ctx([spoke, opener_only], spoken_ids=["s-spoke"], today_msgs=msgs)
 
     assert [s["id"] for s in ctx["sessions_today"]] == ["s-spoke"]
     assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is True
@@ -813,7 +886,7 @@ def test_a6_counts_a_conversation_spoken_yesterday_but_completed_today():
     start, _end = _today_window()
     session = {"id": "s-old", "created_at": "2026-01-01T00:00:00+00:00", "ended_at": start, "reopened_at": None}
 
-    sb, ctx, date_kst = _achievement_ctx([session], spoken_ids=["s-old"], today_msgs=[])
+    sb, ctx, date_kst, _data = _achievement_ctx([session], spoken_ids=["s-old"], today_msgs=[])
 
     assert [s["id"] for s in ctx["completed_today"]] == ["s-old"]
     assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is True
@@ -836,10 +909,328 @@ def test_opener_only_conversations_do_not_fill_the_weekly_streak_tasks():
         sessions.append({"id": f"s-spoke-{day}", "created_at": at, "ended_at": None, "reopened_at": None})
         spoken.append(f"s-spoke-{day}")
 
-    sb, ctx, date_kst = _achievement_ctx(sessions, spoken_ids=spoken, today_msgs=[])
+    sb, ctx, date_kst, _data = _achievement_ctx(sessions, spoken_ids=spoken, today_msgs=[])
 
     assert len(ctx["week_conv_dates"]) == 2
     assert main._eval_task(sb, "user-1", date_kst, "E2", ctx) is False
+
+
+# ── 오늘의 표현 (F1) ─────────────────────────────────────────────────────────
+
+
+def _msg(transcript):
+    start, _end = _today_window()
+    return {"session_id": "s-1", "role": "user", "transcript": transcript,
+            "axes": None, "character": None, "created_at": start, "feedback": None}
+
+
+def _spoke_session():
+    start, _end = _today_window()
+    return {"id": "s-1", "created_at": start, "ended_at": None, "reopened_at": None}
+
+
+def test_f1_needs_the_user_to_say_todays_expression():
+    """오늘의 표현은 Pally 가 들려주는 것만으로 달성되지 않는다 — 사용자가 써야 한다.
+
+    Pally 발화는 ctx["user_msgs"] 에 없으므로, 들려준 턴만 있으면 F1 은 미달성이다.
+    """
+    sb, ctx, date_kst, data = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("i listen music every day")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
+
+    sb, ctx, date_kst, data = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("i listen music every day"),
+                    _msg("Actually I'm really into rock these days")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is True
+
+
+def test_f1_accepts_a_negated_use_of_the_expression():
+    """"I'm not into ~" 도 구조를 연습한 것이다 (판정 범위 결정, 2026-10-29)."""
+    sb, ctx, date_kst, _d = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("honestly i'm not into horror movies")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is True
+
+
+def test_f1_does_not_fire_on_a_lookalike_phrase():
+    """"I'm going into town" 은 "I'm into ~" 이 아니다 — 안 쓴 Task 를 주면 안 된다."""
+    sb, ctx, date_kst, _d = _achievement_ctx(
+        [_spoke_session()], spoken_ids=["s-1"],
+        today_msgs=[_msg("i'm going into town later")],
+        snapshots=[{"expr_id": "b1-into"}],
+    )
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
+
+
+def test_a_snapshot_taken_before_f1_was_fixed_gets_re_selected():
+    """F1 을 고정 목록에 넣은 날, 그 날 이미 snapshot 이 있던 사용자도 받아야 한다.
+
+    snapshot 을 그대로 쓰면 그 사용자는 하루 종일 표현 카드는 보이는데 과제는
+    없는 상태가 된다.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    stale = {"task_ids": ["A1", "D2", "C3"]}        # F1 이 없는 과거 선택
+    written = []
+
+    def table(name):
+        q = Mock()
+        for m in ("select", "eq", "in_", "gte", "lt", "order", "limit"):
+            getattr(q, m).return_value = q
+        q.upsert.side_effect = lambda row, **_: written.append((name, row)) or q
+        q.execute.side_effect = lambda: SimpleNamespace(
+            data=[stale] if name == "daily_task_snapshots" else [])
+        return q
+
+    sb = Mock()
+    sb.table.side_effect = table
+    date_kst = main._kst_date()
+
+    picked = main._resolve_daily_task_ids(sb, "user-1", date_kst)
+
+    assert picked[:2] == ["A1", "F1"]
+    assert ("daily_task_snapshots", {
+        "user_id": "user-1", "date_kst": date_kst, "task_ids": picked,
+    }) in written
+
+
+def test_card_separates_pally_saying_it_from_the_user_saying_it():
+    """카드 문구가 "Pally가 썼어요 · 이번엔 내 차례" 로 가려면 둘을 나눠야 한다.
+
+    Pally 발화만 있는 상태에서 used_today 가 True 가 되면 사용자는 쓰지도 않고
+    달성 처리되고, 반대로 pally_used_today 를 클라이언트가 추측하면 Pally 가
+    말하지 않은 날에도 "방금 썼어요" 가 뜬다.
+    """
+    expr = main.daily_expression.by_id("b1-into")
+    pally_only = [{"role": "pally", "transcript": "Hey! I'm into painting lately."}]
+    user_too = pally_only + [{"role": "user", "transcript": "I'm into movies too"}]
+
+    assert main._spoke_daily_expression(expr, []) is False
+    assert main._spoke_daily_expression(
+        expr, [m for m in pally_only if m["role"] == "user"]) is False
+    assert main._spoke_daily_expression(
+        expr, [m for m in pally_only if m["role"] != "user"]) is True
+    assert main._spoke_daily_expression(
+        expr, [m for m in user_too if m["role"] == "user"]) is True
+
+
+def test_daily_expression_is_written_once_and_then_reused():
+    """같은 날 두 번 물어도 같은 표현이 나오고, 쓰기는 처음 한 번만 일어난다."""
+    sb, _ctx, date_kst, data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], level="B2", snapshots=[])
+
+    first = main._daily_expression(sb, "user-1", date_kst, "B2")
+    assert first.level == "B2"
+    writes = [row for table, row in data["writes"] if table == "daily_expression_snapshots"]
+    assert writes == [{"user_id": "user-1", "date_kst": date_kst, "expr_id": first.id}]
+
+    second = main._daily_expression(sb, "user-1", date_kst, "B2")
+    assert second.id == first.id
+    assert len([r for t, r in data["writes"] if t == "daily_expression_snapshots"]) == 1
+
+
+def test_daily_expression_repicks_when_the_stored_id_left_the_catalog():
+    """카탈로그에서 빠진 표현이 저장돼 있으면 화면이 비지 않게 다시 뽑는다."""
+    sb, _ctx, date_kst, data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], snapshots=[{"expr_id": "b1-removed-long-ago"}])
+
+    expr = main._daily_expression(sb, "user-1", date_kst, "B1")
+
+    assert expr is not None and expr.level == "B1"
+    assert [row["expr_id"] for t, row in data["writes"]
+            if t == "daily_expression_snapshots"] == [expr.id]
+
+
+def test_daily_expression_tracks_level_changes_and_reuses_each_level_on_return():
+    sb, _ctx, date_kst, data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], snapshots=[{"expr_id": "b1-into"}])
+    for level in ("B2", "C1", "A2", "B1"):
+        expr = main._daily_expression(sb, "user-1", date_kst, level)
+        assert expr == main.daily_expression.pick_for_day("user-1", date_kst, level)
+        assert expr.level == level
+        writes = len(data["writes"])
+        assert main._daily_expression(sb, "user-1", date_kst, level) == expr
+        assert len(data["writes"]) == writes
+
+
+def test_expression_prompt_does_not_query_conversation_history(monkeypatch):
+    import asyncio
+    sb, _ctx, date_kst, _data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[], snapshots=[{"expr_id": "b1-into"}])
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_kst_date", lambda: date_kst)
+
+    def unexpected_history(*_):
+        raise AssertionError("Prompt-only reads must not scan messages")
+
+    monkeypatch.setattr(main, "_today_messages_by_role", unexpected_history)
+    response = asyncio.run(main.get_daily_expression(include_usage=False, user_id="user-1"))
+    assert response["expression"]["id"] == "b1-into"
+    assert "used_today" not in response and "pally_used_today" not in response
+
+
+def test_expression_usage_tracks_current_level_but_f1_keeps_previous_completion(monkeypatch):
+    import asyncio
+    sb, ctx, date_kst, _data = _achievement_ctx(
+        [], spoken_ids=[], today_msgs=[{"role": "user", "transcript": "I'm into music"}],
+        level="B2", snapshots=[{"expr_id": "b1-into"}])
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_kst_date", lambda: date_kst)
+    monkeypatch.setattr(main, "_today_messages_by_role", lambda *_: ([{"transcript": "I'm into music"}], []))
+    response = asyncio.run(main.get_daily_expression(user_id="user-1"))
+    assert response["expression"]["level"] == "B2"
+    assert response["used_today"] is False
+    assert response["pally_used_today"] is False
+    assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is True
+
+
+def test_old_conversation_opener_uses_the_current_profile_expression(monkeypatch):
+    client, _inserted, calls = _opener_client(
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "B1", "ended_at": None}, first_message=None)
+    _tts(monkeypatch)
+    monkeypatch.setattr(main, "_user_level", lambda *_: "B2")
+    response = client.post(_OPENER_URL, headers=_OPENER_HEADERS)
+    assert response.status_code == 201
+    expr = main.daily_expression.pick_for_day("caller-id", main._kst_date(), "B2")
+    assert response.json()["daily_expression"]["id"] == expr.id
+    assert calls[0][3] == main.daily_expression.opener_rule(expr)
+
+
+def test_f1_completion_survives_level_changes_and_keeps_its_timestamp():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music", "created_at": start}],
+        snapshots=[{"expr_id": "b1-into"}])
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+    completed_at = ctx["expression_task_completed_at"]
+    for level in ("B2", "C1", "A2", "B1"):
+        data["profiles"][0]["english_level"] = level
+        assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+        assert ctx["expression_task_completed_at"] == completed_at
+    events = [row for table, row in data["writes"] if table == "activity_events"]
+    assert len(events) == 1
+    assert events[0]["event_type"] == main._EXPRESSION_TASK_COMPLETED_EVENT
+    assert main._expression_task_completed_at(sb, "other-user", day) is None
+    tomorrow = (main.datetime.fromisoformat(day).date() + main.timedelta(days=1)).isoformat()
+    assert main._expression_task_completed_at(sb, "user-1", tomorrow) is None
+
+
+def test_level_change_preserves_a_use_before_achievements_was_opened():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm really into music", "created_at": start}],
+        level="B2", snapshots=[{"expr_id": "b1-into"}])
+    new_expr = main._daily_expression(sb, "user-1", day, "B2")
+    assert new_expr.level == "B2"
+    assert main._expression_task_completed_at(sb, "user-1", day) is not None
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+    assert [table for table, _row in data["writes"]] == ["activity_events", "daily_expression_snapshots"]
+
+
+def test_level_changes_do_not_complete_an_unused_expression():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[
+            {"role": "pally", "session_id": "s-1", "transcript": "I'm into music", "created_at": start},
+            {"role": "user", "session_id": "s-1", "transcript": "Hello Pally", "created_at": start},
+        ], level="B2", snapshots=[{"expr_id": "b1-into"}])
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is False
+    assert data["activity_events"] == []
+
+
+def test_f1_is_not_completed_the_next_day():
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music", "created_at": start}],
+        snapshots=[{"expr_id": "b1-into"}])
+    assert main._eval_task(sb, "user-1", day, "F1", ctx) is True
+    tomorrow = (main.datetime.fromisoformat(day).date() + main.timedelta(days=1)).isoformat()
+    assert main._eval_task(sb, "user-1", tomorrow, "F1", {**ctx, "user_msgs": []}) is False
+    assert len(data["activity_events"]) == 1
+
+
+def test_completion_write_failure_cannot_replace_the_old_assignment(monkeypatch):
+    import pytest
+    start, _end = _today_window()
+    sb, _ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music"}],
+        level="B2", snapshots=[{"expr_id": "b1-into"}])
+
+    def fail(*_):
+        raise main.AppError(503, "persistence_failed", "Failed to persist completion")
+
+    monkeypatch.setattr(main, "_record_expression_task_completion", fail)
+    with pytest.raises(main.AppError):
+        main._daily_expression(sb, "user-1", day, "B2")
+    assert data["daily_expression_snapshots"] == [{"expr_id": "b1-into"}]
+
+
+def test_server_completion_events_cannot_be_forged_by_the_public_route():
+    from fastapi.testclient import TestClient
+    main.app.dependency_overrides[main.get_current_user_id] = lambda: "user-1"
+    try:
+        response = TestClient(main.app).post("/api/activity-events", headers={"Idempotency-Key": "claim"}, json={
+            "event_id": main._expression_completion_id("user-1", main._kst_date()),
+            "event_type": main._EXPRESSION_TASK_COMPLETED_EVENT,
+        })
+    finally:
+        main.app.dependency_overrides.pop(main.get_current_user_id)
+    assert response.status_code == 422
+    assert main._EXPRESSION_TASK_COMPLETED_EVENT not in main._ALLOWED_EVENT_TYPES
+
+
+def test_f1_completion_remains_done_in_the_achievements_response(monkeypatch):
+    import asyncio
+    start, _end = _today_window()
+    sb, ctx, day, data = _achievement_ctx(
+        [{"id": "s-1", "created_at": start}], spoken_ids=["s-1"],
+        today_msgs=[{"role": "user", "session_id": "s-1", "transcript": "I'm into music", "created_at": start}],
+        snapshots=[{"expr_id": "b1-into"}])
+    evaluate = main._eval_task
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_kst_date", lambda: day)
+    monkeypatch.setattr(main, "_resolve_daily_task_ids", lambda *_: ["A1", "F1", "A3"])
+    monkeypatch.setattr(main, "_gather_achievement_context", lambda *_: dict(ctx))
+    monkeypatch.setattr(main, "_eval_task", lambda s, u, d, t, c: evaluate(s, u, d, t, c) if t == "F1" else True)
+    monkeypatch.setattr(main, "_compute_streak", lambda *_: 1)
+    first = asyncio.run(main.get_achievements(user_id="user-1"))
+    data["profiles"][0]["english_level"] = "B2"
+    second = asyncio.run(main.get_achievements(user_id="user-1"))
+    assert first["daily_tasks"][1] == second["daily_tasks"][1]
+    assert second["daily_tasks"][1]["status"] == "completed"
+    assert second["streak_count"] == 1
+    assert data["streak_days"][-1]["qualified"] is True
+
+
+def test_f1_is_fixed_every_day_for_every_user():
+    """표현 카드가 매일 보이므로 그 Task 도 매일 있어야 한다 (추첨이면 어긋난다)."""
+    assert main._TASK_CATALOG["F1"][0] == "F"  # A~E 는 이미 다 쓰고 있다
+    for user in ("user-a", "user-b"):
+        for day in range(1, 15):
+            ids = main._select_daily_task_ids(user, f"2026-11-{day:02d}")
+            assert len(ids) == 3 and len(set(ids)) == 3
+            assert ids[:2] == ["A1", "F1"]  # 고정 2개 + 추첨 1개
+    # 추첨 슬롯은 고정분을 다시 뽑지 않는다.
+    picked = {
+        ids[2]
+        for day in range(1, 60)
+        for ids in [main._select_daily_task_ids("user-a", f"2026-11-{day % 30 + 1:02d}")]
+    }
+    assert not picked & set(main._FIXED_TASKS)
 
 
 # ── 현재 Pally 상태(current_axes) — 홈·마이페이지·다음 대화가 같은 값을 쓴다 ──
@@ -875,35 +1266,44 @@ def test_carried_over_axes_reads_the_saved_look_from_the_profile():
     assert main._carried_over_axes(sb, "user-1") is None
 
 
-def test_ending_a_conversation_saves_tags_and_look_together():
-    """태그와 모습은 같은 요청으로 저장돼 어긋나지 않는다. 지난 대화를 끝내도 마찬가지."""
+def test_ending_a_conversation_saves_tags_and_look_together(monkeypatch):
+    """태그와 모습은 같은 요청으로 저장돼 어긋나지 않는다."""
     from types import SimpleNamespace
     from unittest.mock import Mock
 
     axes = {"Formality": 54, "Energy": 41, "Intimacy": 30, "Humor": 8, "Curiosity": 22}
-    messages, profiles = Mock(), Mock()
-    messages.select.return_value = messages
-    messages.eq.return_value = messages
-    messages.not_.is_.return_value = messages
-    messages.order.return_value = messages
-    messages.limit.return_value = messages
-    messages.execute.return_value = SimpleNamespace(data=[{"axes": axes}])
-    profiles.update.return_value = profiles
-    profiles.eq.return_value = profiles
+    profiles = Mock()
+    profiles.update.return_value = profiles.eq.return_value = profiles
+    profiles.execute.return_value = SimpleNamespace(data=[{"id": "user-1"}])
     sb = Mock()
-    sb.table.side_effect = lambda name: {"messages": messages, "profiles": profiles}[name]
+    sb.table.side_effect = lambda name: {"profiles": profiles}[name]
+    monkeypatch.setattr(main, "_profile_axes", lambda *_: dict(axes))
 
-    assert main._refresh_profile_traits(sb, "user-1", "conversation-1") is True
+    assert main._refresh_profile_traits(sb, "user-1") is True
+    profiles.update.assert_called_once()
     saved = profiles.update.call_args[0][0]
     assert saved["current_axes"] == axes
     assert saved["traits"] == main._axes_to_traits(axes)
     profiles.eq.assert_called_once_with("id", "user-1")
 
-    # 발화가 없는 대화(오프너만)는 모습을 건드리지 않는다
-    profiles.update.reset_mock()
-    messages.execute.return_value = SimpleNamespace(data=[])
-    assert main._refresh_profile_traits(sb, "user-1", "conversation-2") is True
-    profiles.update.assert_not_called()
+
+def test_ending_a_conversation_without_turns_keeps_the_look(monkeypatch):
+    import asyncio
+    from fastapi import BackgroundTasks
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    opened = {"id": "c", "user_id": "u", "ended_at": None, "reopen_count": 0, "title": "t", "axes_contribution": None}
+    sb = Mock()
+    sb.rpc.return_value.execute.return_value = SimpleNamespace(data={**opened, "ended_at": "now"})
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_voice_energy_enabled", lambda: False)
+    monkeypatch.setattr(main, "_owned_session", lambda *_: opened)
+    monkeypatch.setattr(main, "_record_vote", Mock(return_value=0))
+    refresh = Mock()
+    monkeypatch.setattr(main, "_refresh_profile_traits", refresh)
+    asyncio.run(main.complete_conversation("c", BackgroundTasks(), "u", "k"))
+    refresh.assert_not_called()
 
 
 def test_profile_carries_pallys_current_look():
@@ -937,7 +1337,7 @@ def test_first_pally_axes_match_the_default_traits():
     """신규 사용자의 홈 Pally(프로필 current_axes)와 마이페이지 기본 태그는 같은 모습이어야 한다."""
     assert main._axes_to_traits(main._INITIAL_AXES) == main._DEFAULT_TRAITS
     # 프론트 DEFAULT_AXES (frontend/lib/types/character.ts)
-    assert main._INITIAL_AXES == {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+    assert main._INITIAL_AXES == {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
 
 
 def test_in_turn_order_puts_the_user_message_before_its_reply_at_the_same_time():
@@ -998,11 +1398,17 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
     from types import SimpleNamespace
 
     payload = {
-        "reaction": "Oh, you're on a diet?", "own_remark": "I skip lunch sometimes too.",
-        "new_expr": "skip lunch", "question": "What do you eat for dinner?",
+        "original_error": "I'm diet",
+        "error_reason": "The phrase is be on a diet, not be diet.",
+        "reaction": "Oh, you're on a diet?", "corrected_expr": "you're on a diet",
+        "own_remark": "I skip lunch sometimes too.",
+        "question": "What do you eat for dinner?",
     }
 
     async def ok_post(*_args, **_kwargs):
+        request = _kwargs["json"]
+        assert "new_expr" not in request["generationConfig"]["responseSchema"]["properties"]
+        assert "new_expr" not in request["system_instruction"]["parts"][0]["text"]
         return SimpleNamespace(
             status_code=200,
             json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
@@ -1016,9 +1422,84 @@ def test_turn_returns_segments_when_the_model_keeps_the_contract(monkeypatch):
 
     assert text == "Oh, you're on a diet? I skip lunch sometimes too. What do you eat for dinner?"
     assert "".join(s["text"] for s in segments) == text
+    # 주황은 고쳐준 표현만 덮는다 — reaction 앞의 "Oh, " 는 plain 이다.
     assert [s["kind"] for s in segments if s["kind"] != "plain"] == [
-        "correction", "own_remark", "new_expr", "own_remark", "question",
+        "correction", "own_remark", "question",
     ]
+    assert [s["text"] for s in segments if s["kind"] == "correction"] == ["you're on a diet"]
+
+
+def test_current_correct_utterance_keeps_segments_without_a_correction(monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    payload = {
+        "original_error": "", "error_reason": "", "corrected_expr": "",
+        "reaction": "You were just chilling?",
+        "own_remark": "I like to take it easy too.",
+        "question": "Did you relax much?",
+    }
+    post = AsyncMock(return_value=SimpleNamespace(
+        status_code=200,
+        json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
+    ))
+    monkeypatch.setattr(main.app.state, "http_client", SimpleNamespace(post=post), raising=False)
+    plain = AsyncMock()
+    monkeypatch.setattr(main, "_call_gemini_chat", plain)
+
+    text, segments = asyncio.run(main._call_gemini_chat_segments(
+        "I was just chilling.", [], "Pally", "A2", dict(main._INITIAL_AXES),
+    ))
+
+    assert text == "You were just chilling? I like to take it easy too. Did you relax much?"
+    assert "".join(s["text"] for s in segments) == text
+    assert not [s for s in segments if s["kind"] == "correction"]
+    assert [s["text"] for s in segments if s["kind"] == "own_remark"] == ["I like to take it easy too."]
+    assert not [s for s in segments if s["kind"] == "new_expr"]
+    post.assert_awaited_once()
+    plain.assert_not_awaited()
+
+
+def test_ungrounded_correction_retries_then_falls_back_without_logging_evidence(monkeypatch, caplog):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    payload = {
+        "original_error": "I'm diet",
+        "error_reason": "The phrase is be on a diet, not be diet.",
+        "reaction": "Oh, you're on a diet?", "corrected_expr": "on a diet",
+        "own_remark": "I skip lunch sometimes too.",
+        "question": "What do you eat for dinner?",
+    }
+    post = AsyncMock(return_value=SimpleNamespace(
+        status_code=200,
+        json=lambda: {"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
+    ))
+    monkeypatch.setattr(main.app.state, "http_client", SimpleNamespace(post=post), raising=False)
+    plain = AsyncMock(return_value="That sounds relaxing. Did you have fun?")
+    monkeypatch.setattr(main, "_call_gemini_chat", plain)
+    utterance = "I was just chilling."
+    history = [SimpleNamespace(role="user", content="I'm diet")]
+
+    text, segments = asyncio.run(main._call_gemini_chat_segments(
+        utterance, history, "Pally", "A2", dict(main._INITIAL_AXES),
+    ))
+
+    assert text == "That sounds relaxing. Did you have fun?"
+    assert segments is None
+    assert post.await_count == main._SEGMENT_ATTEMPTS
+    plain.assert_awaited_once_with(utterance, history, "Pally", "A2", dict(main._INITIAL_AXES))
+    assert caplog.text.count("segment reply rejected") == main._SEGMENT_ATTEMPTS
+    assert utterance not in caplog.text
+    assert payload["original_error"] not in caplog.text
+    assert payload["error_reason"] not in caplog.text
+    assert payload["reaction"] not in caplog.text
+
+
 # ── /api/metrics — 공유 토큰으로 보호된 운영 latency 조회 ────────────────────
 
 

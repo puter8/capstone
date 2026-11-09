@@ -1,7 +1,7 @@
 import { deepEqual, equal, match, notEqual } from "node:assert/strict";
 
 import { PallyApiError } from "../lib/api/contracts";
-import { NETWORK_ERROR_MESSAGE, signInErrorMessage, userFacingErrorMessage } from "../lib/api/error-messages";
+import { NETWORK_ERROR_MESSAGE, TIMEOUT_ERROR_MESSAGE, signInErrorMessage, userFacingErrorMessage } from "../lib/api/error-messages";
 
 const HANGUL = /[가-힣]/;
 
@@ -89,6 +89,35 @@ async function main() {
     deepEqual([error.status, error.code, error.message], [0, "network_error", NETWORK_ERROR_MESSAGE]);
     ok(logged.some((line) => line.includes("Failed to fetch")), "The network failure is logged");
 
+    // Every request carries a budget, so nothing can hang on a spinner forever.
+    let seenSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }) as typeof globalThis.fetch;
+    await httpPallyApi.getUsage().catch(() => undefined);
+    ok(seenSignal instanceof AbortSignal, "The request must be armed with an abort signal");
+
+    // The platform's own timeout rejection is what the client branches on, so the
+    // test uses a real one rather than a hand-made Error that merely looks like it.
+    const realTimeout: unknown = await new Promise((resolve, reject) => {
+      const signal = AbortSignal.timeout(10);
+      // Node gives AbortSignal.timeout an unref'd timer, so awaiting it alone lets
+      // the process fall out of the loop and exit silently. A ref'd timer holds it.
+      const keepAlive = setTimeout(() => reject(new Error("AbortSignal.timeout never fired")), 2000);
+      signal.addEventListener("abort", () => { clearTimeout(keepAlive); resolve(signal.reason); });
+    });
+    ok(realTimeout instanceof DOMException && realTimeout.name === "TimeoutError", "AbortSignal.timeout rejects with a TimeoutError DOMException");
+
+    // A server that takes the request and then never answers is slow, not offline.
+    // Rejecting with that same real TimeoutError beats stalling for the whole
+    // budget, which would add fifteen seconds to every CI run to prove one branch.
+    globalThis.fetch = async () => { throw realTimeout; };
+    error = await failure();
+    deepEqual([error.status, error.code, error.message], [0, "timeout", TIMEOUT_ERROR_MESSAGE]);
+    notEqual(error.message, NETWORK_ERROR_MESSAGE, "A slow server must not tell the user to check their internet");
+    ok(logged.some((line) => line.includes("API request timed out")), "The stalled path is logged so the endpoint can be identified");
+
     // A proxy answers with HTML instead of JSON.
     respond(502, "<html>Bad Gateway</html>", "text/html");
     error = await failure();
@@ -109,7 +138,7 @@ async function main() {
     await supabase.auth.stopAutoRefresh();
   }
 
-  console.log("Error message checks passed: backend codes, offline, non-JSON reply, session read failure and sign-in failure show Korean text.");
+  console.log("Error message checks passed: backend codes, offline, timed out, non-JSON reply, session read failure and sign-in failure show Korean text.");
 }
 
 function ok(condition: unknown, message?: string): asserts condition {

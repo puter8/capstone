@@ -23,7 +23,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, RedirectResponse
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Dict, Literal, Optional
 
 load_dotenv()
@@ -48,18 +48,27 @@ if BACKEND_DIR not in sys.path:
 
 from ai.analyzer import analyze_utterance
 from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
-from ai.matrix_engine import apply_ema, compute_character, describe_character
+from ai import daily_expression
+from ai.intimacy import compute_intimacy_from_access_days
+from ai.matrix_engine import conversation_mean, replay_cumulative, compute_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
-from lib import billing, kakaopay, session_feedback, voice_energy
-from ai.voice_energy import MAX_WAV_BYTES
+from lib import billing, kakaopay, session_feedback, stale_conversations, voice_energy
+from ai.voice_energy import MAX_SECONDS, MAX_WAV_BYTES, MIN_BASELINE_SECONDS
 
 
 def _voice_energy_enabled() -> bool:
     """음성 기반 Energy 축. 기본 꺼짐 — 켜면 턴마다 원음이 작업 큐에 쌓이고
     worker 가 CPU 를 쓰므로, 운영 지연·적체를 확인한 뒤에만 켠다."""
     return os.getenv("PALLY_VOICE_ENERGY_ENABLED", "false").lower() == "true"
+
+
+def _voice_baseline_required() -> bool:
+    """켜져 있으면(기본) 평소 목소리 미등록 사용자의 턴을 409 로 막는다. 등록 화면이
+    앱에 연결되기 전에는 false 로 두어, 미등록 사용자는 Energy 측정만 건너뛰고 대화한다
+    (세션 종료 시 DB 가 baseline_missing 으로 이전 Energy 를 유지)."""
+    return os.getenv("PALLY_VOICE_BASELINE_REQUIRED", "true").lower() == "true"
 
 
 class BillingAccessFilter(logging.Filter):
@@ -138,6 +147,7 @@ async def lifespan(application: FastAPI):
         task = None
         feedback_task = None
         energy_task = None
+        stale_task = None
         try:
             if os.getenv("BILLING_PROVIDER") == "kakaopay" and os.getenv("BILLING_WORKER_ENABLED") == "true":
                 task = asyncio.create_task(billing.worker(get_supabase, stop))
@@ -146,13 +156,24 @@ async def lifespan(application: FastAPI):
                 feedback_task = asyncio.create_task(
                     session_feedback.worker(get_supabase, stop, _conversation_turns),
                 )
+            if (os.getenv("PALLY_STALE_CONVERSATION_WORKER_ENABLED", "true").lower() != "false"
+                    and os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_SERVICE_ROLE_KEY")):
+                stale_task = asyncio.create_task(stale_conversations.worker(
+                    get_supabase, stop, _stale_completion(asyncio.get_running_loop()),
+                ))
             if _voice_energy_enabled():
+                # librosa/numba 는 첫 호출에서 JIT 컴파일을 한다 — 실측 7.9초.
+                # 부팅 때 한 번 돌려두지 않으면 그 시간을 온보딩에서 기준을 등록하는
+                # 첫 사용자가 고스란히 기다린다.
+                asyncio.create_task(asyncio.to_thread(voice_energy.warm_up))
                 energy_task = asyncio.create_task(voice_energy.worker(get_supabase, stop))
             yield
         finally:
             stop.set()
             if energy_task is not None:
                 await energy_task
+            if stale_task is not None:
+                await stale_task
             try:
                 if task is not None:
                     await task
@@ -164,13 +185,32 @@ async def lifespan(application: FastAPI):
                     application.state.http_client = None
 
 
-app = FastAPI(title="Pally Backend API", version="1.0.0", lifespan=lifespan)
+# Railway sets RAILWAY_ENVIRONMENT=production on the deployed service; local runs have no such variable.
+_IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") == "production"
 
-# CORS 허용 origin: 기본 "*"(개발). 프로덕션은 CORS_ALLOW_ORIGINS 에 프론트 도메인을
-# 콤마로 넣어 제한한다. 예: CORS_ALLOW_ORIGINS=https://capstone-eight-virid.vercel.app
-_cors_env = os.getenv("CORS_ALLOW_ORIGINS", "*").strip()
-_METRICS_TOKEN = os.getenv("PALLY_METRICS_TOKEN", "")
-_allow_origins = ["*"] if _cors_env == "*" else [o.strip() for o in _cors_env.split(",") if o.strip()]
+# The interactive API docs list every route; keep them for local work only.
+app = FastAPI(
+    title="Pally Backend API", version="1.0.0", lifespan=lifespan,
+    **({"docs_url": None, "redoc_url": None, "openapi_url": None} if _IS_PRODUCTION else {}),
+)
+
+
+def _cors_origins() -> list[str]:
+    """CORS 허용 origin. CORS_ALLOW_ORIGINS 가 있으면 그 값(콤마 구분, "*" 가능)을 쓴다.
+    없으면 운영은 결제 복귀용으로 이미 관리하는 BILLING_FRONTEND_ORIGINS(프론트 도메인 목록)를,
+    로컬 개발은 "*" 를 쓴다 — 운영 API 가 아무 웹사이트에서나 호출되지 않게."""
+    configured = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if configured:
+        return ["*"] if configured == "*" else [o.strip() for o in configured.split(",") if o.strip()]
+    if not _IS_PRODUCTION:
+        return ["*"]
+    frontends = [o.strip() for o in os.getenv("BILLING_FRONTEND_ORIGINS", "").split(",") if o.strip()]
+    if not frontends:
+        raise RuntimeError("Production needs CORS_ALLOW_ORIGINS or BILLING_FRONTEND_ORIGINS")
+    return frontends
+
+
+_allow_origins = _cors_origins()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allow_origins,
@@ -181,6 +221,10 @@ app.add_middleware(
 # production에서만 debug route를 숨기려면 PALLY_DEBUG_ENDPOINTS=1 을 설정한 환경에서만 등록.
 # Railway 운영 환경에는 이 변수를 두지 않아 /api/debug-keys 가 노출되지 않는다.
 _DEBUG_ENDPOINTS_ENABLED = os.getenv("PALLY_DEBUG_ENDPOINTS") == "1"
+
+# /api/metrics 는 debug 게이트가 아니라 자체 공유 토큰으로 보호한다. 미설정이면
+# 라우트 자체를 등록하지 않는다.
+_METRICS_TOKEN = os.getenv("PALLY_METRICS_TOKEN", "")
 
 # 무료 일일 turn 한도. 하드코딩하지 않고 config 로 빼서 정책 변경 시 재배포 없이 조정.
 FREE_DAILY_TURNS = int(os.getenv("FREE_DAILY_TURNS", "20"))
@@ -223,6 +267,23 @@ def _pct(values: list, p: int):
     s = sorted(values)
     k = min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1))))
     return round(s[k])
+
+
+# The largest legitimate body is the voice baseline: three 30-second WAV clips.
+_MAX_REQUEST_BYTES = MAX_WAV_BYTES * 4
+
+
+@app.middleware("http")
+async def reject_oversized_body(request: Request, call_next):
+    # Refuse huge uploads before Starlette spools them to memory/disk.
+    # Chunked uploads without Content-Length are still capped per file by read(MAX_WAV_BYTES + 1).
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > _MAX_REQUEST_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content=_error_body("payload_too_large", "요청이 너무 커요.", _request_id(request)),
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -393,55 +454,16 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 # ── Request / Response Models ────────────────────────────────────────────────
 
 
-class FeedbackRequest(BaseModel):
-    utterance: str
-    session_id: Optional[str] = None
-    current_axes: Optional[Dict[str, int]] = None  # EMA용 이전 누적 축 점수
-
-
-class FeedbackResponse(BaseModel):
-    status: str
-    axes: Dict[str, int]             # EMA 적용 후 누적 축 점수
-    character: Dict[str, int]        # 캐릭터 파라미터
-    character_labels: Dict[str, str]
-    feedback: Dict[str, str]         # correction / tone_feedback / practice_prompt
-    tts_audio: Optional[str] = None  # base64 MP3 (correction 문장 TTS)
-
-
 class TTSRequest(BaseModel):
-    text: str
+    # Bounded so one authenticated call cannot request an unbounded Google TTS bill.
+    text: str = Field(max_length=500)
     voice: Optional[str] = None
-    speaking_rate: Optional[float] = 1.0
+    speaking_rate: Optional[float] = Field(default=1.0, ge=0.5, le=2.0)
 
 
 class ChatMessage(BaseModel):
     role: str   # "user" | "pally"
     content: str
-
-
-class ChatRequest(BaseModel):
-    utterance: str                              # STT 결과 텍스트 (FE에서 /api/stt 호출 후 전달)
-    session_id: Optional[str] = None
-    current_axes: Optional[Dict[str, int]] = None
-    conversation_history: Optional[list[ChatMessage]] = None
-    character_name: Optional[str] = "Pally"
-    level: Optional[str] = "B1"                # A2 / B1 / B2 / C1
-
-
-class InlineHintKo(BaseModel):
-    hint: str        # 한국어 힌트 (교정 설명 또는 칭찬)
-    expression: str  # 올바른 영어 표현
-
-
-class ChatResponse(BaseModel):
-    status: str
-    transcript: str                            # 사용자 발화 텍스트 (echo)
-    reply: str                                 # Pally 응답 텍스트
-    tts_audio: Optional[str] = None           # base64 MP3 (Pally 응답 TTS)
-    axes: Dict[str, int]
-    character: Dict[str, int]
-    character_labels: Dict[str, str]
-    hint_ko: Optional[InlineHintKo] = None    # 인라인 한국어 힌트
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
@@ -547,85 +569,6 @@ def _join_stt_results(results: list[dict]) -> tuple[str, float]:
     return transcript, min(a.get("confidence", 1.0) for a in alts)
 
 
-@app.post("/api/stt")
-async def stt(audio: UploadFile = File(...)):
-    """
-    오디오 파일 → 텍스트 변환 (Google Cloud Speech-to-Text v1)
-
-    - FE: MediaRecorder로 녹음한 webm/opus 파일을 multipart/form-data로 전송
-    - 응답: { transcript, confidence }
-    - 제한: 동기 인식은 최대 60초. 그 이상은 longrunningrecognize 사용 필요.
-    """
-    if not GOOGLE_CLOUD_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
-
-    audio_bytes = await audio.read()
-
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Empty audio file")
-
-    # WAV 감지: RIFF 매직 바이트로 판별 (Content-Type보다 신뢰도 높음)
-    wav_parsed = _parse_wav(audio_bytes)
-    if wav_parsed:
-        pcm_bytes, sample_rate, num_channels = wav_parsed
-        encoding = "LINEAR16"
-        audio_bytes = pcm_bytes  # WAV 헤더 제거 — raw PCM만 Google STT에 전달
-        logging.info(
-            f"STT WAV detected: sample_rate={sample_rate}, channels={num_channels}, "
-            f"pcm_size={len(audio_bytes)} bytes"
-        )
-    else:
-        encoding = _detect_encoding(audio.content_type or "")
-        sample_rate = None
-        num_channels = None
-        logging.info(
-            f"STT request: content_type={audio.content_type!r}, "
-            f"size={len(audio_bytes)} bytes, encoding={encoding}"
-        )
-
-    # latest_short is optimized for <2s voice commands and returns empty for longer speech.
-    # Use latest_long for WAV/LINEAR16 (browser recordings are typically 3-30s).
-    model = "latest_long" if encoding == "LINEAR16" else "latest_short"
-    config: dict = {
-        "encoding": encoding,
-        "languageCode": "en-US",
-        "model": model,
-        "enableAutomaticPunctuation": True,
-    }
-    if encoding == "LINEAR16" and sample_rate:
-        config["sampleRateHertz"] = sample_rate
-    if encoding == "WEBM_OPUS":
-        config["sampleRateHertz"] = 48000
-    if num_channels and num_channels > 1:
-        config["audioChannelCount"] = num_channels
-
-    payload = {
-        "config": config,
-        "audio": {"content": base64.b64encode(audio_bytes).decode()},
-    }
-
-    resp = await app.state.http_client.post(
-        f"https://speech.googleapis.com/v1/speech:recognize?key={GOOGLE_CLOUD_API_KEY}",
-        json=payload,
-        timeout=30.0,
-    )
-
-    if resp.status_code != 200:
-        logging.error(
-            f"Google STT failed: status={resp.status_code}, "
-            f"content_type={audio.content_type!r}, size={len(audio_bytes)}, "
-            f"encoding={encoding}, google_response={resp.text[:500]}"
-        )
-        raise HTTPException(status_code=502, detail=f"Google STT error: {resp.text}")
-
-    results = resp.json().get("results", [])
-    if not results:
-        return {"transcript": "", "confidence": 0.0}
-
-    transcript, confidence = _join_stt_results(results)
-    return {"transcript": transcript, "confidence": confidence}
-
-
 # ── TTS — Google Cloud Text-to-Speech ────────────────────────────────────────
 
 
@@ -674,7 +617,10 @@ async def _call_google_tts(
     )
 
     if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=_format_google_tts_error(resp))
+        # Provider details (key restrictions, billing state) go to the server log only;
+        # clients get a generic message so the error cannot be used to probe our GCP setup.
+        logging.error("Google TTS failed: %s", _format_google_tts_error(resp))
+        raise HTTPException(status_code=502, detail="Text-to-speech is temporarily unavailable.")
 
     return resp.json()["audioContent"]  # base64 MP3
 
@@ -714,153 +660,6 @@ def _format_google_tts_error(resp: httpx.Response) -> dict:
         "status": error.get("status"),
         "reason": reason,
         "help": help_text,
-    }
-
-
-@app.post("/api/tts")
-async def tts(req: TTSRequest):
-    """
-    텍스트 → MP3 오디오 (Google Cloud Text-to-Speech)
-
-    - 응답: { audio_b64, voice, encoding }
-    - FE: audio_b64를 Audio() 또는 <audio> 태그로 재생
-    """
-    if not GOOGLE_CLOUD_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
-    if not req.text.strip():
-        raise HTTPException(status_code=400, detail="text is required")
-
-    voice = req.voice or DEFAULT_TTS_VOICE
-    audio_b64 = await _call_google_tts(
-        _strip_emoji(req.text),
-        voice,
-        req.speaking_rate or 1.0,
-    )
-    return {"audio_b64": audio_b64, "voice": voice, "encoding": "MP3"}
-
-
-# ── Feedback — 5축 분석 + Gemini 피드백 + TTS ────────────────────────────────
-
-_FEEDBACK_SYSTEM_PROMPT = """\
-You are Pally, a friendly English conversation tutor.
-Analyze the user's utterance and provide structured feedback.
-
-Return ONLY valid JSON with exactly these three fields:
-{
-  "correction": "A natural alternative phrasing or minor correction. If already natural, offer a slight variation.",
-  "tone_feedback": "One encouraging sentence about their tone, energy, or humor style.",
-  "practice_prompt": "One engaging follow-up question for them to practice responding to."
-}
-
-Rules:
-- Each field: 1-2 sentences max.
-- Be warm, encouraging, and specific.
-- Do NOT mention the numeric scores directly.
-"""
-
-
-async def _call_gemini_feedback(utterance: str, axes: dict) -> dict:
-    """Gemini 2.5 Flash REST API 호출 → 피드백 JSON 반환"""
-    user_prompt = (
-        f'User utterance: "{utterance}"\n'
-        f"Style analysis — Formality: {axes['Formality']}/100, "
-        f"Energy: {axes['Energy']}/100, Intimacy: {axes['Intimacy']}/100, "
-        f"Humor: {axes['Humor']}/100, Curiosity: {axes['Curiosity']}/100\n\n"
-        "Provide feedback JSON:"
-    )
-
-    payload = {
-        "system_instruction": {"parts": [{"text": _FEEDBACK_SYSTEM_PROMPT}]},
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.7,
-            "maxOutputTokens": 512,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-
-    resp = await app.state.http_client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
-        json=payload,
-        timeout=30.0,
-    )
-
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text}")
-
-    parts = resp.json()["candidates"][0]["content"]["parts"]
-    raw = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    return json.loads(raw)
-
-
-_FEEDBACK_FALLBACK = {
-    "correction": "Great attempt! Try to vary your sentence structure for more natural flow.",
-    "tone_feedback": "Your expression is coming through clearly — keep it up!",
-    "practice_prompt": "Can you try expressing the same idea in a different way?",
-}
-
-
-@app.post("/api/feedback", response_model=FeedbackResponse)
-async def feedback(req: FeedbackRequest):
-    """
-    utterance → 5축 분석 → EMA → 캐릭터 파라미터 → Gemini 피드백 → TTS
-
-    흐름:
-      1. analyze_utterance()  → raw 5축 점수
-      2. apply_ema()          → 이전 축 점수 반영 (current_axes 있을 때)
-      3. compute_character()  → 캐릭터 파라미터
-      4. Gemini 2.5 Flash     → correction / tone_feedback / practice_prompt
-      5. Google TTS           → correction 문장을 MP3로 변환 (tts_audio)
-    """
-    if not GOOGLE_AI_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY not configured")
-    if not req.utterance.strip():
-        raise HTTPException(status_code=400, detail="utterance is required")
-
-    # 1. 5축 분석
-    raw_axes = _analyze_axes(req.utterance)
-
-    # 2. EMA — 이전 누적 점수가 있을 때만 적용
-    smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
-
-    # 3. 캐릭터 파라미터
-    character = compute_character(smoothed_axes)
-    tone_label, energy_label, humor_label = describe_character(character)
-
-    # 4. Gemini 피드백 (실패 시 fallback)
-    try:
-        feedback_data = await _call_gemini_feedback(req.utterance, smoothed_axes)
-        for key in ("correction", "tone_feedback", "practice_prompt"):
-            if key not in feedback_data:
-                raise ValueError(f"Missing key: {key}")
-    except Exception as e:
-        logging.warning(f"Gemini fallback triggered: {e}")
-        feedback_data = _FEEDBACK_FALLBACK
-
-    # 5. TTS — correction 문장을 음성으로 (실패해도 피드백은 정상 반환)
-    tts_audio: Optional[str] = None
-    correction_text = feedback_data.get("correction", "")
-    if correction_text:
-        try:
-            tts_audio = await _call_google_tts(correction_text)
-        except Exception:
-            tts_audio = None
-
-    return {
-        "status": "ok",
-        "axes": smoothed_axes,
-        "character": character,
-        "character_labels": {
-            "tone": tone_label,
-            "energy": energy_label,
-            "humor": humor_label,
-        },
-        "feedback": feedback_data,
-        "tts_audio": tts_audio,
     }
 
 
@@ -968,7 +767,7 @@ async def _call_gemini_chat_segments(
 ) -> tuple:
     """Pally 응답을 색칠 가능한 조각으로 받는다. 반환: (text, segments|None).
 
-    조각은 교정(correction) / Pally 자신의 말(own_remark) / 새 표현(new_expr) /
+    조각은 교정(correction) / Pally 자신의 말(own_remark) /
     질문(question) 으로 나뉘고, 프론트가 그대로 색을 입힌다.
 
     모델이 계약을 깨면 segments 없이 기존 평문 경로로 내려간다. 조각을 추측해
@@ -1013,7 +812,7 @@ async def _call_gemini_chat_segments(
             raw = " ".join(
                 p["text"] for p in candidate["content"]["parts"] if not p.get("thought", False)
             )
-            built = reply_segments.build_reply(reply_segments.parse_payload(raw))
+            built = reply_segments.build_reply(reply_segments.parse_payload(raw), utterance)
             if built:
                 return built.text, built.segments
             logging.warning("segment reply rejected (attempt %d)", attempt)
@@ -1023,175 +822,6 @@ async def _call_gemini_chat_segments(
 
     reply = await _call_gemini_chat(utterance, history, character_name, level, axes)
     return reply, None
-
-
-_HINT_KO_SYSTEM_PROMPT = """\
-You are a Korean-speaking English tutor assistant. Given the user's English utterance and Pally's reply,
-identify whether Pally implicitly corrected a grammar or vocabulary mistake (by naturally using the correct form).
-Explain briefly in Korean, or give praise if no correction was needed.
-
-Return ONLY valid JSON:
-{
-  "hint": "한국어 설명 1-2문장. 교정이 있으면 무엇이 어떻게 교정됐는지 설명. 없으면 '자연스러운 표현이에요!'처럼 칭찬.",
-  "expression": "올바른 영어 표현 (짧은 구나 문장. 교정 없으면 사용자 표현 그대로)"
-}
-"""
-
-_HINT_KO_FALLBACK = InlineHintKo(
-    hint="잘 표현했어요! 계속 연습하면 더 자연스러워질 거예요.",
-    expression="Keep it up!",
-)
-
-
-async def _call_gemini_hint_ko(utterance: str, pally_reply: str) -> InlineHintKo:
-    """사용자 발화 + Pally 응답 → 한국어 인라인 힌트 (Gemini 2.5 Flash)"""
-    user_prompt = (
-        f'User said: "{utterance}"\n'
-        f'Pally replied: "{pally_reply}"\n\n'
-        "Provide Korean hint JSON:"
-    )
-    payload = {
-        "system_instruction": {"parts": [{"text": _HINT_KO_SYSTEM_PROMPT}]},
-        "contents": [{"parts": [{"text": user_prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.3,
-            "maxOutputTokens": 512,
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-    resp = await app.state.http_client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
-        json=payload,
-        timeout=20.0,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini hint error {resp.status_code}: {resp.text}")
-    parts = resp.json()["candidates"][0]["content"]["parts"]
-    raw = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    data = json.loads(raw)
-    return InlineHintKo(hint=data.get("hint", ""), expression=data.get("expression", ""))
-
-
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
-    """
-    utterance(텍스트) → 5축 분석 → EMA → 캐릭터 파라미터 → Gemini 대화 응답 → TTS + 한국어 힌트
-
-    흐름:
-      1. Supabase 세션 조회/생성 + 대화 이력 로드 (session_id 있을 때)
-      2. analyze_utterance()  → raw 5축 점수
-      3. apply_ema()          → EMA 평활화 (alpha=0.7)
-      4. compute_character()  → 캐릭터 파라미터
-      5. Gemini 2.5 Flash     → Pally 대화 응답 (자연스러운 교정 포함)
-      6. TTS + 한국어 힌트    → asyncio.gather()로 병렬 실행
-      7. Supabase 저장        → user + pally 메시지
-    """
-    if not GOOGLE_AI_API_KEY:
-        raise HTTPException(status_code=500, detail="GOOGLE_AI_API_KEY not configured")
-    if not req.utterance.strip():
-        raise HTTPException(status_code=400, detail="utterance is required")
-
-    # 1. Supabase 세션 & 대화 이력
-    # Phase 1C에서는 frontend가 anonymous client UUID로 session_id를 보내면
-    # 동일 세션의 이전 messages가 DB에서 로드되고 이후 요청에 conversation_history로 이어집니다.
-    character_name = req.character_name or "Pally"
-    level = req.level or "B1"
-    history: list[ChatMessage] = req.conversation_history or []
-
-    if req.session_id and _SUPABASE_ENABLED:
-        try:
-            sb = get_supabase()
-            session_res = sb.table("sessions").select("id, character_name, level").eq("id", req.session_id).execute()
-            if getattr(session_res, "error", None):
-                raise RuntimeError(getattr(session_res.error, "message", repr(session_res.error)))
-            if session_res.data:
-                character_name = session_res.data[0]["character_name"]
-                level = session_res.data[0]["level"]
-            else:
-                insert_session_res = sb.table("sessions").insert({
-                    "id": req.session_id,
-                    "character_name": character_name,
-                    "level": level,
-                }).execute()
-                if getattr(insert_session_res, "error", None):
-                    raise RuntimeError(getattr(insert_session_res.error, "message", repr(insert_session_res.error)))
-            msg_res = sb.table("messages").select("id, role, transcript, created_at").eq("session_id", req.session_id).order("created_at").execute()
-            if getattr(msg_res, "error", None):
-                raise RuntimeError(getattr(msg_res.error, "message", repr(msg_res.error)))
-            if msg_res.data:
-                history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in _in_turn_order(msg_res.data)]
-        except Exception as e:
-            logging.warning(f"Supabase session load failed: {e}")
-
-    # 2. 5축 분석
-    raw_axes = _analyze_axes(req.utterance)
-
-    # 3. EMA
-    smoothed_axes = apply_ema(req.current_axes, raw_axes) if req.current_axes else raw_axes
-
-    # 4. 캐릭터 파라미터
-    character = compute_character(smoothed_axes)
-    tone_label, energy_label, humor_label = describe_character(character)
-
-    # 5. Gemini 대화 응답
-    try:
-        reply = await _call_gemini_chat(req.utterance, history, character_name, level, smoothed_axes)
-    except Exception as e:
-        logging.warning(f"Gemini chat fallback: {e}")
-        reply = "I see! Tell me more."
-    # 답변 길이 정형화 (TTS·응답 모두 shaped 버전 사용)
-    reply = shape_reply(reply)
-
-    # 6. TTS — 이모지 제거 후 호출
-    tts_result = await asyncio.gather(
-        _call_google_tts(_strip_emoji(reply)),
-        return_exceptions=True,
-    )
-    tts_audio = tts_result[0] if not isinstance(tts_result[0], Exception) else None
-
-    # 7. Supabase 저장
-    if req.session_id and _SUPABASE_ENABLED:
-        try:
-            sb = get_supabase()
-            save_res = sb.table("messages").insert([
-                {
-                    "session_id": req.session_id,
-                    "role": "user",
-                    "transcript": req.utterance,
-                    "axes": smoothed_axes,
-                    "character": character,
-                },
-                {
-                    "session_id": req.session_id,
-                    "role": "pally",
-                    "transcript": reply,
-                    "axes": None,
-                    "character": character,
-                },
-            ]).execute()
-            if getattr(save_res, "error", None):
-                raise RuntimeError(getattr(save_res.error, "message", repr(save_res.error)))
-        except Exception as e:
-            logging.warning(f"Supabase save failed: {e}")
-
-    return {
-        "status": "ok",
-        "transcript": req.utterance,
-        "reply": reply,
-        "tts_audio": tts_audio,
-        "axes": smoothed_axes,
-        "character": character,
-        "character_labels": {
-            "tone": tone_label,
-            "energy": energy_label,
-            "humor": humor_label,
-        },
-        "hint_ko": None,
-    }
 
 
 # ── Auth — Supabase JWT 검증 ──────────────────────────────────────────────────
@@ -1248,6 +878,32 @@ def get_current_user_id(authorization: Optional[str] = Header(None)) -> str:
 def get_current_user(authorization: Optional[str] = Header(None)):
     """검증된 user 객체 반환 (id + user_metadata). 프로필 사진 등 메타데이터가 필요할 때."""
     return _verify_bearer_user(authorization)
+
+
+@app.post("/api/tts", dependencies=[Depends(get_current_user_id)])
+async def tts(req: TTSRequest):
+    """
+    텍스트 → MP3 오디오 (Google Cloud Text-to-Speech)
+
+    - 로그인 사용자만 호출할 수 있다 (유료 API 를 익명으로 쓰지 못하게).
+    - voice 는 서버 기본 음성만 허용한다 (비싼 음성을 임의로 지정하지 못하게).
+    - 응답: { audio_b64, voice, encoding }
+    - FE: audio_b64를 Audio() 또는 <audio> 태그로 재생
+    """
+    if not GOOGLE_CLOUD_API_KEY:
+        raise HTTPException(status_code=500, detail="GOOGLE_CLOUD_API_KEY not configured")
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+    if req.voice is not None and req.voice != DEFAULT_TTS_VOICE:
+        raise AppError(422, "invalid_voice", "Unsupported voice")
+
+    voice = DEFAULT_TTS_VOICE
+    audio_b64 = await _call_google_tts(
+        _strip_emoji(req.text),
+        voice,
+        req.speaking_rate or 1.0,
+    )
+    return {"audio_b64": audio_b64, "voice": voice, "encoding": "MP3"}
 
 
 # OAuth provider 별로 프사 URL 이 들어가는 메타데이터 키가 달라(구글=avatar_url/picture,
@@ -1389,21 +1045,37 @@ def _profile_to_response(row: dict, avatar_url: Optional[str] = None) -> dict:
     }
 
 
+# 기준 녹음용 질문. 자기 얘기라 대본 없이 5~15초가 자연스럽게 나오고, 답이
+# 길어지지 않는 것으로 고른다. 측정에 필요한 발화를 끌어내는 장치라 측정 쪽에
+# 둔다 — 화면의 한국어 보조 문구는 FE 카피다.
+_BASELINE_PROMPTS = [
+    "How was your day today?",
+    "What's your favorite food, and why?",
+    "What do you want to do this week?",
+]
+
+
 def _baseline_payload(row: dict | None) -> dict:
-    """등록 안 됨 / 등록됨 두 상태만 프론트에 알린다. 측정 원값은 내보내지 않는다."""
+    """등록 안 됨 / 등록됨 두 상태만 프론트에 알린다. 측정 원값은 내보내지 않는다.
+
+    prompts 와 길이 제한을 함께 준다. 화면이 질문을 하드코딩하면 문항을 바꿀 때마다
+    프론트를 배포해야 하고, 클립 수(3)·길이 규칙이 서버와 어긋날 수 있다.
+    """
+    limits = {"clips": 3, "min_seconds": int(MIN_BASELINE_SECONDS), "max_seconds": MAX_SECONDS}
     if row is None:
-        return {"status": "required", "baseline": None}
+        return {"status": "required", "baseline": None,
+                "prompts": list(_BASELINE_PROMPTS), "limits": limits}
     return {"status": "ready", "baseline": {
         "range_st": row["range_st"], "valid_clips": 3,
         "method_version": row["method"],
-    }}
+    }, "prompts": list(_BASELINE_PROMPTS), "limits": limits}
 
 
 @app.get("/api/energy/baseline")
 async def get_energy_baseline(user_id: str = Depends(get_current_user_id)):
     """기능이 꺼져 있으면 disabled. 프론트는 이때 등록 화면을 띄우지 않는다."""
     if not _voice_energy_enabled():
-        return {"status": "disabled", "baseline": None}
+        return {"status": "disabled", "baseline": None, "prompts": [], "limits": None}
     try:
         return _baseline_payload(voice_energy.get_baseline(get_supabase(), user_id))
     except Exception as exc:
@@ -1445,12 +1117,17 @@ async def register_energy_baseline(
             raise AppError(422, "invalid_audio", "같은 파일 대신 각각 녹음한 목소리 3개를 등록해 주세요.")
         clip_hashes.add(digest)
         try:
-            measured = await asyncio.to_thread(measure_wav, payload)
+            measured = await asyncio.to_thread(measure_wav, payload, require_min_duration=True)
         except Exception as exc:
             logging.error("energy baseline measurement failed: %s", type(exc).__name__)
             raise AppError(503, "service_unavailable", "목소리를 분석하지 못했어요. 다시 시도해 주세요.")
         if measured.range_st is None:
-            raise AppError(422, "invalid_audio", "각 녹음에 충분한 목소리가 담겨야 해요. 다시 녹음해 주세요.",
+            # 화면은 reason 으로 분기한다. 짧은 것과 목소리가 안 담긴 것은 사용자가
+            # 해야 할 행동이 달라서 같은 문구로 묶으면 안 된다.
+            message = ("5초 이상 편안하게 이야기한 뒤 다시 녹음해 주세요."
+                       if measured.missing_reason == "clip_too_short"
+                       else "녹음에 목소리가 충분히 담기지 않았어요. 조용한 곳에서 다시 녹음해 주세요.")
+            raise AppError(422, "invalid_audio", message,
                            {"clip_index": len(measurements) + 1, "reason": measured.missing_reason})
         measurements.append(measured)
     try:
@@ -1568,7 +1245,6 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
     """
     오디오 bytes → (transcript, confidence). turn 처리 전용 STT 어댑터 호출부.
     무음/인식실패 → ("", 0.0). Google API 비-200 → RuntimeError.
-    (기존 /api/stt 는 건드리지 않고, turn 용으로 동일 파이프라인을 별도 호출한다.)
     """
     wav_parsed = _parse_wav(audio_bytes)
     if wav_parsed:
@@ -1611,9 +1287,9 @@ async def _stt_from_bytes(audio_bytes: bytes, content_type: str) -> tuple[str, f
 
 # 첫 Pally 의 5축. 프론트 DEFAULT_AXES(lib/types/character.ts)와 같은 값이고,
 # 여기에 태그 규칙을 적용한 것이 profiles.traits 의 기본값(_DEFAULT_TRAITS,
-# 20260922000000_profiles_default_traits.sql)이다. 셋이 어긋나면 신규 사용자의
+# 20261027000000_profiles_default_traits_neutral.sql)이다. 셋이 어긋나면 신규 사용자의
 # 홈 Pally 와 마이페이지 태그가 서로 다른 모습을 말한다 (test_smoke 가 지킨다).
-_INITIAL_AXES = {"Formality": 50, "Energy": 30, "Intimacy": 20, "Humor": 10, "Curiosity": 15}
+_INITIAL_AXES = {"Formality": 50, "Energy": 50, "Intimacy": 0, "Humor": 50, "Curiosity": 50}
 
 
 def _conversation_to_response(row: dict) -> dict:
@@ -1694,26 +1370,51 @@ def _recent_session_texts(sb, user_id: str, exclude_id: str) -> list:
     return [m["transcript"] for m in (msgs.data or []) if m.get("transcript")]
 
 
-async def _generate_opener_text(axes: Dict[str, int], level: str, recent_texts: list) -> str:
-    """ai.opener 호출. 동기 함수라 to_thread 로 offload, 실패 시 1회 재시도.
+async def _generate_opener_text(
+    axes: Dict[str, int],
+    level: str,
+    recent_texts: list,
+    expression_rule: Optional[str] = None,
+) -> str:
+    """ai.opener 호출. 동기 함수라 to_thread 로 offload, 실패 시 재시도.
 
-    폴백 문구는 두지 않는다 (§6 #3). 두 번 다 실패하면 503 — Pally 가 아무 말도
+    오늘의 표현 지시가 있으면 그걸 넣고 2회 시도한 뒤, 그래도 거부되면 지시 없이
+    한 번 더 시도한다. 실측 24건에서 1회차 18, 2회차 4, 3회차 2 로 끝났고, 3회차
+    까지 간 둘은 표현 자체가 길어 레벨 단어 수에 안 들어가는 것들이었다
+    ("That said, ~", "I wouldn't go so far as to ~"). 표현 하나 때문에 Pally 가
+    입을 닫는 것보다 그 날 오프너에서만 표현을 빼는 쪽이 낫다 — 표현은 홈 카드에
+    그대로 보이고, 사용자가 직접 쓰면 F1 은 그대로 달성된다.
+
+    시도가 2 → 3 으로 늘어도 사용자가 기다리는 최악 시간은 그대로다. 시도당
+    타임아웃을 세 번 쌓으면 15초가 되는데, 대화 시작 로딩에서 그건 너무 길다.
+    그래서 사다리 전체에 기존 최악값(2회분)을 예산으로 걸고, 남은 예산만큼만
+    다음 시도에 준다. 실측 사다리 p50 은 0.78초라 보통은 예산을 쓰지도 않는다.
+
+    폴백 문구는 두지 않는다 (§6 #3). 전부 실패하면 503 — Pally 가 아무 말도
     하지 않은 채 대화가 시작되는 것보다 FE 가 재시도하게 하는 쪽이 맞다.
     로그에는 reason 과 예외 타입만 남긴다: httpx 에러 텍스트에는 키가 담긴 URL 이
     섞일 수 있다.
     """
     last: Optional[BaseException] = None
-    for attempt in (1, 2):
+    rules = [expression_rule, expression_rule, None] if expression_rule else [None, None]
+    deadline = time.monotonic() + 2 * _OPENER_TOTAL_TIMEOUT_S
+    for attempt, rule in enumerate(rules, start=1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logging.warning("opener attempt %d skipped: budget spent", attempt)
+            break
         try:
             return await asyncio.wait_for(
                 asyncio.to_thread(
-                    generate_opener, axes, level, recent_texts, _OPENER_CALL_TIMEOUT_S
+                    generate_opener, axes, level, recent_texts,
+                    _OPENER_CALL_TIMEOUT_S, expression_rule=rule,
                 ),
-                timeout=_OPENER_TOTAL_TIMEOUT_S,
+                timeout=min(_OPENER_TOTAL_TIMEOUT_S, remaining),
             )
         except OpenerRejected as exc:
             last = exc
-            logging.warning("opener attempt %d rejected: %s", attempt, exc.reason)
+            logging.warning("opener attempt %d rejected: %s (expression=%s)",
+                            attempt, exc.reason, rule is not None)
         except Exception as exc:
             last = exc
             logging.warning("opener attempt %d failed: %s", attempt, type(exc).__name__)
@@ -1722,7 +1423,18 @@ async def _generate_opener_text(axes: Dict[str, int], level: str, recent_texts: 
     ) from last
 
 
-@app.post("/api/conversations/{conversation_id}/opener", status_code=201)
+def _valid_conversation_id(conversation_id: str) -> None:
+    """HTTP 입구에서 경로의 conversation_id 형식을 검증한다. 형식이 틀린 id 를 uuid 컬럼에
+    보내면 PostgREST 오류가 503 이 되고, 503 핸들러가 전역 Supabase 클라이언트를 폐기한다.
+    사용자 입력 하나로 모든 요청이 느려지지 않도록 DB 전에 404 로 끊는다 (존재 숨김과 같은 응답)."""
+    try:
+        uuid.UUID(conversation_id)
+    except ValueError:
+        raise AppError(404, "not_found", "Conversation not found")
+
+
+@app.post("/api/conversations/{conversation_id}/opener", status_code=201,
+          dependencies=[Depends(_valid_conversation_id)])
 async def create_conversation_opener(
     conversation_id: str,
     user_id: str = Depends(get_current_user_id),
@@ -1758,12 +1470,22 @@ async def create_conversation_opener(
         raise AppError(409, "conversation_started", "Conversation already has a user turn")
     existing = (first.data or [None])[0]
 
+    # 오늘의 표현은 오프너가 들려준다. 표현을 못 읽으면 오프너는 표현 없이
+    # 만든다 — Pally 가 먼저 말을 거는 것 자체가 더 중요하다. 멱등 재호출에서도
+    # 읽는 이유는 응답의 daily_expression 이 그때도 같아야 하기 때문이다.
+    expr = None
+    try:
+        expr = _daily_expression(sb, user_id, _kst_date(), _user_level(sb, user_id))
+    except AppError as exc:
+        logging.warning("daily expression unavailable for opener: %s", exc.code)
+
     if existing:
         text = existing["transcript"]
     else:
         axes = _carried_over_axes(sb, user_id) or dict(_INITIAL_AXES)
         text = await _generate_opener_text(
-            axes, session["level"], _recent_session_texts(sb, user_id, conversation_id)
+            axes, session["level"], _recent_session_texts(sb, user_id, conversation_id),
+            expression_rule=daily_expression.opener_rule(expr) if expr else None,
         )
         try:
             sb.table("messages").insert({
@@ -1789,7 +1511,21 @@ async def create_conversation_opener(
             "code": "tts_failed",
             "message": "음성 생성에 실패했어요. 텍스트로 계속할 수 있어요.",
         })
-    return {"text": text, "audio": audio, "warnings": warnings}
+    return {
+        "text": text,
+        "audio": audio,
+        "warnings": warnings,
+        # 이 오프너가 오늘의 표현을 실제로 들려줬는지. 클라이언트가 추측할 수
+        # 없는 값이다 — 사다리 3회차까지 가면 표현이 안 들어가는 날이 있다
+        # (실측 38건 중 4건). 채팅 화면이 "이번엔 써볼 차례" 같은 안내를 띄울
+        # 시점을 고를 때 쓴다. null 은 표현을 못 읽었다는 뜻.
+        "daily_expression": None if expr is None else {
+            "id": expr.id,
+            "text": expr.text,
+            "meaning_ko": expr.meaning_ko,
+            "spoken": daily_expression.matches(expr, text),
+        },
+    }
 
 
 def _paired_reply(sb, session_id: str, user_created_at: str) -> tuple:
@@ -1948,6 +1684,14 @@ async def record_activity_event(
         raise AppError(422, "validation_error", f"event_type must be one of {sorted(_ALLOWED_EVENT_TYPES)}")
     if not (req.event_id or "").strip():
         raise AppError(422, "validation_error", "event_id is required")
+    # Both columns are uuid: a malformed value would otherwise surface as a 503.
+    for field, value in (("event_id", req.event_id), ("feedback_item_id", req.feedback_item_id)):
+        if value is None:
+            continue
+        try:
+            uuid.UUID(value)
+        except ValueError:
+            raise AppError(422, "validation_error", f"{field} must be a UUID")
 
     if req.occurred_at:
         try:
@@ -2013,7 +1757,8 @@ def _replayed_turn(sb, conversation_id: str, u: dict) -> dict:
     }
 
 
-@app.post("/api/conversations/{conversation_id}/turns", status_code=201)
+@app.post("/api/conversations/{conversation_id}/turns", status_code=201,
+          dependencies=[Depends(_valid_conversation_id)])
 async def create_turn(
     conversation_id: str,
     request: Request,
@@ -2037,7 +1782,7 @@ async def create_turn(
 
     # 1. conversation 소유권 (타인 소유는 존재 숨김 → 404)
     try:
-        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count").eq("id", conversation_id).execute()
+        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution").eq("id", conversation_id).execute()
     except Exception as e:
         logging.error(f"turn session read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read conversation")
@@ -2057,8 +1802,11 @@ async def create_turn(
         return _replayed_turn(sb, conversation_id, dup.data[0])
 
     # 3. 오디오
-    # 음성 Energy 를 켜면 원음이 작업 입력으로 잠시 저장되므로 크기를 제한한다.
-    audio_bytes = await audio.read(MAX_WAV_BYTES + 1) if _voice_energy_enabled() else await audio.read()
+    # 클라이언트는 최대 30초 16kHz 모노 WAV 를 보낸다. 그보다 큰 업로드는 메모리·STT 비용만
+    # 쓰므로 상한까지만 읽고 거절한다 (음성 Energy 저장 여부와 무관하게 항상).
+    audio_bytes = await audio.read(MAX_WAV_BYTES + 1)
+    if len(audio_bytes) > MAX_WAV_BYTES:
+        raise AppError(413, "audio_too_large", "녹음이 너무 길어요. 30초 이내로 말해 주세요.")
     if not audio_bytes:
         raise AppError(400, "invalid_audio", "Empty audio file")
     energy_input = None
@@ -2069,12 +1817,13 @@ async def create_turn(
             logging.error("energy baseline read failed: %s", type(exc).__name__)
             raise AppError(503, "persistence_failed", "Failed to load voice baseline")
         # 개인 기준이 없으면 억양 폭 변화를 잴 수 없다 — 추측해서 점수를 내지 않는다.
-        if registered_baseline is None:
+        if registered_baseline is None and _voice_baseline_required():
             raise AppError(409, "energy_baseline_required", "대화를 시작하기 전에 평소 목소리 3개를 등록해 주세요.")
-        try:
-            energy_input = voice_energy.pending_audio(audio_bytes)
-        except ValueError:
-            raise AppError(422, "invalid_audio", "30초 이하의 WAV 녹음이 필요해요.")
+        if registered_baseline is not None:
+            try:
+                energy_input = voice_energy.pending_audio(audio_bytes)
+            except ValueError:
+                raise AppError(422, "invalid_audio", "30초 이하의 WAV 녹음이 필요해요.")
 
     # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
     #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
@@ -2099,31 +1848,42 @@ async def create_turn(
 
     # 5. 이전 이력 + 누적 axes 로드
     try:
-        prior = sb.table("messages").select("id, role, transcript, axes, created_at").eq("session_id", conversation_id).order("created_at").execute()
-    except Exception as e:
-        logging.error(f"turn history read failed: {e}")
+        prior = _all_rows(
+            lambda a, b: (sb.table("messages").select("id, role, transcript, axes, raw_axes, created_at")
+                          .eq("session_id", conversation_id).order("created_at").order("id")
+                          .range(a, b).execute()),
+            "Failed to load history")
+    except AppError:
         _release_turn(sb, user_id)
-        raise AppError(503, "persistence_failed", "Failed to load history")
+        raise
     # The history sent to the AI must alternate user→reply; see _in_turn_order.
-    prior_rows = _in_turn_order(prior.data or [])
+    prior_rows = _in_turn_order(prior)
     history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
-    current_axes = None
-    for m in reversed(prior_rows):
-        if m["role"] == "user" and m.get("axes"):
-            current_axes = m["axes"]
-            break
-    # 이 대화의 첫 발화면 직전에 끝낸 대화의 최종 5축에서 이어간다(대화 간 EMA 연결).
-    # 새 대화마다 백지에서 시작하면 "대화할수록 닮아간다"가 대화 사이에서 끊긴다.
-    if current_axes is None:
-        try:
-            current_axes = _carried_over_axes(sb, user_id)
-        except AppError:
-            _release_turn(sb, user_id)
-            raise
-
-    # 6. 5축 → EMA → character (분석 어댑터: rule|ml|hybrid, 기본 rule)
-    raw_axes = _analyze_axes(transcript)
-    smoothed = apply_ema(current_axes, raw_axes) if current_axes else raw_axes
+    # 6. 5축 → 누적 → character (분석 어댑터: rule|ml|hybrid|researched, 기본 rule)
+    # 앞선 발화는 저장된 원점수를 쓰고, 원점수 저장 전에 남긴 발화만 다시 분석한다.
+    try:
+        raw_axes = _analyze_axes(transcript)
+        earlier = [m.get("raw_axes") or _analyze_axes(m["transcript"])
+                   for m in prior_rows if m["role"] == "user" and m.get("transcript")]
+    except Exception:
+        logging.exception("turn axis analysis failed")
+        _release_turn(sb, user_id)
+        raise AppError(502, "analysis_failed", "Failed to analyze the speech style")
+    # 닮아가는 Pally: 끝낸 대화들의 표에 이번 대화의 표(지금까지 발화 평균)를 제자리에 넣어
+    # 다시 계산한다(_cumulative_state). 친밀도는 접속일 수로 덮는다.
+    previous_vote = session.get("axes_contribution")
+    try:
+        smoothed = _cumulative_state(sb, user_id, (
+            conversation_id, conversation_mean(earlier + [raw_axes]),
+            previous_vote["first_completed_at"] if previous_vote else None))
+        smoothed["Intimacy"] = _intimacy_from_access_days(sb, user_id)
+    except AppError:
+        _release_turn(sb, user_id)
+        raise
+    except Exception:
+        logging.exception("cumulative state failed")
+        _release_turn(sb, user_id)
+        raise AppError(503, "persistence_failed", "Failed to load Pally state")
     if _voice_energy_enabled():
         # 음성 Energy 는 세션 종료 시 확정된다. 턴 중에는 직전 확정값을 유지해,
         # 아직 측정되지 않은 값이 텍스트 EMA 로 흔들리지 않게 한다.
@@ -2138,6 +1898,10 @@ async def create_turn(
 
     # 7. Gemini 답변 (기존 함수 호출; 실패 시 silent fallback 없이 명시적 실패) — latency 측정
     #    segments 는 색칠용 조각. 모델이 계약을 깨면 None 이고, 그때는 평문으로 보인다.
+    #    오늘의 표현은 여기서 주입하지 않는다 — 오프너가 들려준다. 턴 중간에 끼워
+    #    넣으면 표현 등장률은 7/8 로 높았지만 맥락과 어긋났다 ("음악 매일 들어요"
+    #    에 "It depends on my mood."). 오프너는 주제를 여는 발화라 표현을 자연스럽게
+    #    담을 수 있다.
     gemini_t0 = time.perf_counter()
     try:
         reply, segments = await _call_gemini_chat_segments(
@@ -2188,6 +1952,7 @@ async def create_turn(
                 "role": "user",
                 "transcript": transcript,
                 "axes": smoothed,
+                "raw_axes": raw_axes,
                 "character": character,
                 "idempotency_key": idem_key,
                 "feedback": None,
@@ -2215,7 +1980,8 @@ async def create_turn(
             _release_turn(sb, user_id)
             try:
                 ex = sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute()
-            except Exception:
+            except Exception as reread_error:
+                logging.error("duplicate turn reread failed: %s", type(reread_error).__name__)
                 ex = None
             if ex and ex.data:
                 return _replayed_turn(sb, conversation_id, ex.data[0])
@@ -2433,8 +2199,8 @@ _TRAIT_TIERS = (
 
 # 신규 가입자 기본 태그이자 데이터 삭제 후 되돌릴 값. 프론트가 신규 사용자에게
 # 보여주는 기본 Pally(DEFAULT_AXES)에 위 구간 규칙을 적용한 결과와 같아야 한다
-# (supabase/migrations/20260922000000_profiles_default_traits.sql 의 기본값).
-_DEFAULT_TRAITS = ["acquaint", "serious", "calm", "indifferent", "casual"]
+# (supabase/migrations/20261027000000_profiles_default_traits_neutral.sql 의 기본값).
+_DEFAULT_TRAITS = ["acquaint", "funny", "lively", "curious", "casual"]
 
 
 def _axis_tier(value: float) -> int:
@@ -2449,14 +2215,123 @@ def _axes_to_traits(axes: dict) -> list:
     return [labels[_axis_tier(axes[axis])] for axis, labels in _TRAIT_TIERS]
 
 
+def _all_rows(fetch, message: str) -> list:
+    """PostgREST 는 한 번에 최대 1000행만 돌려준다 — 끝까지 나눠 읽는다. fetch(start, end) 는 실행된 결과."""
+    rows, start, page = [], 0, 1000
+    while True:
+        try:
+            res = fetch(start, start + page - 1)
+        except Exception as e:
+            logging.error(f"{message}: {e}")
+            raise AppError(503, "persistence_failed", message)
+        if res.data is None:
+            raise AppError(503, "persistence_failed", message)
+        rows += res.data
+        if len(res.data) < page:
+            return rows
+        start += page
+
+
+def _cumulative_state(sb, user_id: str, current: Optional[tuple] = None) -> dict:
+    """닮아가는 Pally: 끝낸 대화의 표(sessions.axes_contribution)를 처음 끝낸 순서대로
+    다시 계산한 5축. 표가 없는 끝낸 대화(발화 없음)도 순서(누적 가중치 α 의 n)에는 든다.
+
+    current = (진행 중인 대화 id, 지금까지의 표, 처음 끝낸 시각 | None). 다시 연 대화는 자기
+    자리에서 표만 바뀌고, 처음 하는 대화는 맨 뒤에 놓인다 — 같은 대화가 두 번 반영되지 않는다.
+    """
+    rows = _all_rows(
+        lambda a, b: (sb.table("sessions").select("id, ended_at, axes_contribution")
+                      .eq("user_id", user_id).order("id").range(a, b).execute()),
+        "Failed to load conversation history")
+    # 한 번이라도 끝낸 대화: 지금 끝나 있거나, 다시 열면서 처음 끝낸 시각을 남긴 대화.
+    # 다시 연 다른 대화의 표도 그 대화가 끝날 때까지 그대로 센다.
+    votes = [(_vote_time(r), r["axes_contribution"]["mean"] if r["axes_contribution"] else None)
+             for r in rows if _was_completed(r) and (current is None or r["id"] != current[0])]
+    if current is not None:
+        _, mean, first_completed_at = current
+        votes.append((datetime.fromisoformat(first_completed_at) if first_completed_at
+                      else datetime.max.replace(tzinfo=timezone.utc), mean))
+    votes.sort(key=lambda v: v[0])
+    state, _ = replay_cumulative(_INITIAL_AXES, [mean for _, mean in votes])
+    return state
+
+
+def _was_completed(row: dict) -> bool:
+    return bool(row["ended_at"] or (row["axes_contribution"] and row["axes_contribution"]["first_completed_at"]))
+
+
+def _vote_time(row: dict) -> datetime:
+    # 다시 연 적 없는 대화는 DB 가 찍은 종료 시각이 곧 처음 끝낸 시각이다.
+    contribution = row["axes_contribution"]
+    first = contribution["first_completed_at"] if contribution else None
+    return datetime.fromisoformat(first or row["ended_at"])
+
+
+def _record_vote(sb, user_id: str, conversation_id: str, previous: Optional[dict]) -> int:
+    """이 대화의 표(발화 원점수 평균)를 기록하고 발화 수를 돌려준다. 종료 RPC 전에 부른다 —
+    실패하면 대화가 끝나지 않으므로 /complete 재시도로 그대로 복구된다. 처음 끝낸 시각은
+    종료 RPC 가 찍는 ended_at 을 쓰고, 다시 열 때 그 값을 first_completed_at 으로 옮긴다."""
+    msgs = _all_rows(
+        lambda a, b: (sb.table("messages").select("id, transcript, raw_axes")
+                      .eq("session_id", conversation_id).eq("role", "user")
+                      .order("created_at").order("id").range(a, b).execute()),
+        "Failed to load conversation turns")
+    try:
+        # 원점수를 저장하기 전에 남긴 발화만 다시 분석한다.
+        turns = [m["raw_axes"] or _analyze_axes(m["transcript"]) for m in msgs if m["transcript"]]
+    except Exception:
+        logging.exception("vote axis analysis failed")
+        raise AppError(502, "analysis_failed", "Failed to analyze the speech style")
+    vote = {"mean": conversation_mean(turns) if turns else None, "turns": len(turns),
+            "first_completed_at": previous["first_completed_at"] if previous else None}
+    try:
+        res = (sb.table("sessions").update({"axes_contribution": vote})
+               .eq("id", conversation_id).eq("user_id", user_id).execute())
+    except Exception as e:
+        logging.error(f"conversation vote write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to record the conversation")
+    if not res.data:
+        logging.error("conversation vote write matched no row")
+        raise AppError(503, "persistence_failed", "Failed to record the conversation")
+    return len(turns)
+
+
+def _profile_axes(sb, user_id: str) -> dict:
+    """홈 Pally·마이페이지 태그·오프너가 쓰는 현재 모습 — 턴과 같은 규칙으로 계산한다:
+    표 누적 + 접속일 친밀도 + (음성 Energy 를 켜면) 마지막 확정 Energy."""
+    axes = _cumulative_state(sb, user_id)
+    axes["Intimacy"] = _intimacy_from_access_days(sb, user_id)
+    if _voice_energy_enabled():
+        try:
+            snapshot = voice_energy.latest_snapshot(sb, user_id)
+        except Exception as e:
+            logging.error(f"voice energy snapshot read failed: {e}")
+            raise AppError(503, "persistence_failed", "Failed to load voice energy state")
+        axes["Energy"] = snapshot["current_axes"]["Energy"] if snapshot else 50
+    return axes
+
+
+def _intimacy_from_access_days(sb, user_id: str) -> int:
+    """친밀도 = 앱에 접속한 날짜 수(KST 하루 1번, 2026-10-15 확정).
+
+    홈이 열릴 때마다 쌓이는 app_session_started 를 날짜로 묶어 새로고침이 점수를
+    부풀리지 않게 한다. 서버가 받은 시각(received_at)을 기준으로 센다.
+    """
+    rows = _all_rows(
+        lambda a, b: (sb.table("activity_events").select("received_at").eq("user_id", user_id)
+                      .eq("event_type", "app_session_started").order("received_at")
+                      .range(a, b).execute()),
+        "Failed to load account activity")
+    days = {datetime.fromisoformat(r["received_at"]).astimezone(_KST).date() for r in rows}
+    return compute_intimacy_from_access_days(len(days))
+
+
 def _carried_over_axes(sb, user_id: str) -> Optional[dict]:
     """Pally 의 현재 모습 = 가장 최근에 끝낸 대화의 최종 5축 (profiles.current_axes).
 
-    홈이 그리는 Pally, 마이페이지 태그, 다음 대화의 EMA 출발점이 모두 이 값을 쓴다 —
-    기준이 하나라 세 화면이 어긋나지 않는다. 대화를 끝낼 때 저장하므로(태그와 같은
-    시점, _refresh_profile_traits) 지난 대화를 이어 하는 동안에도 값이 바뀌지 않는다.
-    예전처럼 끝난 대화에서 매번 다시 계산하면, 방금 끝낸 대화를 이어 하는 순간 그
-    대화가 "끝난 대화"에서 빠져 Pally 가 이전 대화의 모습으로 바뀐다.
+    홈이 그리는 Pally, 마이페이지 태그, 새 대화의 오프너가 이 값을 쓴다. 대화를 끝낼 때
+    표에서 다시 계산해 저장한 캐시다(_refresh_profile_traits). 턴은 이 캐시 대신
+    _cumulative_state 로 매번 다시 계산한다 — 다시 연 대화가 자기 표를 두 번 쓰지 않게.
 
     말을 한 대화를 끝낸 적이 없으면 None (첫 발화 원점수로 시작).
     """
@@ -2475,7 +2350,8 @@ async def delete_conversation_history(user_id: str = Depends(get_current_user_id
     되돌릴 수 없다. 확인 절차는 클라이언트가 담당한다.
     - 지움: sessions (messages 는 FK ON DELETE CASCADE 로 함께 삭제), 성향 태그는 기본값 복원,
       저장된 Pally 모습(current_axes)은 비운다 → 홈 Pally 도 첫 모습으로 돌아간다.
-    - 유지: usage_daily, streak_days, activity_events, daily_task_snapshots, subscriptions.
+    - 유지: usage_daily, streak_days, activity_events, daily_task_snapshots,
+      daily_expression_snapshots, subscriptions.
       특히 usage_daily 를 지우면 대화 기록 삭제로 무료 한도를 초기화할 수 있어 지우지 않는다.
     """
     sb = get_supabase()
@@ -2546,7 +2422,7 @@ async def list_conversations(
     return {"items": items, "next_cursor": next_cursor}
 
 
-@app.get("/api/conversations/{conversation_id}")
+@app.get("/api/conversations/{conversation_id}", dependencies=[Depends(_valid_conversation_id)])
 async def get_conversation(
     conversation_id: str,
     user_id: str = Depends(get_current_user_id),
@@ -2646,7 +2522,7 @@ def _turn_detail(user_msg: Optional[dict], pally_msg: Optional[dict], seq: int) 
     }
 
 
-@app.post("/api/conversations/{conversation_id}/complete")
+@app.post("/api/conversations/{conversation_id}/complete", dependencies=[Depends(_valid_conversation_id)])
 async def complete_conversation(
     conversation_id: str,
     background_tasks: BackgroundTasks,
@@ -2660,9 +2536,44 @@ async def complete_conversation(
     """
     sb = get_supabase()
     session = _owned_session(sb, conversation_id, user_id)
+    session, warnings = _complete_session(sb, session, user_id)
+
+    # The RPC marks exact saved user IDs atomically with session closure.
+    # The synchronous task runs in Starlette's thread pool after the response;
+    # the worker can rediscover these marks even after a restart or reopening.
+    background_tasks.add_task(
+        session_feedback.process_session, get_supabase, conversation_id,
+        _conversation_turns,
+    )
+
+    if not session.get("title"):
+        background_tasks.add_task(_assign_conversation_title, conversation_id)
+
+    return {"conversation": {
+        "id": session["id"],
+        "status": "completed",
+        "completed_at": session.get("ended_at"),
+    }, "warnings": warnings,
+        # 음성 Energy 를 켤 때만 확정된 5축과 측정 상태를 함께 공개한다.
+        **({"current_axes": session["current_axes"], "energy": session["energy"]}
+           if _voice_energy_enabled() else {})}
+
+
+def _complete_session(sb, session: dict, user_id: str) -> tuple[dict, list]:
+    """대화 종료의 공통 본문 — 사용자 종료(/complete)와 방치된 대화 자동 종료가 같이 쓴다.
+
+    표 기록 → 종료 RPC(피드백 대상 표시, Energy 확정) → 표 재기록 → 성향 갱신 순서다.
+    종료된 세션 행과 화면 경고를 돌려주고, 피드백·제목 생성은 호출자가 예약한다.
+    """
+    conversation_id = session["id"]
     warnings: list = []
 
     was_active = not session.get("ended_at")
+    # 닫기 전에 표를 남긴다 — 실패하면 닫지 않으므로 재시도로 복구된다. 예전에 표 없이
+    # 끝난 대화는 다시 끝낼 때 채운다.
+    needs_vote = was_active or session.get("axes_contribution") is None
+    if needs_vote:
+        _record_vote(sb, user_id, conversation_id, session.get("axes_contribution"))
     try:
         # 음성 Energy 를 켜면 종료와 Energy 확정을 한 트랜잭션에서 처리하는 RPC 를 쓴다.
         rpc_name = "complete_conversation_with_energy" if _voice_energy_enabled() else "complete_conversation_with_feedback"
@@ -2697,60 +2608,65 @@ async def complete_conversation(
     if _voice_energy_enabled() and session.get("energy", {}).get("status") != "ready":
         warnings.append({"code": "energy_unavailable",
                          "message": "음성 정보가 부족하거나 분석이 끝나지 않아 이번 대화의 에너지는 갱신하지 않았어요."})
-    if was_active:
-        if not _refresh_profile_traits(sb, user_id, conversation_id):
+    turn_count = 0
+    if needs_vote:
+        # 닫힌 대화에는 턴이 더 들어오지 않는다 — 닫기 직전에 저장된 턴까지 담아 다시 기록한다.
+        # 실패해도 닫기 전 표가 남아 있으니 종료는 그대로 두고 경고만 준다.
+        try:
+            turn_count = _record_vote(sb, user_id, conversation_id, session.get("axes_contribution"))
+        except AppError:
             warnings.append({"code": "traits_update_failed",
                              "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
-
-    # The RPC marks exact saved user IDs atomically with session closure.
-    # The synchronous task runs in Starlette's thread pool after the response;
-    # the worker can rediscover these marks even after a restart or reopening.
-    background_tasks.add_task(
-        session_feedback.process_session, get_supabase, conversation_id,
-        _conversation_turns,
-    )
-
-    if not session.get("title"):
-        background_tasks.add_task(_assign_conversation_title, conversation_id)
-
-    return {"conversation": {
-        "id": session["id"],
-        "status": "completed",
-        "completed_at": session.get("ended_at"),
-    }, "warnings": warnings,
-        # 음성 Energy 를 켤 때만 확정된 5축과 측정 상태를 함께 공개한다.
-        **({"current_axes": session["current_axes"], "energy": session["energy"]}
-           if _voice_energy_enabled() else {})}
+    # 발화가 없는 대화는 모습을 바꾸지 않는다.
+    if turn_count:
+        if not _refresh_profile_traits(sb, user_id):
+            warnings.append({"code": "traits_update_failed",
+                             "message": "성향 태그를 갱신하지 못했어요. 다음 대화 종료 때 다시 반영돼요."})
+    return session, warnings
 
 
-def _refresh_profile_traits(sb, user_id: str, conversation_id: str) -> bool:
-    """방금 끝낸 대화의 최종 5축으로 마이페이지 성향 태그와 Pally 의 현재 모습을 갱신한다.
+def _stale_completion(loop: asyncio.AbstractEventLoop):
+    """방치된 대화 자동 종료용 콜백. 워커 스레드에서 /complete 와 같은 본문을 실행하고,
+    피드백은 같은 스레드에서, 제목(async, 공유 HTTP 클라이언트 사용)은 메인 루프에서 만든다."""
+    def complete(sb, session: dict, user_id: str) -> None:
+        closed, _warnings = _complete_session(sb, session, user_id)
+        session_feedback.process_session(get_supabase, closed["id"], _conversation_turns)
+        if not closed.get("title"):
+            asyncio.run_coroutine_threadsafe(_assign_conversation_title(closed["id"]), loop)
+    return complete
 
-    대화 간 EMA 가 이어지므로 이 값이 곧 지금까지의 누적 상태다. 태그와 모습은 같은
-    요청으로 함께 저장해 서로 어긋나지 않는다. 발화가 없는 대화는 갱신하지 않는다.
+
+def _refresh_profile_traits(sb, user_id: str) -> bool:
+    """누적을 표에서 다시 계산해 마이페이지 성향 태그와 Pally 의 현재 모습
+    (profiles.current_axes, 캐시)을 같은 요청으로 갱신한다.
+
     대화 종료 자체는 이미 성공했으므로 실패해도 종료를 되돌리지 않고 False 를 돌려
-    응답 warnings 로 알린다(에러 로그는 남긴다).
+    응답 warnings 로 알린다(에러 로그는 남긴다). 표는 남아 있으므로 다음 종료 때 바로잡힌다.
     """
     try:
-        msgs = (sb.table("messages").select("axes").eq("session_id", conversation_id)
-                .eq("role", "user").not_.is_("axes", "null")
-                .order("created_at", desc=True).limit(1).execute())
-        if not msgs.data:
-            return True
-        axes = msgs.data[0]["axes"]
-        if _voice_energy_enabled():
-            # 종료 시 확정된 Energy 가 포함된 축이 Pally 의 현재 모습이다.
-            axes = _session_display_axes(sb, {"id": conversation_id}, msgs.data)
-        sb.table("profiles").update({
-            "traits": _axes_to_traits(axes), "current_axes": axes, "updated_at": _now_iso(),
-        }).eq("id", user_id).execute()
+        axes = _profile_axes(sb, user_id)
+        # 동시에 끝낸 다른 대화가 더 오래된 표로 계산한 값을 나중에 쓸 수 있다 — 쓰고 나서
+        # 다시 계산해 같을 때까지 반복한다. 마지막으로 확인한 쪽이 모든 표를 본다.
+        for _ in range(3):
+            res = sb.table("profiles").update({
+                "traits": _axes_to_traits(axes), "current_axes": axes, "updated_at": _now_iso(),
+            }).eq("id", user_id).execute()
+            if not res.data:
+                raise RuntimeError("profile update matched no row")
+            # ponytail: 3번 안에 같아지지 않으면 False(경고)로 끝난다. 사용자별 잠금이 필요할 만큼
+            # 동시 종료가 잦아지면 DB 함수로 옮긴다.
+            latest = _profile_axes(sb, user_id)
+            if latest == axes:
+                return True
+            axes = latest
     except Exception as e:
         logging.error(f"profile traits refresh failed: {e}")
         return False
-    return True
+    logging.error("profile traits refresh did not settle after 3 writes")
+    return False
 
 
-@app.post("/api/conversations/{conversation_id}/reopen")
+@app.post("/api/conversations/{conversation_id}/reopen", dependencies=[Depends(_valid_conversation_id)])
 async def reopen_conversation(
     conversation_id: str,
     user_id: str = Depends(get_current_user_id),
@@ -2764,10 +2680,14 @@ async def reopen_conversation(
         raise AppError(409, "conversation_already_active", "Conversation is already active")
 
     try:
+        vote = session.get("axes_contribution")
         res = sb.table("sessions").update({
             "ended_at": None,
             "reopened_at": _now_iso(),
             "reopen_count": (session.get("reopen_count") or 0) + 1,
+            # 지워지는 종료 시각을 표의 자리(처음 끝낸 시각)로 남긴다.
+            "axes_contribution": ({**vote, "first_completed_at": vote["first_completed_at"] or session["ended_at"]}
+                                  if vote else {"mean": None, "turns": 0, "first_completed_at": session["ended_at"]}),
         }).eq("id", conversation_id).eq("user_id", user_id).execute()
     except Exception as e:
         logging.error(f"reopen_conversation failed: {e}")
@@ -2789,6 +2709,169 @@ async def reopen_conversation(
 # Streak = 그날 3개 모두 완료한 날의 연속 수. 완료 판정은 서버 계산(클라이언트 못 씀).
 # 30개 Task 전부 서버에서 판정: 오늘 범위(A/B/C/D + E6)와 교차일/주간/추세(A5 reopen,
 # D1 톤변화, E1 어제자격, E2/E3 주간, E4 Intimacy 상승, E5 문장길이 추세)까지 포함.
+
+# ── 오늘의 표현 (daily expression) ───────────────────────────────────────────
+
+_EXPRESSION_TASK_COMPLETED_EVENT = "daily_expression_task_completed"
+
+
+def _expression_completion_id(user_id: str, date_kst: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"pally:{user_id}:{date_kst}:expression-task-completed"))
+
+
+def _expression_task_completed_at(sb, user_id: str, date_kst: str) -> Optional[str]:
+    try:
+        rows = (sb.table("activity_events").select("received_at")
+                .eq("user_id", user_id).eq("event_id", _expression_completion_id(user_id, date_kst))
+                .eq("event_type", _EXPRESSION_TASK_COMPLETED_EVENT).limit(1).execute())
+    except Exception as e:
+        logging.error(f"expression task completion read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load expression task completion")
+    return rows.data[0]["received_at"] if rows.data else None
+
+
+def _record_expression_task_completion(sb, user_id: str, date_kst: str) -> str:
+    completed_at = _now_iso()
+    try:
+        # This event type is server-only. The public event route cannot forge it
+        # and insert-or-ignore there cannot overwrite this daily completion.
+        sb.table("activity_events").upsert({
+            "user_id": user_id,
+            "event_id": _expression_completion_id(user_id, date_kst),
+            "event_type": _EXPRESSION_TASK_COMPLETED_EVENT,
+            "received_at": completed_at,
+        }, on_conflict="user_id,event_id").execute()
+    except Exception as e:
+        logging.error(f"expression task completion write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to persist expression task completion")
+    return completed_at
+
+
+def _preserve_expression_task_completion(sb, user_id: str, date_kst: str, expr) -> None:
+    if _expression_task_completed_at(sb, user_id, date_kst):
+        return
+    user_msgs, _pally_msgs = _today_messages_by_role(sb, user_id, date_kst)
+    if _spoke_daily_expression(expr, user_msgs):
+        _record_expression_task_completion(sb, user_id, date_kst)
+
+
+def _user_level(sb, user_id: str) -> str:
+    """profiles.english_level. 프로필이 없으면 B1 (create_conversation 과 동일)."""
+    try:
+        prof = sb.table("profiles").select("english_level").eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"english_level read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read profile")
+    return prof.data[0]["english_level"] if prof.data else "B1"
+
+
+def _daily_expression(sb, user_id: str, date_kst: str, level: str):
+    """Keep the day's expression stable within a level; re-pick on level change."""
+    effective_level = daily_expression.for_level(level)[0].level
+    try:
+        snap = (
+            sb.table("daily_expression_snapshots").select("expr_id")
+            .eq("user_id", user_id).eq("date_kst", date_kst).execute()
+        )
+    except Exception as e:
+        logging.error(f"daily_expression_snapshots read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load today's expression")
+    if snap.data:
+        expr = daily_expression.by_id(snap.data[0]["expr_id"])
+        if expr and expr.level == effective_level:
+            return expr
+        # 카탈로그에서 빠진 id. 조용히 넘기면 화면에 표현이 사라지므로 다시 뽑아
+        # 덮어쓰고, 왜 바뀌었는지 로그에 남긴다.
+        if expr:
+            logging.info("daily expression level changed from %s to %s; re-picking", expr.level, effective_level)
+            # Capture a successful use before replacing the old assignment, even
+            # when the learner never opened achievements after speaking.
+            _preserve_expression_task_completion(sb, user_id, date_kst, expr)
+        else:
+            logging.warning(
+                "daily expression %s is no longer in the catalog; re-picking",
+                snap.data[0]["expr_id"],
+            )
+
+    expr = daily_expression.pick_for_day(user_id, date_kst, level)
+    try:
+        sb.table("daily_expression_snapshots").upsert(
+            {"user_id": user_id, "date_kst": date_kst, "expr_id": expr.id},
+            on_conflict="user_id,date_kst",
+        ).execute()
+    except Exception as e:
+        logging.error(f"daily_expression_snapshots write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to persist today's expression")
+    return expr
+
+
+def _spoke_daily_expression(expr, user_msgs: list) -> bool:
+    """오늘 사용자가 그 표현을 썼는지. 판정 기준은 ai/daily_expression.matches."""
+    return any(daily_expression.matches(expr, m.get("transcript") or "") for m in user_msgs)
+
+
+def _today_messages_by_role(sb, user_id: str, date_kst: str) -> tuple:
+    """오늘(KST) 발화들을 (사용자, Pally) 로 나눠 반환. 오늘의 표현 판정용.
+
+    Pally 쪽까지 읽는 이유: 카드 문구가 "Pally가 썼어요 → 이번엔 내 차례" 로
+    바뀌어야 하는데, Pally 가 실제로 말했는지는 서버만 안다. 오프너 사다리가
+    3회차(지시 없음)까지 가면 그 날은 Pally 가 표현을 말하지 않는다 — 실측 38건
+    중 4건. 말하지도 않았는데 "Pally가 썼어요" 를 띄우면 사용자가 없는 걸 찾는다.
+    """
+    start, end = _kst_day_window_utc(date_kst)
+    try:
+        sess = sb.table("sessions").select("id").eq("user_id", user_id).execute()
+        sess_ids = [s["id"] for s in (sess.data or [])]
+        if not sess_ids:
+            return [], []
+        msgs = (
+            sb.table("messages").select("role, transcript")
+            .in_("session_id", sess_ids)
+            .gte("created_at", start).lt("created_at", end).execute()
+        )
+    except Exception as e:
+        logging.error(f"today messages read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load today's utterances")
+    rows = msgs.data or []
+    return ([m for m in rows if m["role"] == "user"],
+            [m for m in rows if m["role"] != "user"])
+
+
+@app.get("/api/daily-expression")
+async def get_daily_expression(include_usage: bool = True, user_id: str = Depends(get_current_user_id)):
+    """오늘의 표현 1개 + 오늘 Pally 와 사용자가 각각 그걸 썼는지.
+
+    상태가 두 개인 이유는 카드 문구가 3단계로 갈리기 때문이다:
+      둘 다 안 씀          → "오늘의 표현"
+      Pally 만 씀          → "Pally가 방금 썼어요 · 이번엔 내 차례"
+      사용자가 씀          → 달성
+    `pally_used_today` 를 클라이언트가 추측할 수는 없다. 오프너가 표현을 넣는
+    데 실패하는 날이 있어서(실측 38건 중 4건), 서버가 실제로 말했는지를 보고
+    내려준다.
+    """
+    sb = get_supabase()
+    date_kst = _kst_date()
+    expr = _daily_expression(sb, user_id, date_kst, _user_level(sb, user_id))
+    response = {
+        "date": date_kst,
+        "timezone": "Asia/Seoul",
+        "expression": {
+            "id": expr.id,
+            "level": expr.level,
+            "text": expr.text,
+            "meaning_ko": expr.meaning_ko,
+            "example_en": expr.example_en,
+            "example_ko": expr.example_ko,
+        },
+    }
+    # The home card only needs the prompt. Avoid reading conversation history
+    # unless the caller explicitly needs the usage verdicts (legacy default).
+    if include_usage:
+        user_msgs, pally_msgs = _today_messages_by_role(sb, user_id, date_kst)
+        response["used_today"] = _spoke_daily_expression(expr, user_msgs)
+        response["pally_used_today"] = _spoke_daily_expression(expr, pally_msgs)
+    return response
+
 
 # (category, title, description)
 _TASK_CATALOG: Dict[str, tuple] = {
@@ -2822,21 +2905,67 @@ _TASK_CATALOG: Dict[str, tuple] = {
     "E4": ("E", "Intimacy 축이 어제보다 상승하기", "어제보다 Intimacy를 더 올려보세요"),
     "E5": ("E", "지난 세션보다 더 긴 문장으로 말해보기", "지난 대화보다 평균적으로 더 길게 말해보세요"),
     "E6": ("E", "오늘 무료 대화량 절반 이상 채우기", "오늘 무료 대화량의 절반 이상을 사용해보세요"),
+    "F1": ("F", "오늘의 표현 직접 써보기", "홈에 뜬 오늘의 표현을 대화에서 한 번 써보세요"),
 }
-_FIXED_TASK = "A1"
+# 매일 반드시 들어가는 Task. A1 은 "오늘 대화 시작", F1 은 "오늘의 표현 써보기".
+# F1 을 고정하는 이유: 표현 카드는 매일 보이는데 Task 가 30개 중 추첨이면 대부분의
+# 날에 카드와 Task 가 어긋난다. 표현을 매일 띄우기로 했으면 그 과제도 매일 있어야
+# 한다. 추첨 슬롯은 그만큼 2개 → 1개로 줄어든다.
+_FIXED_TASKS = ("A1", "F1")
 
 
 def _select_daily_task_ids(user_id: str, date_kst: str) -> list:
-    """A1 고정 + 나머지 29개 중 hash(user_id+date) 로 2개 결정적 선택 (같은 날 불변)."""
-    pool = [t for t in _TASK_CATALOG if t != _FIXED_TASK]
+    """고정 2개(A1, F1) + 나머지 중 hash(user_id+date) 로 1개 결정적 선택.
+
+    선택이 결정적이라 같은 날 여러 번 계산해도 같고, 경합해도 같은 3개가 된다.
+    """
+    pool = [t for t in _TASK_CATALOG if t not in _FIXED_TASKS]
     ranked = sorted(pool, key=lambda t: hashlib.sha256(f"{user_id}:{date_kst}:{t}".encode()).hexdigest())
-    return [_FIXED_TASK, ranked[0], ranked[1]]
+    return [*_FIXED_TASKS, ranked[0]]
 
 
 def _kst_day_window_utc(date_kst: str) -> tuple:
     d = datetime.fromisoformat(date_kst).date()
     start = datetime.combine(d, dtime.min, tzinfo=_KST).astimezone(timezone.utc)
     return start.isoformat(), (start + timedelta(days=1)).isoformat()
+
+
+def _resolve_daily_task_ids(sb, user_id: str, date_kst: str) -> list:
+    """그날의 Task 3개. snapshot 에 고정해 같은 날 바뀌지 않게 한다.
+
+    고정 Task 가 빠진 snapshot 은 다시 뽑아 덮어쓴다. 고정 목록에 F1(오늘의 표현)
+    을 추가한 날, 그 날 이미 snapshot 이 있던 사용자는 하루 종일 표현 카드는
+    보이는데 과제는 없는 상태가 된다. "매일 반드시 있다" 로 정했으면 그 날부터
+    지켜야 한다.
+    """
+    try:
+        snap = (
+            sb.table("daily_task_snapshots").select("task_ids")
+            .eq("user_id", user_id).eq("date_kst", date_kst).execute()
+        )
+    except Exception as e:
+        logging.error(f"daily_task_snapshots read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
+
+    task_ids = snap.data[0]["task_ids"] if snap.data else None
+    if task_ids is not None and not set(_FIXED_TASKS) <= set(task_ids):
+        logging.info("daily task snapshot is missing fixed tasks; re-selecting")
+        task_ids = None
+    if task_ids is not None:
+        return task_ids
+
+    task_ids = _select_daily_task_ids(user_id, date_kst)
+    try:
+        # 선택은 결정적이라 경합해도 같은 3개가 된다. ignore_duplicates 를 쓰지
+        # 않는 이유는 위 재선택이 기존 행을 실제로 덮어써야 해서다.
+        sb.table("daily_task_snapshots").upsert(
+            {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
+            on_conflict="user_id,date_kst",
+        ).execute()
+    except Exception as e:
+        logging.error(f"daily_task_snapshots write failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
+    return task_ids
 
 
 def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
@@ -3040,6 +3169,16 @@ def _eval_task(sb, user_id: str, date_kst: str, task_id: str, ctx: dict) -> bool
         return prev_avg > 0 and today_avg > prev_avg
     if task_id == "E6":
         return ctx["used_turns"] >= max(1, FREE_DAILY_TURNS // 2)
+    if task_id == "F1":
+        # 표현은 여기서 읽는다 — ctx 에 넣으면 F1 이 안 뽑힌 날에도 매번 조회한다.
+        # um 이 이미 오늘치 발화라 발화 조회는 추가되지 않는다.
+        expr = _daily_expression(sb, user_id, date_kst, _user_level(sb, user_id))
+        completed_at = _expression_task_completed_at(sb, user_id, date_kst)
+        if completed_at is None and _spoke_daily_expression(expr, um):
+            completed_at = _record_expression_task_completion(sb, user_id, date_kst)
+        if completed_at is not None:
+            ctx["expression_task_completed_at"] = completed_at
+        return completed_at is not None
 
     return False
 
@@ -3060,34 +3199,20 @@ def _compute_streak(sb, user_id: str, today_kst: str) -> int:
     return count
 
 
-@app.get("/api/achievements")
-async def get_achievements(user_id: str = Depends(get_current_user_id)):
-    """
-    오늘의 Daily Task 3개(완료 상태 포함) + Streak. 서버 계산만 신뢰 (클라이언트 못 씀).
-    D6(achievements_opened)은 이 화면 진입 이벤트라, 이 API 자체로는 완료되지 않는다
-    — 프론트가 POST /api/activity-events(achievements_opened)를 보낸 뒤 반영됨.
+def _build_achievements(user_id: str) -> dict:
+    """GET /api/achievements 의 동기 본문. 호출자가 스레드로 넘긴다.
+
+    Supabase 동기 client 호출이 순차로 열 번 가까이 일어난다. 이벤트 루프 위에서
+    돌면 그 동안 다른 사용자의 요청이 전부 대기한다 — 한 명이 업적 화면을 여는
+    사이 다른 한 명의 turn 이 멈춘다. 한 줄씩 offload 하지 않고 본문째 넘기는
+    이유는, 중간에 await 가 끼면 그 틈에 다른 요청이 같은 snapshot 을 다시
+    뽑아 덮어쓸 수 있어서다. 블로킹 구간을 통째로 스레드에 두면 그 경합이 없다.
     """
     sb = get_supabase()
     date_kst = _kst_date()
 
-    # 1. 오늘 선택 3개 (snapshot 고정). 선택은 결정적이라 경합해도 동일.
-    try:
-        snap = sb.table("daily_task_snapshots").select("task_ids").eq("user_id", user_id).eq("date_kst", date_kst).execute()
-    except Exception as e:
-        logging.error(f"daily_task_snapshots read failed: {e}")
-        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
-    if snap.data:
-        task_ids = snap.data[0]["task_ids"]
-    else:
-        task_ids = _select_daily_task_ids(user_id, date_kst)
-        try:
-            sb.table("daily_task_snapshots").upsert(
-                {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
-                on_conflict="user_id,date_kst", ignore_duplicates=True,
-            ).execute()
-        except Exception as e:
-            logging.error(f"daily_task_snapshots write failed: {e}")
-            raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
+    # 1. 오늘 선택 3개 (snapshot 고정)
+    task_ids = _resolve_daily_task_ids(sb, user_id, date_kst)
 
     # 2. 완료 평가
     ctx = _gather_achievement_context(sb, user_id, date_kst)
@@ -3104,7 +3229,7 @@ async def get_achievements(user_id: str = Depends(get_current_user_id)):
             "title": title,
             "description": desc,
             "status": "completed" if done else "default",
-            "completed_at": completed_at if done else None,
+            "completed_at": (ctx.get("expression_task_completed_at", completed_at) if tid == "F1" else completed_at) if done else None,
         })
 
     # 3. Streak: 오늘 자격 여부 기록 + 연속 카운트
@@ -3123,6 +3248,16 @@ async def get_achievements(user_id: str = Depends(get_current_user_id)):
         "streak_count": streak_count,
         "daily_tasks": daily_tasks,
     }
+
+
+@app.get("/api/achievements")
+async def get_achievements(user_id: str = Depends(get_current_user_id)):
+    """
+    오늘의 Daily Task 3개(완료 상태 포함) + Streak. 서버 계산만 신뢰 (클라이언트 못 씀).
+    D6(achievements_opened)은 이 화면 진입 이벤트라, 이 API 자체로는 완료되지 않는다
+    — 프론트가 POST /api/activity-events(achievements_opened)를 보낸 뒤 반영됨.
+    """
+    return await asyncio.to_thread(_build_achievements, user_id)
 
 
 # ── Sandbox recurring subscriptions ──────────────────────────────────────────

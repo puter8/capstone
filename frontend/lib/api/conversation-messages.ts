@@ -27,6 +27,7 @@ export function conversationTurnsToMessages(
           sessionId: conversationId,
           role: "pally",
           transcript: turn.pally_text,
+          segments: turn.pally_segments,
           createdAt: turn.created_at,
           feedback: { items: turn.feedback, pending: turn.feedback_pending },
         },

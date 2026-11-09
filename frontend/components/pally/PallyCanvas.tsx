@@ -22,7 +22,8 @@ function tier(v: number): 0 | 1 | 2 {
   return 2;
 }
 
-function intimacyRgb(v: number): [number, number, number] {
+// Curiosity → body colour, continuous blue → yellow → red (final mapping, 2026-10-14).
+function curiosityRgb(v: number): [number, number, number] {
   const t = Math.max(0, Math.min(100, v)) / 100;
   let h: number, s: number, l: number;
   if (t <= 0.5) {
@@ -110,7 +111,13 @@ export default function PallyCanvas({
     const cy  = size / 2;
     ctx.clearRect(0, 0, size, size);
 
-    // Humor → 움직임(bob/bounce/wiggle): serious=거의 정지, ridiculous=활발한 wiggle
+    // Final mapping (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14):
+    // Intimacy=mouth, Energy=body shape, Curiosity=body colour (continuous),
+    // Formality=eyes, Humor=whole-body motion.
+    //
+    // Humor → 움직임(bob/bounce/wiggle): serious=거의 정지, ridiculous=활발한 wiggle.
+    // 최종 매핑으로 옮길 때 고정 bob 으로 비워뒀던 자리에, 이전 매핑에서 쓰던 3단계를
+    // 그대로 되돌린다. 0단계가 그 고정값과 같아 차분한 쪽 모습은 바뀌지 않는다.
     const mT = tier(ax.Humor);
     let oY = 0, oX = 0;
     if      (mT === 0) { oY = Math.sin(t * 0.9) * 4; }
@@ -120,29 +127,21 @@ export default function PallyCanvas({
     ctx.save();
     ctx.translate(cx + oX, cy + oY);
 
-    const [r, g, b] = intimacyRgb(ax.Intimacy);
-    // Energy → 몸통 모양(calm=사각 → lively=별 → energetic=선버스트)
+    const [r, g, b] = curiosityRgb(ax.Curiosity);
+    // Energy → body shape: calm=circle → lively=rounded square → energetic=8-point star
     const sT = tier(ax.Energy);
-    // Formality → 모서리 둥글기: blunt(낮음)=둥긂 → formal(높음)=각짐
-    const fT = tier(ax.Formality);
 
     ctx.shadowColor = `rgba(${r},${g},${b},0.45)`;
     ctx.shadowBlur  = 20;
 
-    if (sT === 0) {
-      const rectR = [bs * 0.75, bs * 0.18, 0][fT];
-      ctx.beginPath();
-      ctx.roundRect(-bs, -bs, bs * 2, bs * 2, rectR);
-    } else if (sT === 1) {
-      const outerR = bs * 1.15;
-      const innerR = bs * 0.63;
-      const tipR   = [24, 10, 0][fT];
-      drawStar(ctx, 8, outerR, innerR, tipR);
+    if (sT === 2) {
+      // Tip angle comes from innerR/outerR: 0.63 gave a 46° spike, which read as sharp
+      // rather than lively. 0.78 opens it to 70°. Raise innerR to blunt it further
+      // (0.85 is 84°); tipR only rounds the very point and saturates at 27.
+      drawStar(ctx, 8, bs * 1.15, bs * 0.78, 10);
     } else {
-      const outerR = bs * 1.28;
-      const innerR = bs * 0.52;
-      const tipR   = [16, 6, 0][fT];
-      drawStar(ctx, 12, outerR, innerR, tipR);
+      ctx.beginPath();
+      ctx.roundRect(-bs, -bs, bs * 2, bs * 2, sT === 0 ? bs : bs * 0.3);
     }
 
     const grad = ctx.createRadialGradient(-bs * 0.15, -bs * 0.2, bs * 0.05, 0, 0, bs);
@@ -152,10 +151,10 @@ export default function PallyCanvas({
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // ── 눈 (Curiosity → indifferent=단순한 점 → curious → Inquisitive=화려한 눈) ──
-    const eT       = tier(ax.Curiosity);
-    const eyeSpcX  = sT > 0 ? bs * 0.25 : bs * 0.34;
-    const eyeBaseY = sT > 0 ? bs * 0.08 : -bs * 0.04;
+    // ── 눈 (Formality → blunt=단순한 점 → casual=흰자+동공 → formal=반짝이는 눈) ──
+    const eT       = tier(ax.Formality);
+    const eyeSpcX  = sT === 2 ? bs * 0.25 : bs * 0.34;
+    const eyeBaseY = sT === 2 ? bs * 0.08 : -bs * 0.04;
     const blink    = Math.sin(t * 0.4) > 0.98;
     const scaleY   = blink ? 0.08 : 1;
     // 0 = center, 1 = fully up-right
@@ -210,16 +209,25 @@ export default function PallyCanvas({
         ctx.fillStyle = '#1a1a1a';
         ctx.fill();
 
-        // 노란 마름모 (검정 원 안 중앙)
-        const mx = px;
-        const my = py;
-        const hw = pupilR * 0.40; // 가로 반폭
-        const hh = pupilR * 0.55; // 세로 반폭 (세로로 약간 길게)
+        // 노란 반짝임. 4각 별 — 눈 안이 작아 꼭짓점이 많으면 뭉개져서 점으로
+        // 보인다. 안쪽 반지름을 바깥의 28%로 깊게 파야 반짝임으로 읽히고, 그보다
+        // 얕으면 마름모와 구별되지 않는다.
+        // 동공 중앙이 아니라 좌상단에 둔다 — 눈에 비친 빛처럼 보이게. 시선과 함께
+        // 움직이도록 동공 좌표(px, py)를 기준으로 한다.
+        const sparkleOuter = pupilR * 0.45;
+        const sparkleInner = sparkleOuter * 0.28;
+        const sparkleX = px - pupilR * 0.30;
+        const sparkleY = py - pupilR * 0.30;
         ctx.beginPath();
-        ctx.moveTo(mx,      my - hh); // 위
-        ctx.lineTo(mx + hw, my);      // 오른쪽
-        ctx.lineTo(mx,      my + hh); // 아래
-        ctx.lineTo(mx - hw, my);      // 왼쪽
+        for (let s = 0; s < 8; s++) {
+          const a = -Math.PI / 2 + (s * Math.PI) / 4;
+          const sr = s % 2 === 0 ? sparkleOuter : sparkleInner;
+          const sx = sparkleX + Math.cos(a) * sr;
+          // 세로로 살짝 길게 — 원래 마름모의 비율을 유지한다
+          const sy = sparkleY + Math.sin(a) * sr * 1.25;
+          if (s === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
         ctx.closePath();
         ctx.fillStyle = '#FFD700';
         ctx.fill();
@@ -227,6 +235,38 @@ export default function PallyCanvas({
 
       ctx.restore();
     }
+
+    // ── 입 (Intimacy → acquaint=ㅅ자 입 → buddy=작은 미소 → bestie=활짝 웃는 입) ──
+    const iT     = tier(ax.Intimacy);
+    const mouthY = eyeBaseY + bs * 0.27;
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineCap     = 'round';
+    ctx.lineJoin    = 'round';
+    ctx.lineWidth   = bs * 0.035;
+    ctx.beginPath();
+    if (iT === 0) {
+      // 'ㅅ'-shaped mouth: both corners down, peak in the middle
+      const w = bs * 0.09;
+      ctx.moveTo(-w, mouthY + bs * 0.035);
+      ctx.lineTo(0, mouthY - bs * 0.03);
+      ctx.lineTo(w, mouthY + bs * 0.035);
+    } else if (iT === 1) {
+      const w = bs * 0.08;
+      ctx.moveTo(-w, mouthY);
+      ctx.quadraticCurveTo(0, mouthY + bs * 0.1, w, mouthY);
+    } else {
+      // One continuous crescent whose ends hook upward, like the classic smiley.
+      // The ends used to be straight segments tacked onto the arc, which read as
+      // a kink rather than a curl once the face is drawn small.
+      const w = bs * (sT === 2 ? 0.32 : 0.40); // narrower inside the star's inner valleys
+      const top = mouthY - bs * 0.03;
+      const depth = bs * 0.12;
+      const hook = bs * 0.04; // how far the tips rise above the arc's corners
+      ctx.moveTo(-w, top - hook);
+      ctx.bezierCurveTo(-w * 0.94, top + depth * 0.64, -w * 0.46, top + depth, 0, top + depth);
+      ctx.bezierCurveTo(w * 0.46, top + depth, w * 0.94, top + depth * 0.64, w, top - hook);
+    }
+    ctx.stroke();
 
     ctx.restore();
   }, [size]);

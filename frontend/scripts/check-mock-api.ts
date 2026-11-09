@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   deepEqual(await mockPallyApi.getSubscription(), subscriptionBeforeDeletion, "History deletion preserves the subscription");
   const profileAfterDeletion = (await mockPallyApi.getProfile()).profile;
   assert(profileAfterDeletion.display_name === "Claire" && profileAfterDeletion.english_level === "C1", "History deletion preserves account settings");
-  deepEqual(profileAfterDeletion.traits, ["acquaint", "serious", "calm", "indifferent", "casual"], "History deletion resets traits");
+  deepEqual(profileAfterDeletion.traits, ["acquaint", "funny", "lively", "curious", "casual"], "History deletion resets traits");
   assert((await mockPallyApi.deleteConversationHistory(initialProfile.profile.id)).deleted_conversations === 0, "Deleting empty history is safe");
 
   const deletion = await mockPallyApi.deleteAccount({ confirmation: "회원탈퇴" });

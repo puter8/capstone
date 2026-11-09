@@ -1,0 +1,4 @@
+# Deploys run `vercel deploy` from the repo root (Root Directory is frontend).
+# Upload only frontend/ so the ~300MB data fixtures stay out of each deploy.
+/*
+!frontend

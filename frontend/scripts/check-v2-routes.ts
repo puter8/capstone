@@ -1,0 +1,41 @@
+/**
+ * check:v2-routes
+ *
+ * Every link and redirect must go through lib/v2/routes.ts. Check the root
+ * screens and components/v2 for literal app paths, excluding API/dev routes.
+ */
+import assert from "node:assert/strict";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+
+const frontendRoot = path.resolve(__dirname, "..");
+const ROOTS = ["app", "components/v2"].map((dir) => path.join(frontendRoot, dir));
+const EXCLUDED_ROOTS = ["app/api", "app/dev"].map((dir) => path.join(frontendRoot, dir));
+const PATH_LITERAL = /["'`](\/(?:home|history|ranking|my|onboarding|settings|auth)(?:[/?][^"'`]*)?)["'`]/g;
+
+function walk(dir: string): string[] {
+  if (EXCLUDED_ROOTS.includes(dir)) return [];
+  return readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) return walk(full);
+    return /\.(ts|tsx)$/.test(entry) ? [full] : [];
+  });
+}
+
+const offenders: string[] = [];
+let scanned = 0;
+for (const root of ROOTS) {
+  for (const file of walk(root)) {
+    scanned += 1;
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, index) => {
+      for (const match of Array.from(line.matchAll(PATH_LITERAL))) {
+        offenders.push(`${path.relative(frontendRoot, file)}:${index + 1} uses literal path ${match[1]}`);
+      }
+    });
+  }
+}
+
+assert.ok(scanned > 10, `expected to scan the v2 screens, scanned ${scanned} files`);
+assert.deepEqual(offenders, [], `v2 code must route through lib/v2/routes.ts:\n${offenders.join("\n")}`);
+console.log(`v2 route checks passed: ${scanned} files use lib/v2/routes.ts for app paths.`);

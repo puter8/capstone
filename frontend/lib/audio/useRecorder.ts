@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { pickMimeType } from './pickMimeType';
 
-const MAX_DURATION_MS = 30_000;
+export const MAX_DURATION_MS = 30_000;
 
 const ERR_NO_MIME = '이 브라우저는 음성 녹음을 지원하지 않아요.';
 const ERR_MIC_ACCESS = '마이크에 접근할 수 없어요.';
@@ -30,6 +30,9 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
   const timerRef = useRef<number | null>(null);
   const discardRecordingRef = useRef(false);
   const startingRef = useRef(false);
+  // Set by cancel() while getUserMedia is still waiting for the permission prompt,
+  // so an approval that lands after End/leave never starts a hidden recording.
+  const cancelledWhileStartingRef = useRef(false);
 
   const cleanupStream = useCallback(() => {
     const stream = streamRef.current;
@@ -63,14 +66,20 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
 
   const cancel = useCallback((): void => {
     discardRecordingRef.current = true;
+    if (startingRef.current) cancelledWhileStartingRef.current = true;
     stop();
   }, [stop]);
+
+  // Leaving the screen mid-recording must release the microphone immediately,
+  // not when the 30-second timer fires.
+  useEffect(() => () => cancel(), [cancel]);
 
   const start = useCallback(async (): Promise<void> => {
     if (startingRef.current || recorderRef.current?.state === 'recording') return;
 
     startingRef.current = true;
     discardRecordingRef.current = false;
+    cancelledWhileStartingRef.current = false;
 
     const mime = pickMimeType();
     if (!mime) {
@@ -93,6 +102,13 @@ export function useRecorder(handlers: RecorderHandlers): RecorderControls {
       } else {
         handlers.onError(ERR_MIC_ACCESS);
       }
+      return;
+    }
+
+    if (cancelledWhileStartingRef.current) {
+      for (const track of stream.getTracks()) track.stop();
+      startingRef.current = false;
+      cancelledWhileStartingRef.current = false;
       return;
     }
 
