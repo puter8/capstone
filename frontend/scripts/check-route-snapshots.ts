@@ -1,6 +1,8 @@
 import { deepEqual, equal } from "node:assert/strict";
 
-import type { AchievementsResponse, ConversationListResponse, ProfileResponse } from "../lib/api/contracts";
+import type {
+  AchievementsResponse, ConversationDetailResponse, ConversationListResponse, ProfileResponse,
+} from "../lib/api/contracts";
 
 type NavigatorFixture = { connection?: { effectiveType?: string; saveData?: boolean } };
 
@@ -98,6 +100,65 @@ async function main(): Promise<void> {
   equal(await prefetchCalls({ connection: {} }), 1, "a browser that reports no type still prefetches");
   equal(await prefetchCalls({ connection: { effectiveType: "3g" } }), 0, "slow networks skip it");
   equal(await prefetchCalls({ connection: { effectiveType: "4g", saveData: true } }), 0, "data saver skips it");
+
+  // Feedback detail: a settled page is kept for the tab, an unfinished one is re-read.
+  // Both lifetimes are longer than a test takes, so the clock is moved past the short
+  // one (30s) and nowhere near the settled one to tell the two apart.
+  const detail = (over: Partial<ConversationDetailResponse["conversation"]> = {}, pending = false): ConversationDetailResponse => ({
+    conversation: {
+      id: "conversation-1", status: "completed", title: "Weekend plans",
+      started_at: "2026-10-08T00:00:00Z", last_turn_at: "2026-10-08T00:05:00Z",
+      completed_at: "2026-10-08T00:06:00Z", reopened_at: null, reopen_count: 0,
+      turn_count: 1, ...over,
+    },
+    turns: [{
+      id: "turn-1", sequence: 1, status: "completed",
+      user_transcript: "I went to the beach.", pally_text: "Nice!",
+      feedback: [], feedback_pending: pending, pally_segments: null,
+      created_at: "2026-10-08T00:05:00Z",
+    }],
+    next_cursor: null,
+  });
+  const realNow = Date.now;
+  // Reads the page twice a minute apart and reports how many requests that took.
+  const readsAMinuteApart = async (response: ConversationDetailResponse): Promise<number> => {
+    route.clearUserRouteData("user-4");
+    route.rememberUser("user-4");
+    let requests = 0;
+    pallyApi.getConversation = async () => { requests += 1; return response; };
+    await route.loadConversationPage("user-4", "conversation-1");
+    const movedOn = realNow() + 60_000;
+    Date.now = () => movedOn;
+    try {
+      await route.loadConversationPage("user-4", "conversation-1");
+    } finally {
+      Date.now = realNow;
+    }
+    return requests;
+  };
+
+  equal(await readsAMinuteApart(detail()), 1,
+    "a finished conversation with its feedback and title is read once");
+  deepEqual(route.peekConversationPage("conversation-1")?.conversation.title, "Weekend plans",
+    "and stays paintable, so reopening it shows no loader");
+
+  // The settled page above is still cached here, so the counts show both halves.
+  let requests = 0;
+  pallyApi.getConversation = async () => { requests += 1; return detail(); };
+  await route.loadConversationPage("user-4", "conversation-1");
+  equal(requests, 0, "a settled page is served from cache");
+  route.invalidateConversationData("user-4", "conversation-1");
+  await route.loadConversationPage("user-4", "conversation-1");
+  equal(requests, 1, "reopening or ending the conversation still forces a fresh read");
+
+  equal(await readsAMinuteApart(detail({}, true)), 2,
+    "a page still extracting feedback is re-read");
+  equal(await readsAMinuteApart(detail({ title: "I went to the beach." })), 2,
+    "a page whose title is still the first-utterance fallback is re-read");
+  equal(await readsAMinuteApart(detail({ status: "active", completed_at: null })), 2,
+    "an active conversation is re-read");
+  equal(Date.now, realNow, "the clock must be put back");
+  route.clearUserRouteData("user-4");
 
   console.log("Route snapshot checks passed.");
 }

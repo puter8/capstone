@@ -25,6 +25,16 @@ export function markTitlePending(conversationId: string, firstTranscript: string
   pendingTitles.set(conversationId, { fallbackTitle, expiresAt: Date.now() + TITLE_WAIT_MS });
 }
 
+/**
+ * True while the title is still the backend's first-utterance fallback, which means
+ * the generated one has not landed yet. Used to decide whether a conversation's
+ * detail page is final enough to keep.
+ */
+export function isFallbackTitle(title: string | null, firstTranscript: string | null): boolean {
+  if (!title || !firstTranscript) return false;
+  return title === fallbackConversationTitle(firstTranscript);
+}
+
 export function isTitlePending(conversationId: string, title: string | null, now: number): boolean {
   const pending = pendingTitles.get(conversationId);
   if (!pending) return false;

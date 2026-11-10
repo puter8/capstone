@@ -593,6 +593,8 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
     const unsaved = pendingReopenRef.current !== null
       && pendingTurnRef.current === null && pendingOpenerRef.current === null;
     if (!unsaved) setIsClosing(true);
+    // Set once this screen is on its way out, so the lock below is never released.
+    let leftForList = false;
     setWarning(null);
     setReplaying(false);
     recorder.cancel();
@@ -643,8 +645,13 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       lastAudioRef.current = null;
       setCanReplay(false);
       window.localStorage.removeItem(CONVERSATION_KEY);
-      dispatch({ type: "session/end" });
+      // Navigate before clearing the messages: emptying them first renders the idle
+      // home for a frame, which is visible as a flash of home on the way to the list.
+      // Leaving unmounts this screen and takes the reducer with it, so the reset is
+      // only needed when home is where we are going.
       router.replace(returnPath);
+      if (returnPath === routes.home) dispatch({ type: "session/end" });
+      else leftForList = true;
     } catch (caught) {
       dispatch({
         type: "rec/error",
@@ -652,8 +659,12 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         message: caught instanceof Error ? caught.message : "대화를 종료하지 못했어요.",
       });
     } finally {
-      closingRef.current = false;
-      setIsClosing(false);
+      // Kept locked while leaving for the list: this screen is unmounting, and a second
+      // press after the release would find no conversation and send the user home.
+      if (!leftForList) {
+        closingRef.current = false;
+        setIsClosing(false);
+      }
     }
   }, [getAccumulatedAxes, recorder, revealAxes, router, routes.history, routes.home, stopPlayback]);
 

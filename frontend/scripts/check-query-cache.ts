@@ -108,6 +108,39 @@ async function main(): Promise<void> {
   assert.equal(await read("user-a", "profile", 60_000, unexpectedReload), "B2", "older reads must not overwrite saved profiles");
   assert.equal(await read("user-b", "profile", 60_000, unexpectedReload), "Other user", "writes must stay scoped to the current user");
 
+  // A lifetime chosen from the loaded value, for data that is only final sometimes.
+  const settledKey = `conversation-${crypto.randomUUID()}`;
+  const byValue = (value: { settled: boolean }) => (value.settled ? 60_000 : 0);
+  await read("user-a", settledKey, byValue, async () => ({ settled: true }));
+  assert.deepEqual(
+    await read("user-a", settledKey, byValue, async () => ({ settled: false })),
+    { settled: true },
+    "a value its own lifetime calls final must be served from cache",
+  );
+  const unsettledKey = `conversation-${crypto.randomUUID()}`;
+  await read("user-a", unsettledKey, byValue, async () => ({ settled: false }));
+  assert.deepEqual(
+    await read("user-a", unsettledKey, byValue, async () => ({ settled: true })),
+    { settled: true },
+    "a value its own lifetime calls unfinished must reload",
+  );
+
+  // The lifetime is computed inside the identity check, so a read that crossed an
+  // invalidate is still dropped instead of being kept for the long lifetime.
+  const racedKey = `conversation-${crypto.randomUUID()}`;
+  let resolveRaced!: (value: { settled: boolean }) => void;
+  const raced = read("user-a", racedKey, byValue, () => new Promise<{ settled: boolean }>((resolve) => {
+    resolveRaced = resolve;
+  }));
+  invalidate("user-a", racedKey);
+  resolveRaced({ settled: true });
+  await raced;
+  assert.deepEqual(
+    await read("user-a", racedKey, byValue, async () => ({ settled: false })),
+    { settled: false },
+    "an invalidated read must not be stored even when its value looks final",
+  );
+
   clearUser("user-a");
   clearUser("user-b");
   console.log("Query cache checks passed");
