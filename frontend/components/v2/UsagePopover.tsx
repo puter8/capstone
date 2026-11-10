@@ -53,12 +53,12 @@ export function UsagePopover({ id, open, usage, onClose, className }: UsagePopov
         id={id}
         role="dialog"
       >
-        <dl className="flex gap-p-6">
-          <div className="flex flex-col gap-[2px]">
+        <dl className="flex flex-wrap gap-x-p-5 gap-y-p-1">
+          <div className="flex items-baseline gap-p-1">
             <dd className="text-p-section tabular-nums text-p-text">{usage.used_turns}회</dd>
             <dt className="text-p-caption text-p-text-muted">사용</dt>
           </div>
-          <div className="flex flex-col gap-[2px]">
+          <div className="flex items-baseline gap-p-1">
             <dd className="text-p-section tabular-nums text-p-text">{usage.remaining_turns}회</dd>
             <dt className="text-p-caption text-p-text-muted">남음</dt>
           </div>
