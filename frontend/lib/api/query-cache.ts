@@ -30,10 +30,13 @@ export function peekStale<T>(userId: string, key: string): T | undefined {
   return (entries.get(scopedKey(userId, key)) as CacheEntry<T> | undefined)?.value;
 }
 
+// `ttlMs` may be a function of the loaded value, for data whose lifetime depends on
+// what came back. It is applied inside the identity check below, so a value loaded
+// across an invalidate is still dropped instead of being stored for its full lifetime.
 export async function read<T>(
   userId: string,
   key: string,
-  ttlMs: number,
+  ttlMs: number | ((value: T) => number),
   loader: () => Promise<T>,
 ): Promise<T> {
   const keyWithScope = scopedKey(userId, key);
@@ -52,8 +55,9 @@ export async function read<T>(
   const promise = loader()
     .then((value) => {
       if (entries.get(keyWithScope) === nextEntry) {
+        const lifetime = typeof ttlMs === "function" ? ttlMs(value) : ttlMs;
         entries.delete(keyWithScope);
-        entries.set(keyWithScope, { expiresAt: Date.now() + ttlMs, value });
+        entries.set(keyWithScope, { expiresAt: Date.now() + lifetime, value });
         enforceLimit();
       }
       return value;
@@ -72,7 +76,7 @@ export async function read<T>(
 export async function prefetch<T>(
   userId: string,
   key: string,
-  ttlMs: number,
+  ttlMs: number | ((value: T) => number),
   loader: () => Promise<T>,
 ): Promise<void> {
   await read(userId, key, ttlMs, loader);

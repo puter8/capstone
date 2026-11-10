@@ -9,6 +9,7 @@ import type {
   UsageResponse,
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
+import { isFallbackTitle } from "@/lib/api/pending-titles";
 import { SESSION_ERROR_MESSAGE } from "@/lib/api/error-messages";
 import { pallyApi } from "@/lib/api";
 import { clearUser, evict, invalidate, peekStale, prefetch, read, write, writeStale } from "@/lib/api/query-cache";
@@ -17,6 +18,11 @@ import type { Axes } from "@/lib/types/character";
 
 const USAGE_TTL_MS = 15_000;
 const CONVERSATION_TTL_MS = 30_000;
+// A page of a finished conversation with no extraction left cannot change on its own.
+// Reopening, a new turn and completion all invalidate the entry, so the only thing a
+// re-read buys is the same bytes again. The cache is per tab and in memory, so this is
+// in practice "keep it for this tab" rather than a day.
+const SETTLED_CONVERSATION_TTL_MS = 12 * 60 * 60 * 1000;
 const ROUTE_DATA_TTL_MS = 60_000;
 
 const CACHE_KEYS = {
@@ -187,15 +193,40 @@ export function reloadHistoryFirstPage(userId: string): Promise<ConversationList
   return loadHistoryPage(userId);
 }
 
+/**
+ * How long a loaded page of conversation detail is worth keeping. A completed
+ * conversation is only settled once its feedback is extracted and its generated title
+ * has replaced the first-utterance fallback; until then a re-read brings new content.
+ */
+function conversationPageTtl(detail: ConversationDetailResponse): number {
+  const firstUtterance = detail.turns.find((turn) => turn.user_transcript)?.user_transcript ?? null;
+  const settled = detail.conversation.status === "completed"
+    && !detail.turns.some((turn) => turn.feedback_pending)
+    && !isFallbackTitle(detail.conversation.title, firstUtterance);
+  return settled ? SETTLED_CONVERSATION_TTL_MS : CONVERSATION_TTL_MS;
+}
+
 export function loadConversationPage(
   userId: string,
   conversationId: string,
   cursor?: string,
 ): Promise<ConversationDetailResponse> {
   const key = `${CACHE_KEYS.conversation}${conversationId}:${cursorKey(cursor)}`;
-  return read(userId, key, CONVERSATION_TTL_MS, () => (
+  return read(userId, key, conversationPageTtl, () => (
     pallyApi.getConversation(conversationId, { cursor, limit: 50 })
   ));
+}
+
+/**
+ * The first page of a conversation already read in this tab, for painting the detail
+ * screen without a spinner. Synchronous, so it runs before the session check; the
+ * screen still verifies and replaces it. Undefined when nothing is cached.
+ */
+export function peekConversationPage(conversationId: string): ConversationDetailResponse | undefined {
+  if (!rememberedUserId) return undefined;
+  return peekStale<ConversationDetailResponse>(
+    rememberedUserId, `${CACHE_KEYS.conversation}${conversationId}:${cursorKey()}`,
+  );
 }
 
 // Evict rather than expire: usage and subscription change with plan changes, so an

@@ -11,9 +11,9 @@ import { IconSpinner } from "@/components/v2/icons";
 import { Stage } from "@/components/v2/Stage";
 import { TopBar } from "@/components/v2/TopBar";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import type { Conversation, ConversationTurn, FeedbackItem } from "@/lib/api";
+import type { Conversation, ConversationDetailResponse, ConversationTurn, FeedbackItem } from "@/lib/api";
 import { recordFeedbackItemOpened } from "@/lib/analytics/activity-events";
-import { getCurrentUserId, invalidateConversationData, loadConversationPage, loadHistoryPage } from "@/lib/api/route-data";
+import { getCurrentUserId, invalidateConversationData, loadConversationPage, loadHistoryPage, peekConversationPage } from "@/lib/api/route-data";
 import { formatClockTime, formatLongDate } from "@/lib/v2/format";
 import { routes } from "@/lib/v2/routes";
 
@@ -26,23 +26,36 @@ function toFeedbackGroups(turns: readonly ConversationTurn[]): FeedbackGroup[] {
     .map((turn) => ({ turnId: turn.id, utterance: turn.user_transcript, items: turn.feedback }));
 }
 
+// A conversation opened again in this tab is already in the cache, so paint it instead
+// of showing the loader; the effect below still re-reads and replaces it. Client-only:
+// on a hard load the cache is empty, so server and client markup match.
+function readCachedDetail(): ConversationDetailResponse | null {
+  if (typeof window === "undefined") return null;
+  const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
+  if (!requestedId) return null;
+  return peekConversationPage(requestedId) ?? null;
+}
+
 const WORDMARK_STYLE = { fontVariationSettings: '"SOFT" 0, "WONK" 1' } as const;
 
 export default function FeedbackV2Page() {
   const router = useRouter();
-  const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [feedback, setFeedback] = useState<FeedbackGroup[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [cached] = useState(readCachedDetail);
+  const [conversation, setConversation] = useState<Conversation | null>(cached?.conversation ?? null);
+  const [feedback, setFeedback] = useState<FeedbackGroup[]>(cached ? toFeedbackGroups(cached.turns) : []);
+  const [isLoading, setIsLoading] = useState(cached === null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(cached?.next_cursor ?? null);
   const [error, setError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
-  const [feedbackPending, setFeedbackPending] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState(
+    cached ? cached.turns.some((turn) => turn.feedback_pending) : false,
+  );
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [pollingStopped, setPollingStopped] = useState(false);
-  const [isActiveConversation, setIsActiveConversation] = useState(false);
+  const [isActiveConversation, setIsActiveConversation] = useState(cached?.conversation.status === "active");
   const loadedCursorsRef = useRef<Array<string | undefined>>([undefined]);
   const refreshingRef = useRef(false);
   const openedFeedbackRef = useRef(new Set<string>());
