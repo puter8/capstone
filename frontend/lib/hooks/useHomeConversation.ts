@@ -25,6 +25,7 @@ import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
 import { userFacingWarningMessages } from "@/lib/api/error-messages";
 import { requestPallyOpener } from "@/lib/api/opener";
 import { markTitlePending } from "@/lib/api/pending-titles";
+import { RESUME_INTENT_KEY } from "@/lib/api/resume-conversation";
 import {
   clearUserRouteData,
   forgetRememberedUser,
@@ -59,6 +60,8 @@ export type HomeRoutes = {
   login: string;
   /** This screen's own path, used to clear query params after a session ends. */
   home: string;
+  /** The feedback list, which is where a resumed conversation was opened from. */
+  history: string;
   /** Voice baseline registration, required before the first turn. */
   onboardingVoice: string;
 };
@@ -98,6 +101,9 @@ export type HomeConversation = {
 // Client-only: on a hard load the cache is empty, so server and client markup match.
 function readHomeSnapshot(): HomeSnapshot | null {
   if (typeof window === "undefined") return null;
+  // Checked before the query because a soft navigation can reach this first render
+  // with the URL not yet committed, and the idle home must not paint over a resume.
+  if (window.sessionStorage.getItem(RESUME_INTENT_KEY)) return null;
   if (new URLSearchParams(window.location.search).get("conversation_id")) return null;
   if (window.localStorage.getItem(CONVERSATION_KEY)) return null;
   return peekHomeSnapshot();
@@ -182,7 +188,10 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       // Start the prompt read before baseline/profile restoration so the card
       // can paint cached data as soon as home is ready.
       void loadDailyExpression(userId).catch((error: unknown) => console.error("Daily expression prefetch failed", error));
-      const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
+      // Read once: the query is authoritative, the marker covers the render that beat it.
+      const resumeIntentId = window.sessionStorage.getItem(RESUME_INTENT_KEY);
+      window.sessionStorage.removeItem(RESUME_INTENT_KEY);
+      const requestedId = new URLSearchParams(window.location.search).get("conversation_id") ?? resumeIntentId;
       const storedId = window.localStorage.getItem(CONVERSATION_KEY);
       const conversationId = requestedId ?? storedId;
 
@@ -624,6 +633,9 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         setWarning(notices.length > 0 ? notices.join(" ") : null);
       }
       if (firstUserTranscript) revealAxes();
+      // Leaving a resumed conversation untouched goes back to the list it was opened
+      // from; a conversation that really ended goes home, where the new look is shown.
+      const returnPath = conversationId && !completed ? routes.history : routes.home;
       conversationIdRef.current = null;
       pendingReopenRef.current = null;
       firstUserTranscriptRef.current = null;
@@ -632,7 +644,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       setCanReplay(false);
       window.localStorage.removeItem(CONVERSATION_KEY);
       dispatch({ type: "session/end" });
-      router.replace(routes.home);
+      router.replace(returnPath);
     } catch (caught) {
       dispatch({
         type: "rec/error",
@@ -643,7 +655,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       closingRef.current = false;
       setIsClosing(false);
     }
-  }, [getAccumulatedAxes, recorder, revealAxes, router, routes.home, stopPlayback]);
+  }, [getAccumulatedAxes, recorder, revealAxes, router, routes.history, routes.home, stopPlayback]);
 
   // Must run inside a user gesture so mobile browsers allow TTS playback afterwards.
   const unlockAudio = useCallback(() => {

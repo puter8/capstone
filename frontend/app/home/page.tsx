@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 const HOME_ROUTES: HomeRoutes = {
   login: routes.login,
   home: routes.home,
+  history: routes.history,
   onboardingVoice: routes.onboardingVoice,
 };
 
