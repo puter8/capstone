@@ -1,7 +1,8 @@
 import { deepEqual, equal } from "node:assert/strict";
 
 import type {
-  AchievementsResponse, ConversationDetailResponse, ConversationListResponse, ProfileResponse,
+  AchievementsResponse, ConversationDetailResponse, ConversationListResponse,
+  EnergyBaselineLimits, EnergyBaselinePrompts, EnergyBaselineResponse, ProfileResponse,
 } from "../lib/api/contracts";
 
 type NavigatorFixture = { connection?: { effectiveType?: string; saveData?: boolean } };
@@ -159,6 +160,41 @@ async function main(): Promise<void> {
     "an active conversation is re-read");
   equal(Date.now, realNow, "the clock must be put back");
   route.clearUserRouteData("user-4");
+
+  // Voice baseline: home waits for this first, so a registered user must not pay a
+  // round trip for it on every visit, and "required" must never be served from cache.
+  const prompts: EnergyBaselinePrompts = ["one", "two", "three"];
+  const limits: EnergyBaselineLimits = { clips: 3, min_seconds: 2, max_seconds: 10 };
+  const baseline = (status: "ready" | "required" | "disabled"): EnergyBaselineResponse => {
+    if (status === "ready") {
+      return {
+        status, prompts, limits,
+        baseline: { range_st: 4, valid_clips: 3, method_version: "pitch-range-fold-v1" },
+      };
+    }
+    if (status === "required") return { status, baseline: null, prompts, limits };
+    return { status, baseline: null, prompts: [], limits: null };
+  };
+  const baselineReads = async (status: "ready" | "required" | "disabled"): Promise<number> => {
+    route.clearUserRouteData("user-5");
+    route.rememberUser("user-5");
+    let requests = 0;
+    const response = baseline(status);
+    pallyApi.getEnergyBaseline = async () => { requests += 1; return response; };
+    await route.loadEnergyBaseline("user-5");
+    const movedOn = realNow() + 60_000;
+    Date.now = () => movedOn;
+    try {
+      await route.loadEnergyBaseline("user-5");
+    } finally {
+      Date.now = realNow;
+    }
+    return requests;
+  };
+  equal(await baselineReads("ready"), 1, "a registered voice is read once");
+  equal(await baselineReads("disabled"), 1, "a server with the feature off is read once");
+  equal(await baselineReads("required"), 2, "an unregistered voice must never be served from cache");
+  route.clearUserRouteData("user-5");
 
   console.log("Route snapshot checks passed.");
 }
