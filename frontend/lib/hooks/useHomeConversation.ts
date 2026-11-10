@@ -124,6 +124,9 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   const pendingOpenerRef = useRef<Promise<void> | null>(null);
   const openerKeyRef = useRef<string | null>(null);
   const conversationIdRef = useRef<string | null>(null);
+  // A finished conversation opened through the resume button, still untouched: its
+  // first turn reopens it. Null once reopened, so it also means "nothing written yet".
+  const pendingReopenRef = useRef<string | null>(null);
   const firstUserTranscriptRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
   const lastAudioRef = useRef<string | null>(null);
@@ -245,9 +248,15 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       }
 
       if (detail.conversation.status !== "active") {
-        window.localStorage.removeItem(CONVERSATION_KEY);
-        router.replace(routes.home);
-        return;
+        // Only the resume button brings a finished conversation here, through
+        // ?conversation_id. Show it as it was and reopen it on the first turn, so
+        // opening it and leaving writes nothing. A stored id is stale: drop it.
+        if (!requestedId) {
+          window.localStorage.removeItem(CONVERSATION_KEY);
+          router.replace(routes.home);
+          return;
+        }
+        pendingReopenRef.current = conversationId;
       }
 
       const messages = conversationTurnsToMessages(conversationId, detail.turns);
@@ -257,7 +266,9 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       if (detail.conversation.turn_count > 0 && detail.conversation.current_axes) {
         updateFromChatResponse({ axes: detail.conversation.current_axes });
       }
-      window.localStorage.setItem(CONVERSATION_KEY, conversationId);
+      // Storing happens in ensureConversation, together with the reopen, so a reload
+      // without the query does not restore a conversation that was never reopened.
+      if (!pendingReopenRef.current) window.localStorage.setItem(CONVERSATION_KEY, conversationId);
       dispatch({ type: "session/load", id: conversationId, messages });
     };
 
@@ -285,6 +296,22 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   }, [resetAxes, restoreAttempt, restoreAxes, router, routes.home, routes.login, routes.onboardingVoice, snapshot, updateFromChatResponse]);
 
   const ensureConversation = useCallback(async () => {
+    // Both the opener and a turn come through here before writing, so this is where a
+    // resumed conversation is reopened — never on merely opening it.
+    const pendingReopenId = pendingReopenRef.current;
+    if (pendingReopenId) {
+      try {
+        await pallyApi.reopenConversation(pendingReopenId);
+      } catch (caught) {
+        if (!(caught instanceof PallyApiError && caught.code === "conversation_already_active")) throw caught;
+      }
+      pendingReopenRef.current = null;
+      conversationIdRef.current = pendingReopenId;
+      window.localStorage.setItem(CONVERSATION_KEY, pendingReopenId);
+      const userId = userIdRef.current;
+      if (userId) invalidateConversationData(userId, pendingReopenId);
+      return pendingReopenId;
+    }
     if (conversationIdRef.current) return conversationIdRef.current;
     const response = await pallyApi.createConversation(crypto.randomUUID());
     const conversationId = response.conversation.id;
@@ -484,6 +511,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
           // The server closes conversations left idle for an hour (saved to History with
           // feedback). Keeping this screen would fail every retry, so return to a fresh home.
           conversationIdRef.current = null;
+          pendingReopenRef.current = null;
           firstUserTranscriptRef.current = null;
           openerKeyRef.current = null;
           lastAudioRef.current = null;
@@ -551,7 +579,11 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
     if (closingRef.current) return;
     closingRef.current = true;
     openerRequestRef.current += 1;
-    setIsClosing(true);
+    // Still pending reopen, with no turn or opener in flight, means this conversation
+    // has not been written to: there is nothing to save and no saving screen to show.
+    const unsaved = pendingReopenRef.current !== null
+      && pendingTurnRef.current === null && pendingOpenerRef.current === null;
+    if (!unsaved) setIsClosing(true);
     setWarning(null);
     setReplaying(false);
     recorder.cancel();
@@ -569,14 +601,20 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
 
     try {
       const conversationId = conversationIdRef.current;
-      const completed = conversationId ? await pallyApi.completeConversation(conversationId) : null;
+      // Checked after the awaits above: an in-flight turn reopens the conversation and
+      // clears the flag, and only then is there a completion to record.
+      const completed = conversationId && !pendingReopenRef.current
+        ? await pallyApi.completeConversation(conversationId)
+        : null;
       const userId = userIdRef.current;
       if (userId) {
         invalidateConversationData(userId, conversationId ?? undefined);
         // Ending a conversation recomputes profile traits on the backend.
         invalidateProfile(userId);
       }
-      const firstUserTranscript = firstUserTranscriptRef.current;
+      // Restoring a conversation fills this from its existing turns, so these all hang
+      // off an actual completion: without one, nothing was saved and nothing changed.
+      const firstUserTranscript = completed ? firstUserTranscriptRef.current : null;
       // The final axes are Pally's new look. Keep them as the stale profile value so
       // coming back to home does not flash the previous look before the reload.
       if (userId && firstUserTranscript) patchStaleProfileAxes(userId, getAccumulatedAxes());
@@ -587,6 +625,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       }
       if (firstUserTranscript) revealAxes();
       conversationIdRef.current = null;
+      pendingReopenRef.current = null;
       firstUserTranscriptRef.current = null;
       openerKeyRef.current = null;
       lastAudioRef.current = null;
@@ -712,6 +751,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
           const userId = userIdRef.current;
           if (userId) invalidateConversationData(userId, conversationIdRef.current ?? undefined);
           conversationIdRef.current = null;
+          pendingReopenRef.current = null;
           firstUserTranscriptRef.current = null;
           openerKeyRef.current = null;
           window.localStorage.removeItem(CONVERSATION_KEY);
