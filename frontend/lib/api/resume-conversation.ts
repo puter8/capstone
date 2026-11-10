@@ -1,5 +1,3 @@
-import { invalidateCurrentUserConversationData } from "@/lib/api/route-data";
-
 export const CONVERSATION_STORAGE_KEY = "pally:conversationId";
 
 /**
@@ -19,10 +17,10 @@ export const RESUME_INTENT_KEY = "pally:resumeConversationId";
  * Shared by the v1 note card and the v2 session card; the caller decides
  * which home route receives the `conversation_id` query.
  */
-export async function resumeConversation(conversationId: string, homePath: string): Promise<string> {
-  await invalidateCurrentUserConversationData(conversationId).catch((caught: unknown) => {
-    console.error("Conversation cache invalidation failed", caught);
-  });
+export function resumeConversation(conversationId: string, homePath: string): string {
+  // Nothing is invalidated here. This used to reopen the conversation, so the cached
+  // list and detail were out of date the moment it was pressed; now that opening it
+  // writes nothing, dropping them would only throw away a page that is still correct.
   // The query alone is not enough: a soft navigation can render home before the URL
   // is committed, and the idle screen would paint for a moment before the conversation.
   window.sessionStorage.setItem(RESUME_INTENT_KEY, conversationId);

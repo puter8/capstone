@@ -3,6 +3,7 @@ import type {
   ConversationDetailResponse,
   ConversationListResponse,
   DailyExpressionResponse,
+  EnergyBaselineResponse,
   ProfileResponse,
   SubscriptionResponse,
   UsageQuota,
@@ -23,10 +24,12 @@ const CONVERSATION_TTL_MS = 30_000;
 // re-read buys is the same bytes again. The cache is per tab and in memory, so this is
 // in practice "keep it for this tab" rather than a day.
 const SETTLED_CONVERSATION_TTL_MS = 12 * 60 * 60 * 1000;
+const BASELINE_TTL_MS = 12 * 60 * 60 * 1000;
 const ROUTE_DATA_TTL_MS = 60_000;
 
 const CACHE_KEYS = {
   achievements: "achievements",
+  energyBaseline: "energy-baseline",
   conversation: "conversation:",
   dailyExpression: "daily-expression:",
   history: "history:",
@@ -191,6 +194,23 @@ export function loadHistoryPage(userId: string, cursor?: string): Promise<Conver
 export function reloadHistoryFirstPage(userId: string): Promise<ConversationListResponse> {
   invalidate(userId, `${CACHE_KEYS.history}first`);
   return loadHistoryPage(userId);
+}
+
+/**
+ * Whether the user's voice is registered. Home waits for this before anything else,
+ * because it decides whether to send the user to registration, so an uncached read
+ * put a round trip in front of every visit.
+ *
+ * "required" is never kept: it is the answer that redirects, and it stops being true
+ * the moment the user registers. Once registered or disabled it only changes through
+ * deletion, which clears this user's cache entirely.
+ */
+export function loadEnergyBaseline(userId: string): Promise<EnergyBaselineResponse> {
+  return read(
+    userId, CACHE_KEYS.energyBaseline,
+    (baseline: EnergyBaselineResponse) => (baseline.status === "required" ? 0 : BASELINE_TTL_MS),
+    () => pallyApi.getEnergyBaseline(),
+  );
 }
 
 /**

@@ -34,6 +34,7 @@ import {
   invalidateUsage,
   loadConversationPage,
   loadDailyExpression,
+  loadEnergyBaseline,
   loadProfile,
   loadSubscription,
   loadUsage,
@@ -195,7 +196,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       const storedId = window.localStorage.getItem(CONVERSATION_KEY);
       const conversationId = requestedId ?? storedId;
 
-      const baseline = await pallyApi.getEnergyBaseline();
+      const baseline = await loadEnergyBaseline(userId);
       if (!active) return;
       if (baseline.status === "required") {
         if (conversationId) window.localStorage.setItem(CONVERSATION_KEY, conversationId);
