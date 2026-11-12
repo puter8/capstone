@@ -322,6 +322,7 @@ def test_inflight_turn_cannot_save_into_a_closed_or_reopened_session(monkeypatch
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
     monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
     monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
+    monkeypatch.setattr(main, "_user_display_name", lambda *_: None)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     release_turn = Mock()
     monkeypatch.setattr(main, "_release_turn", release_turn)
@@ -387,6 +388,7 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
     monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
     monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
     monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
+    monkeypatch.setattr(main, "_user_display_name", lambda *_: None)
     monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
     monkeypatch.setattr(main, "DEFAULT_TTS_VOICE", "en-US-Chirp3-HD-Leda")
@@ -476,6 +478,7 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     monkeypatch.setattr(main, "GOOGLE_CLOUD_API_KEY", "test-key")
     monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
     monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
+    monkeypatch.setattr(main, "_user_display_name", lambda *_: "Chanhee")
     monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("say 3", 1.0)))
     chat = AsyncMock(return_value="A fresh reply to 3")
     monkeypatch.setattr(main, "_call_gemini_chat", chat)
@@ -488,6 +491,7 @@ def test_turn_sends_the_ai_a_history_that_alternates_user_then_reply(monkeypatch
     ))
 
     sent_history = chat.call_args[0][1]
+    assert chat.call_args.kwargs["user_name"] == "Chanhee"  # Pally knows who it talks to
     assert [(m.role, m.content) for m in sent_history] == [
         ("user", "say 1"), ("pally", "reply to 1"), ("user", "say 2"), ("pally", "reply to 2"),
     ]
