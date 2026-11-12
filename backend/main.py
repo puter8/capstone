@@ -196,7 +196,7 @@ app = FastAPI(
 )
 
 
-def _cors_origins() -> list[str]:
+def _configured_origins() -> list[str]:
     """CORS 허용 origin. CORS_ALLOW_ORIGINS 가 있으면 그 값(콤마 구분, "*" 가능)을 쓴다.
     없으면 운영은 결제 복귀용으로 이미 관리하는 BILLING_FRONTEND_ORIGINS(프론트 도메인 목록)를,
     로컬 개발은 "*" 를 쓴다 — 운영 API 가 아무 웹사이트에서나 호출되지 않게."""
@@ -209,6 +209,23 @@ def _cors_origins() -> list[str]:
     if not frontends:
         raise RuntimeError("Production needs CORS_ALLOW_ORIGINS or BILLING_FRONTEND_ORIGINS")
     return frontends
+
+
+# 팀원이 로컬 프론트에서 운영 백엔드를 호출해야 하는 개발 기간에만 켜는 임시 스위치.
+# CORS_ALLOW_ORIGINS 로 목록을 다시 적게 하면 이미 열려 있는 운영 도메인을 빠뜨려
+# 서비스를 끊을 수 있다. 그래서 이 변수는 허용 목록을 덮지 않고 localhost 만 더한다.
+# 닫을 때는 Railway 에서 이 변수만 지우면 원래 목록 그대로 돌아간다.
+_LOCALHOST_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000",
+                      "http://localhost:3001", "http://127.0.0.1:3001"]
+
+
+def _cors_origins() -> list[str]:
+    origins = _configured_origins()
+    if os.getenv("CORS_ALLOW_LOCALHOST") != "1" or "*" in origins:
+        return origins
+    # 운영 로그에 남겨서 "열어둔 채로 잊는" 상태를 눈에 띄게 한다.
+    logging.warning("CORS_ALLOW_LOCALHOST=1: localhost origins are temporarily allowed")
+    return origins + [o for o in _LOCALHOST_ORIGINS if o not in origins]
 
 
 _allow_origins = _cors_origins()
