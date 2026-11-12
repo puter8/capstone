@@ -54,7 +54,8 @@ from ai.matrix_engine import conversation_mean, replay_cumulative, compute_chara
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
-from lib import billing, kakaopay, session_feedback, stale_conversations, voice_energy
+from lib import (billing, kakaopay, session_feedback, stale_conversations,
+                 user_memory, voice_energy)
 from ai.voice_energy import MAX_SECONDS, MAX_WAV_BYTES, MIN_BASELINE_SECONDS
 
 
@@ -690,15 +691,21 @@ _LEVEL_GUIDE = {
 }
 
 
-def _build_chat_system_prompt(character_name: str, level: str, axes: Dict[str, int]) -> str:
+def _build_chat_system_prompt(character_name: str, level: str, axes: Dict[str, int],
+                              memory: Optional[str] = None) -> str:
+    """`memory` is the block built when the conversation was created (see
+    lib.user_memory.build_prompt): what the user told Pally in earlier chats.
+    It is None for a user with no stored facts, and for every conversation
+    created before this feature existed."""
     level_guide = _LEVEL_GUIDE.get(level, _LEVEL_GUIDE["B1"])
+    memory_block = f"\n{memory}\n" if memory else ""
     return f"""\
 You are {character_name}, the user's English conversation friend.
 Your personality right now (show it in every reply; the level and length rules win if they conflict):
 {persona_prompt(axes)}
 {level_guide}
 Keep the entire reply within 90 characters, using at most two short sentences.
-
+{memory_block}
 ## Grammar correction rules
 When the user makes grammar or vocabulary mistakes, do not list or explain the mistakes.
 Instead, naturally recast the user's idea with the key corrected expression inside your reply.
@@ -727,9 +734,10 @@ async def _call_gemini_chat(
     character_name: str,
     level: str,
     axes: Dict[str, int],
+    memory: Optional[str] = None,
 ) -> str:
     """Gemini 2.5 Flash로 Pally 대화 응답 생성 (axes = 이번 턴 EMA 축 → 성격 반영)"""
-    system_prompt = _build_chat_system_prompt(character_name, level, axes)
+    system_prompt = _build_chat_system_prompt(character_name, level, axes, memory)
 
     contents = []
     for msg in (history or [])[-10:]:
@@ -781,6 +789,7 @@ async def _call_gemini_chat_segments(
     character_name: str,
     level: str,
     axes: Dict[str, int],
+    memory: Optional[str] = None,
 ) -> tuple:
     """Pally 응답을 색칠 가능한 조각으로 받는다. 반환: (text, segments|None).
 
@@ -795,6 +804,7 @@ async def _call_gemini_chat_segments(
         character_name=character_name,
         level_guide=_LEVEL_GUIDE.get(level, _LEVEL_GUIDE["B1"]),
         persona=persona_prompt(axes),
+        memory=memory,
     )
 
     contents = []
@@ -837,7 +847,7 @@ async def _call_gemini_chat_segments(
             # 키가 섞인 URL 이 로그에 남지 않도록 예외 타입만 남긴다.
             logging.warning("segment reply failed (attempt %d): %s", attempt, type(exc).__name__)
 
-    reply = await _call_gemini_chat(utterance, history, character_name, level, axes)
+    reply = await _call_gemini_chat(utterance, history, character_name, level, axes, memory)
     return reply, None
 
 
@@ -1340,11 +1350,18 @@ async def create_conversation(
     if prof.data:
         level = prof.data[0]["english_level"]
 
+    # What Pally already knows about the user, resolved once here. Turns read it
+    # back from this row, so the facts cannot shift mid-conversation and a turn
+    # pays no extra query for them. Facts learned in THIS conversation land
+    # after it is closed, so they reach the next one.
+    memory = user_memory.build_prompt(sb, user_id)
+
     try:
         res = sb.table("sessions").insert({
             "character_name": "Pally",
             "level": level,
             "user_id": user_id,
+            "memory_prompt": memory,
         }).execute()
     except Exception as e:
         logging.error(f"create_conversation insert failed: {e}")
@@ -1799,7 +1816,9 @@ async def create_turn(
 
     # 1. conversation 소유권 (타인 소유는 존재 숨김 → 404)
     try:
-        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution").eq("id", conversation_id).execute()
+        # memory_prompt rides along on a read the turn already does, so telling
+        # Pally what it knows about the user costs no extra round trip.
+        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution, memory_prompt").eq("id", conversation_id).execute()
     except Exception as e:
         logging.error(f"turn session read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read conversation")
@@ -1922,7 +1941,8 @@ async def create_turn(
     gemini_t0 = time.perf_counter()
     try:
         reply, segments = await _call_gemini_chat_segments(
-            transcript, history, session["character_name"], session["level"], smoothed
+            transcript, history, session["character_name"], session["level"], smoothed,
+            session.get("memory_prompt"),
         )
     except Exception as e:
         logging.warning(f"turn Gemini failed: {e}")
@@ -2562,6 +2582,13 @@ async def complete_conversation(
         session_feedback.process_session, get_supabase, conversation_id,
         _conversation_turns,
     )
+    # What the user told Pally about themselves, for their next conversation.
+    # Deliberately after the response: a turn never waits on an extraction, and
+    # a failure here leaves the finished conversation untouched.
+    background_tasks.add_task(
+        user_memory.process_session, get_supabase, conversation_id, user_id,
+        _in_turn_order,
+    )
 
     if not session.get("title"):
         background_tasks.add_task(_assign_conversation_title, conversation_id)
@@ -2648,6 +2675,9 @@ def _stale_completion(loop: asyncio.AbstractEventLoop):
     def complete(sb, session: dict, user_id: str) -> None:
         closed, _warnings = _complete_session(sb, session, user_id)
         session_feedback.process_session(get_supabase, closed["id"], _conversation_turns)
+        # A conversation abandoned by closing the tab must still teach Pally
+        # what the user said, exactly like one ended with the End button.
+        user_memory.process_session(get_supabase, closed["id"], user_id, _in_turn_order)
         if not closed.get("title"):
             asyncio.run_coroutine_threadsafe(_assign_conversation_title(closed["id"]), loop)
     return complete

@@ -84,7 +84,7 @@ _PROMPT = """You are {character_name}, the user's English conversation friend. A
 Your personality right now (show it in every piece; the level and length rules win if they conflict):
 {persona}
 {level_guide}
-Never write meta-commentary like "You can say X" or "The correct form is X".
+{memory}Never write meta-commentary like "You can say X" or "The correct form is X".
 Never point out a mistake. Just say it correctly yourself and move on.
 
 Return exactly these six fields, in this order. Decide whether there is an
@@ -119,7 +119,9 @@ error BEFORE writing the reaction. Never invent an error to justify a rewording.
    error_reason are empty. A different wording alone never proves an error.
 
 5. "own_remark" (UNDER 35 characters) - ONE short sentence about yourself on
-   their topic. You are sharing, not teaching.
+   their topic. You are sharing, not teaching. Nothing you know about the user
+   belongs here: their pets, school, city and family are theirs, so never write
+   "my Kongi", "my design project" or "my city" about something of theirs.
 
 6. "question" (UNDER 30 characters) - One short question to keep talking.
 
@@ -176,9 +178,14 @@ question: "Did you rest well?"
 Stay in character as {character_name} at all times. Never break the fourth wall."""
 
 
-def system_prompt(character_name: str, level_guide: str, persona: str) -> str:
+def system_prompt(character_name: str, level_guide: str, persona: str,
+                  memory: Optional[str] = None) -> str:
+    """`memory` is what the user told Pally in earlier conversations, built once
+    when this conversation was created (see backend.lib.user_memory). None when
+    there is nothing stored for the user."""
     return _PROMPT.format(
-        character_name=character_name, level_guide=level_guide, persona=persona
+        character_name=character_name, level_guide=level_guide, persona=persona,
+        memory=f"{memory}\n" if memory else "",
     )
 
 

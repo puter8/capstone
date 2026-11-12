@@ -142,6 +142,30 @@ def test_model_contract_does_not_request_expression_generation_or_classification
     assert "new_expr" not in system_prompt("Pally", "Use simple English.", "Warm.")
 
 
+def test_a_user_without_stored_memory_gets_the_prompt_unchanged():
+    """대부분의 대화는 기억이 없다. 그 경우 프롬프트가 한 글자도 달라지지 않아야
+    한다 — 빈 줄 하나가 들어가도 기존에 검증한 응답 품질이 흔들릴 수 있다."""
+    without = system_prompt("Pally", "Use simple English.", "Warm.")
+    assert "Use simple English.\nNever write meta-commentary" in without
+    assert without == system_prompt("Pally", "Use simple English.", "Warm.", memory=None)
+
+
+def test_stored_memory_is_placed_before_the_field_rules():
+    block = "## What you already know about the user\n- age: 23"
+    prompt = system_prompt("Pally", "Use simple English.", "Warm.", memory=block)
+    assert block in prompt
+    assert prompt.index(block) < prompt.index('1. "original_error"')
+
+
+def test_the_own_remark_rule_keeps_the_users_facts_out_of_pallys_own_sentence():
+    """실측: 이 규칙 없이는 Pally 가 사용자의 개를 자기 개처럼 말했다
+    ("My Kongi and Bori love morning walks!"). own_remark 가 "자기 얘기" 필드라
+    기억이 그쪽으로 샌다."""
+    own_remark_rule = system_prompt("Pally", "Use simple English.", "Warm.").split(
+        '5. "own_remark"')[1].split('6. "question"')[0]
+    assert "Nothing you know about the user belongs here" in " ".join(own_remark_rule.split())
+
+
 def test_obsolete_model_fields_do_not_split_or_drop_the_reply():
     built = build_reply({**GOOD, "new_expr": "a phrase not in the reply"}, UTTERANCE)
     assert built is not None

@@ -127,7 +127,8 @@ def test_turn_durably_inserts_pending_audio_without_pitch_inference_and_preserve
     audio = pcm_wav()
     result = asyncio.run(main.create_turn("conversation-1", Request({"type": "http"}), upload(audio), "user-1", "key"))
     assert result["axes"]["Energy"] == AXES["Energy"] == 75
-    assert main._call_gemini_chat.call_args.args[-1]["Energy"] == 75
+    # (utterance, history, character_name, level, axes, memory)
+    assert main._call_gemini_chat.call_args.args[4]["Energy"] == 75
     messages.insert.assert_called_once()
     user, pally = messages.insert.call_args.args[0]
     assert user["axes"]["Energy"] == 75
