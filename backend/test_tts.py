@@ -505,6 +505,7 @@ def test_cors_origins_default_to_frontend_domains_in_production(monkeypatch, pro
     monkeypatch.setattr(main, "_IS_PRODUCTION", production)
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", configured)
     monkeypatch.setenv("BILLING_FRONTEND_ORIGINS", frontends)
+    monkeypatch.delenv("CORS_ALLOW_LOCALHOST", raising=False)
     assert main._cors_origins() == expected
 
 
@@ -512,5 +513,35 @@ def test_production_without_any_frontend_origin_refuses_to_start(monkeypatch):
     monkeypatch.setattr(main, "_IS_PRODUCTION", True)
     monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
     monkeypatch.delenv("BILLING_FRONTEND_ORIGINS", raising=False)
+    monkeypatch.delenv("CORS_ALLOW_LOCALHOST", raising=False)
     with pytest.raises(RuntimeError):
         main._cors_origins()
+
+
+def test_localhost_switch_adds_to_the_allowlist_without_replacing_it(monkeypatch):
+    """로컬 개발용 스위치가 이미 열려 있는 운영 도메인을 덮어쓰지 않아야 한다."""
+    monkeypatch.setattr(main, "_IS_PRODUCTION", True)
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.setenv("BILLING_FRONTEND_ORIGINS",
+                       "https://yourpally.app,https://capstone-eight-virid.vercel.app")
+    monkeypatch.setenv("CORS_ALLOW_LOCALHOST", "1")
+    origins = main._cors_origins()
+    assert origins[:2] == ["https://yourpally.app", "https://capstone-eight-virid.vercel.app"]
+    assert "http://localhost:3000" in origins
+
+
+def test_localhost_switch_off_leaves_production_closed(monkeypatch):
+    monkeypatch.setattr(main, "_IS_PRODUCTION", True)
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.setenv("BILLING_FRONTEND_ORIGINS", "https://yourpally.app")
+    monkeypatch.delenv("CORS_ALLOW_LOCALHOST", raising=False)
+    assert main._cors_origins() == ["https://yourpally.app"]
+
+
+def test_localhost_switch_does_not_expand_a_wildcard_allowlist(monkeypatch):
+    """로컬 개발은 이미 "*" 라 더할 것이 없고, 목록이 ["*", "http://localhost:3000"]
+    으로 늘어나면 CORSMiddleware 가 "*" 를 더 이상 와일드카드로 보지 않는다."""
+    monkeypatch.setattr(main, "_IS_PRODUCTION", False)
+    monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
+    monkeypatch.setenv("CORS_ALLOW_LOCALHOST", "1")
+    assert main._cors_origins() == ["*"]
