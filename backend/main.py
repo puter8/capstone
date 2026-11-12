@@ -2873,55 +2873,18 @@ async def get_daily_expression(include_usage: bool = True, user_id: str = Depend
     return response
 
 
-# (category, title, description)
-_TASK_CATALOG: Dict[str, tuple] = {
-    "A1": ("A", "오늘 Pally와 대화 시작하기", "오늘 Pally와 새 대화를 시작해보세요"),
-    "A2": ("A", "오늘 대화에서 3턴 이상 주고받기", "오늘 대화에서 3턴 이상 주고받아보세요"),
-    "A3": ("A", "오늘 대화에서 5턴 이상 주고받기", "오늘 대화에서 5턴 이상 주고받아보세요"),
-    "A4": ("A", "오늘 대화 세션 2개 이상 만들기", "오늘 새 대화를 2개 이상 시작해보세요"),
-    "A5": ("A", "History에서 이전 대화 이어가기", "이전에 완료한 대화를 다시 이어가보세요"),
-    "A6": ("A", "오늘 대화를 끝까지 완료하기", "오늘 대화를 완료 상태로 마무리해보세요"),
-    "B1": ("B", "대화 중 질문 담긴 발화 하기", "물음표가 담긴 발화를 한 번 이상 해보세요"),
-    "B2": ("B", "한 턴에 30단어 이상 길게 말해보기", "한 턴에 30단어 이상 길게 말해보세요"),
-    "B3": ("B", "Energy 축 60 이상 기록하기", "활기찬 말투로 Energy를 올려보세요"),
-    "B4": ("B", "Humor 축 60 이상 기록하기", "유머러스한 말투로 Humor를 올려보세요"),
-    "B5": ("B", "Curiosity 축 60 이상 기록하기", "호기심 담긴 말투로 Curiosity를 올려보세요"),
-    "B6": ("B", "나만의 톤으로 대화하기", "격식/비격식 어느 쪽이든 뚜렷한 톤으로 말해보세요"),
-    "C1": ("C", "오늘 대화에서 교정 표현 받아보기", "오늘 대화에서 피드백을 받아보세요"),
-    "C2": ("C", "지난 대화 기록 다시 열어보기", "이전 대화 상세를 다시 열어보세요"),
-    "C3": ("C", "대화 로그 펼쳐서 다시 읽어보기", "대화 로그를 펼쳐서 읽어보세요"),
-    "C4": ("C", "대화 로그 2번 이상 펼쳐보기", "대화 로그를 2번 이상 펼쳐보세요"),
-    "C5": ("C", "대화 중 피드백 2개 이상 만들기", "오늘 피드백을 2개 이상 받아보세요"),
-    "C6": ("C", "오늘 나온 교정 표현 확인하기", "오늘 받은 교정 표현을 열어 확인해보세요"),
-    "D1": ("D", "대화 속에서 Pally 톤 변화 느껴보기", "말투를 바꿔 Pally의 톤 변화를 만들어보세요"),
-    "D2": ("D", "오전에 대화하기", "오전(06~12시)에 대화해보세요"),
-    "D3": ("D", "저녁에 대화하기", "저녁(18~24시)에 대화해보세요"),
-    "D4": ("D", "주말에도 대화하기", "주말에도 대화를 이어가보세요"),
-    "D5": ("D", "My Pally에서 내 프로필 확인하기", "My Pally에서 프로필을 확인해보세요"),
-    "D6": ("D", "Achievements에서 Streak 확인하기", "Achievements에서 오늘의 Streak을 확인해보세요"),
-    "E1": ("E", "어제에 이어 오늘도 Streak 이어가기", "어제에 이어 오늘도 3개 Task를 완료해보세요"),
-    "E2": ("E", "이번 주 3일 이상 대화하기", "이번 주에 3일 이상 대화해보세요"),
-    "E3": ("E", "이번 주 첫 대화 시작하기", "이번 주 첫 대화를 시작해보세요"),
-    "E4": ("E", "Intimacy 축이 어제보다 상승하기", "어제보다 Intimacy를 더 올려보세요"),
-    "E5": ("E", "지난 세션보다 더 긴 문장으로 말해보기", "지난 대화보다 평균적으로 더 길게 말해보세요"),
-    "E6": ("E", "오늘 무료 대화량 절반 이상 채우기", "오늘 무료 대화량의 절반 이상을 사용해보세요"),
-    "F1": ("F", "오늘의 표현 직접 써보기", "홈에 뜬 오늘의 표현을 대화에서 한 번 써보세요"),
+# 오늘의 과제: 모든 사용자에게 매일 같은 3개를 이 순서로 준다. (title, description)
+# 추첨을 없앤 이유(Claire 결정, 2026-11-12): 추첨 후보가 어제·지난 대화에 기대거나
+# (기록이 없으면 못 채움), AI 가 매긴 축 점수에 기대거나(사용자가 맞출 수 없음),
+# 물음표·단어 수처럼 말하는 방식을 억지로 정하는 것뿐이었다.
+# 10번 주고받기는 무료 대화량(FREE_DAILY_TURNS, 기본 20) 안에서 채울 수 있다.
+# 예전 ID(A2~A6, B~E)는 다시 쓰지 않는다 — 과거 daily_task_snapshots 행의 뜻이 바뀐다.
+_DAILY_TASKS: Dict[str, tuple] = {
+    "A1": ("오늘 Pally와 대화 시작하기", "오늘 Pally와 새 대화를 시작해보세요"),
+    "A7": ("오늘 Pally와 10번 이상 주고받기", "오늘 대화에서 Pally와 10번 이상 주고받아보세요"),
+    "F1": ("오늘의 표현 직접 써보기", "홈에 뜬 오늘의 표현을 대화에서 한 번 써보세요"),
 }
-# 매일 반드시 들어가는 Task. A1 은 "오늘 대화 시작", F1 은 "오늘의 표현 써보기".
-# F1 을 고정하는 이유: 표현 카드는 매일 보이는데 Task 가 30개 중 추첨이면 대부분의
-# 날에 카드와 Task 가 어긋난다. 표현을 매일 띄우기로 했으면 그 과제도 매일 있어야
-# 한다. 추첨 슬롯은 그만큼 2개 → 1개로 줄어든다.
-_FIXED_TASKS = ("A1", "F1")
-
-
-def _select_daily_task_ids(user_id: str, date_kst: str) -> list:
-    """고정 2개(A1, F1) + 나머지 중 hash(user_id+date) 로 1개 결정적 선택.
-
-    선택이 결정적이라 같은 날 여러 번 계산해도 같고, 경합해도 같은 3개가 된다.
-    """
-    pool = [t for t in _TASK_CATALOG if t not in _FIXED_TASKS]
-    ranked = sorted(pool, key=lambda t: hashlib.sha256(f"{user_id}:{date_kst}:{t}".encode()).hexdigest())
-    return [*_FIXED_TASKS, ranked[0]]
+_DAILY_EXCHANGE_TARGET = 10
 
 
 def _kst_day_window_utc(date_kst: str) -> tuple:
@@ -2930,48 +2893,10 @@ def _kst_day_window_utc(date_kst: str) -> tuple:
     return start.isoformat(), (start + timedelta(days=1)).isoformat()
 
 
-def _resolve_daily_task_ids(sb, user_id: str, date_kst: str) -> list:
-    """그날의 Task 3개. snapshot 에 고정해 같은 날 바뀌지 않게 한다.
-
-    고정 Task 가 빠진 snapshot 은 다시 뽑아 덮어쓴다. 고정 목록에 F1(오늘의 표현)
-    을 추가한 날, 그 날 이미 snapshot 이 있던 사용자는 하루 종일 표현 카드는
-    보이는데 과제는 없는 상태가 된다. "매일 반드시 있다" 로 정했으면 그 날부터
-    지켜야 한다.
-    """
-    try:
-        snap = (
-            sb.table("daily_task_snapshots").select("task_ids")
-            .eq("user_id", user_id).eq("date_kst", date_kst).execute()
-        )
-    except Exception as e:
-        logging.error(f"daily_task_snapshots read failed: {e}")
-        raise AppError(503, "persistence_failed", "Failed to load daily tasks")
-
-    task_ids = snap.data[0]["task_ids"] if snap.data else None
-    if task_ids is not None and not set(_FIXED_TASKS) <= set(task_ids):
-        logging.info("daily task snapshot is missing fixed tasks; re-selecting")
-        task_ids = None
-    if task_ids is not None:
-        return task_ids
-
-    task_ids = _select_daily_task_ids(user_id, date_kst)
-    try:
-        # 선택은 결정적이라 경합해도 같은 3개가 된다. ignore_duplicates 를 쓰지
-        # 않는 이유는 위 재선택이 기존 행을 실제로 덮어써야 해서다.
-        sb.table("daily_task_snapshots").upsert(
-            {"user_id": user_id, "date_kst": date_kst, "task_ids": task_ids},
-            on_conflict="user_id,date_kst",
-        ).execute()
-    except Exception as e:
-        logging.error(f"daily_task_snapshots write failed: {e}")
-        raise AppError(503, "persistence_failed", "Failed to persist daily tasks")
-    return task_ids
-
-
 def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
     start, end = _kst_day_window_utc(date_kst)
     try:
-        sess = sb.table("sessions").select("id, created_at, ended_at, reopened_at").eq("user_id", user_id).execute()
+        sess = sb.table("sessions").select("id, created_at").eq("user_id", user_id).execute()
     except Exception as e:
         logging.error(f"achievements sessions read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to load achievements data")
@@ -2981,197 +2906,31 @@ def _gather_achievement_context(sb, user_id: str, date_kst: str) -> dict:
     # 대화를 "했다"고 보는 기준은 사용자가 한 번이라도 말한 대화다. Pally 오프너만
     # 있는 대화는 세지 않는다 — 시작 버튼을 누르면 Pally 가 먼저 말하면서 세션이
     # 생기므로, 세션 존재만으로 판정하면 한 마디도 하지 않고 과제가 달성된다.
-    # 발화가 어제였고 종료만 오늘인 대화도 있어서(A6) 날짜 창으로 제한하지 않는다.
     spoken_session_ids: set = set()
     user_msgs = []
     if sess_ids:
         spoken = sb.table("messages").select("session_id").in_("session_id", sess_ids).eq("role", "user").execute()
         spoken_session_ids = {m["session_id"] for m in (spoken.data or [])}
-        msgs = sb.table("messages").select("session_id, role, transcript, axes, character, created_at, feedback").in_("session_id", sess_ids).gte("created_at", start).lt("created_at", end).order("created_at").execute()
+        msgs = sb.table("messages").select("session_id, role, transcript, created_at").in_("session_id", sess_ids).gte("created_at", start).lt("created_at", end).order("created_at").execute()
         user_msgs = [m for m in (msgs.data or []) if m["role"] == "user"]
 
-    spoken_sessions = [s for s in sessions if s["id"] in spoken_session_ids]
-    sessions_today = [s for s in spoken_sessions if start <= s["created_at"] < end]
-    completed_today = [s for s in spoken_sessions if s.get("ended_at") and start <= s["ended_at"] < end]
-
-    ev = sb.table("activity_events").select("event_type").eq("user_id", user_id).gte("received_at", start).lt("received_at", end).execute()
-    event_counts: Dict[str, int] = {}
-    for e in (ev.data or []):
-        event_counts[e["event_type"]] = event_counts.get(e["event_type"], 0) + 1
-
-    usage = sb.table("usage_daily").select("used_turns").eq("user_id", user_id).eq("date_kst", date_kst).execute()
-    used_turns = usage.data[0]["used_turns"] if usage.data else 0
-
-    # 이번 주(월~일 KST) conversation 생성 distinct 날짜 (E2/E3용)
-    monday = datetime.fromisoformat(date_kst).date() - timedelta(days=datetime.fromisoformat(date_kst).weekday())
-    week_dates = {
-        datetime.fromisoformat(s["created_at"].replace("Z", "+00:00")).astimezone(_KST).date()
-        for s in spoken_sessions
-    }
-    week_conv_dates = {d for d in week_dates if monday <= d <= monday + timedelta(days=6)}
+    sessions_today = [s for s in sessions if s["id"] in spoken_session_ids and start <= s["created_at"] < end]
 
     return {
-        "date_kst": date_kst,
-        "window": (start, end),
-        "sessions": sessions,
-        "sess_ids": sess_ids,
-        "spoken_session_ids": spoken_session_ids,
         "sessions_today": sessions_today,
-        "completed_today": completed_today,
         "user_msgs": user_msgs,
-        "event_counts": event_counts,
-        "used_turns": used_turns,
-        "week_conv_dates": week_conv_dates,
     }
-
-
-def _msg_in_kst_hour(msgs: list, h_start: int, h_end: int) -> bool:
-    for m in msgs:
-        dt = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone(_KST)
-        if h_start <= dt.hour < h_end:
-            return True
-    return False
-
-
-def _avg_words(msgs: list) -> float:
-    counts = [len((m.get("transcript") or "").split()) for m in msgs]
-    return (sum(counts) / len(counts)) if counts else 0.0
-
-
-def _last_user_axis(sb, sess_ids: list, win_start: str, win_end: str, key: str):
-    """윈도우 내 마지막 user 메시지의 특정 축 값 (없으면 None)."""
-    if not sess_ids:
-        return None
-    r = (
-        sb.table("messages").select("axes, created_at")
-        .in_("session_id", sess_ids).eq("role", "user")
-        .gte("created_at", win_start).lt("created_at", win_end)
-        .order("created_at", desc=True).limit(1).execute()
-    )
-    if r.data and r.data[0].get("axes"):
-        return r.data[0]["axes"].get(key)
-    return None
 
 
 def _eval_task(sb, user_id: str, date_kst: str, task_id: str, ctx: dict) -> bool:
     um = ctx["user_msgs"]
-    ec = ctx["event_counts"]
-    start, end = ctx["window"]
-
-    def axis_any(key, pred) -> bool:
-        return any(pred((m.get("axes") or {}).get(key)) for m in um if m.get("axes"))
-
-    # A — 대화 세션
     if task_id == "A1":
         return len(ctx["sessions_today"]) >= 1
-    if task_id == "A2":
-        return len(um) >= 3
-    if task_id == "A3":
-        return len(um) >= 5
-    if task_id == "A4":
-        return len(ctx["sessions_today"]) >= 2
-    if task_id == "A5":
-        # reopen 이 오늘 있었고, 그 이후 오늘 user turn 이 추가됨
-        for s in ctx["sessions"]:
-            r = s.get("reopened_at")
-            if r and start <= r < end and any(m["session_id"] == s["id"] and m["created_at"] >= r for m in um):
-                return True
-        return False
-    if task_id == "A6":
-        return len(ctx["completed_today"]) >= 1
-
-    # B — 품질 / 축
-    if task_id == "B1":
-        return any("?" in (m.get("transcript") or "") for m in um)
-    if task_id == "B2":
-        return any(len((m.get("transcript") or "").split()) >= 30 for m in um)
-    if task_id == "B3":
-        return axis_any("Energy", lambda v: v is not None and v >= 60)
-    if task_id == "B4":
-        return axis_any("Humor", lambda v: v is not None and v >= 60)
-    if task_id == "B5":
-        return axis_any("Curiosity", lambda v: v is not None and v >= 60)
-    if task_id == "B6":
-        return axis_any("Formality", lambda v: v is not None and (v <= 20 or v >= 80))
-
-    # C — 피드백 / 열람
-    if task_id == "C1":
-        return sum(len(m.get("feedback") or []) for m in um) >= 1
-    if task_id == "C5":
-        return sum(len(m.get("feedback") or []) for m in um) >= 2
-    if task_id == "C2":
-        return ec.get("conversation_detail_opened", 0) >= 1
-    if task_id == "C3":
-        return ec.get("transcript_expanded", 0) >= 1
-    if task_id == "C4":
-        return ec.get("transcript_expanded", 0) >= 2
-    if task_id == "C6":
-        return ec.get("feedback_item_opened", 0) >= 1
-
-    # D — 캐릭터 변화 / 시간대
-    if task_id == "D1":
-        # 직전 user turn 대비 tone_casual 15 이상 변화
-        prev = None
-        for m in um:
-            tc = (m.get("character") or {}).get("tone_casual")
-            if tc is None:
-                continue
-            if prev is not None and abs(tc - prev) >= 15:
-                return True
-            prev = tc
-        return False
-    if task_id == "D2":
-        return _msg_in_kst_hour(um, 6, 12)
-    if task_id == "D3":
-        return _msg_in_kst_hour(um, 18, 24)
-    if task_id == "D4":
-        return datetime.fromisoformat(ctx["date_kst"]).weekday() >= 5 and len(um) >= 1
-    if task_id == "D5":
-        return ec.get("profile_opened", 0) >= 1
-    if task_id == "D6":
-        return ec.get("achievements_opened", 0) >= 1
-
-    # E — 연속 / 누적
-    if task_id == "E1":
-        # 어제 자격(qualified) 이었는지
-        y = (datetime.fromisoformat(date_kst).date() - timedelta(days=1)).isoformat()
-        r = sb.table("streak_days").select("qualified").eq("user_id", user_id).eq("date_kst", y).execute()
-        return bool(r.data and r.data[0]["qualified"])
-    if task_id == "E2":
-        return len(ctx["week_conv_dates"]) >= 3
-    if task_id == "E3":
-        return len(ctx["week_conv_dates"]) >= 1
-    if task_id == "E4":
-        # 오늘 마지막 Intimacy > 어제 마지막 Intimacy
-        today_intimacy = None
-        for m in reversed(um):
-            v = (m.get("axes") or {}).get("Intimacy")
-            if v is not None:
-                today_intimacy = v
-                break
-        if today_intimacy is None:
-            return False
-        y_start = (datetime.fromisoformat(start) - timedelta(days=1)).isoformat()
-        y_intimacy = _last_user_axis(sb, ctx["sess_ids"], y_start, start, "Intimacy")
-        return y_intimacy is not None and today_intimacy > y_intimacy
-    if task_id == "E5":
-        # 오늘 평균 단어수 > 직전(오늘 이전 가장 최근) conversation 평균
-        today_avg = _avg_words(um)
-        if today_avg <= 0:
-            return False
-        prior = [s for s in ctx["sessions"]
-                 if s["created_at"] < start and s["id"] in ctx["spoken_session_ids"]]
-        if not prior:
-            return False
-        prev_session = max(prior, key=lambda s: s["created_at"])
-        r = sb.table("messages").select("transcript").eq("session_id", prev_session["id"]).eq("role", "user").execute()
-        prev_avg = _avg_words(r.data or [])
-        return prev_avg > 0 and today_avg > prev_avg
-    if task_id == "E6":
-        return ctx["used_turns"] >= max(1, FREE_DAILY_TURNS // 2)
+    if task_id == "A7":
+        # 저장된 사용자 발화 1개 = Pally 와 한 번 주고받은 것. 오늘 대화 전체를 합산한다.
+        return len(um) >= _DAILY_EXCHANGE_TARGET
     if task_id == "F1":
-        # 표현은 여기서 읽는다 — ctx 에 넣으면 F1 이 안 뽑힌 날에도 매번 조회한다.
-        # um 이 이미 오늘치 발화라 발화 조회는 추가되지 않는다.
+        # 표현은 여기서 읽는다 — um 이 이미 오늘치 발화라 발화 조회는 추가되지 않는다.
         expr = _daily_expression(sb, user_id, date_kst, _user_level(sb, user_id))
         completed_at = _expression_task_completed_at(sb, user_id, date_kst)
         if completed_at is None and _spoke_daily_expression(expr, um):
@@ -3179,8 +2938,7 @@ def _eval_task(sb, user_id: str, date_kst: str, task_id: str, ctx: dict) -> bool
         if completed_at is not None:
             ctx["expression_task_completed_at"] = completed_at
         return completed_at is not None
-
-    return False
+    raise ValueError(f"unknown daily task: {task_id}")
 
 
 def _compute_streak(sb, user_id: str, today_kst: str) -> int:
@@ -3202,25 +2960,19 @@ def _compute_streak(sb, user_id: str, today_kst: str) -> int:
 def _build_achievements(user_id: str) -> dict:
     """GET /api/achievements 의 동기 본문. 호출자가 스레드로 넘긴다.
 
-    Supabase 동기 client 호출이 순차로 열 번 가까이 일어난다. 이벤트 루프 위에서
+    Supabase 동기 client 호출이 순차로 여러 번 일어난다. 이벤트 루프 위에서
     돌면 그 동안 다른 사용자의 요청이 전부 대기한다 — 한 명이 업적 화면을 여는
-    사이 다른 한 명의 turn 이 멈춘다. 한 줄씩 offload 하지 않고 본문째 넘기는
-    이유는, 중간에 await 가 끼면 그 틈에 다른 요청이 같은 snapshot 을 다시
-    뽑아 덮어쓸 수 있어서다. 블로킹 구간을 통째로 스레드에 두면 그 경합이 없다.
+    사이 다른 한 명의 turn 이 멈춘다.
     """
     sb = get_supabase()
     date_kst = _kst_date()
 
-    # 1. 오늘 선택 3개 (snapshot 고정)
-    task_ids = _resolve_daily_task_ids(sb, user_id, date_kst)
-
-    # 2. 완료 평가
+    # 1. 완료 평가 — 과제는 매일 같은 3개(_DAILY_TASKS)
     ctx = _gather_achievement_context(sb, user_id, date_kst)
     completed_at = _now_iso()
     daily_tasks = []
     all_done = True
-    for tid in task_ids:
-        _cat, title, desc = _TASK_CATALOG.get(tid, ("?", tid, ""))
+    for tid, (title, desc) in _DAILY_TASKS.items():
         done = _eval_task(sb, user_id, date_kst, tid, ctx)
         if not done:
             all_done = False
@@ -3232,7 +2984,7 @@ def _build_achievements(user_id: str) -> dict:
             "completed_at": (ctx.get("expression_task_completed_at", completed_at) if tid == "F1" else completed_at) if done else None,
         })
 
-    # 3. Streak: 오늘 자격 여부 기록 + 연속 카운트
+    # 2. Streak: 3개를 모두 채운 날만 자격. 오늘 자격 여부 기록 + 연속 카운트
     try:
         sb.table("streak_days").upsert(
             {"user_id": user_id, "date_kst": date_kst, "qualified": all_done},
@@ -3254,8 +3006,6 @@ def _build_achievements(user_id: str) -> dict:
 async def get_achievements(user_id: str = Depends(get_current_user_id)):
     """
     오늘의 Daily Task 3개(완료 상태 포함) + Streak. 서버 계산만 신뢰 (클라이언트 못 씀).
-    D6(achievements_opened)은 이 화면 진입 이벤트라, 이 API 자체로는 완료되지 않는다
-    — 프론트가 POST /api/activity-events(achievements_opened)를 보낸 뒤 반영됨.
     """
     return await asyncio.to_thread(_build_achievements, user_id)
 

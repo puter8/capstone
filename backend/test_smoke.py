@@ -858,10 +858,9 @@ def test_daily_tasks_do_not_count_a_conversation_the_user_never_spoke_in():
 
     sb, ctx, date_kst, _data = _achievement_ctx([opener_only], spoken_ids=[], today_msgs=[])
 
-    assert ctx["sessions_today"] == [] and ctx["completed_today"] == []
+    assert ctx["sessions_today"] == []
     assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is False  # 오늘 대화 시작
-    assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is False  # 오늘 대화 완료
-    assert main._eval_task(sb, "user-1", date_kst, "E3", ctx) is False  # 이번 주 첫 대화
+    assert main._eval_task(sb, "user-1", date_kst, "A7", ctx) is False  # 10번 주고받기
 
 
 def test_daily_tasks_count_a_conversation_once_the_user_speaks():
@@ -875,44 +874,52 @@ def test_daily_tasks_count_a_conversation_once_the_user_speaks():
 
     assert [s["id"] for s in ctx["sessions_today"]] == ["s-spoke"]
     assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is True
-    assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is True
-    assert main._eval_task(sb, "user-1", date_kst, "E3", ctx) is True
-    # 발화한 대화는 1개뿐 → 세션 2개 과제는 오프너만 있는 대화로 채워지지 않는다
-    assert main._eval_task(sb, "user-1", date_kst, "A4", ctx) is False
 
 
-def test_a6_counts_a_conversation_spoken_yesterday_but_completed_today():
-    """발화는 어제, 종료는 오늘인 대화도 A6 대상이다 — 발화 판정을 오늘로 좁히면 안 된다."""
-    start, _end = _today_window()
-    session = {"id": "s-old", "created_at": "2026-01-01T00:00:00+00:00", "ended_at": start, "reopened_at": None}
+def test_a1_ignores_a_conversation_started_on_an_earlier_day():
+    """어제 시작한 대화를 오늘 이어 말해도 "오늘 대화 시작" 은 아니다."""
+    session = {"id": "s-old", "created_at": "2026-01-01T00:00:00+00:00"}
 
     sb, ctx, date_kst, _data = _achievement_ctx([session], spoken_ids=["s-old"], today_msgs=[])
 
-    assert [s["id"] for s in ctx["completed_today"]] == ["s-old"]
-    assert main._eval_task(sb, "user-1", date_kst, "A6", ctx) is True
+    assert main._eval_task(sb, "user-1", date_kst, "A1", ctx) is False
 
 
-def test_opener_only_conversations_do_not_fill_the_weekly_streak_tasks():
-    """E2(이번 주 3일)가 시작만 누른 날로 채워지지 않는다."""
-    from datetime import datetime, timedelta
+def test_a7_needs_ten_exchanges_today_across_conversations():
+    """10번 주고받기는 오늘 저장된 사용자 발화를 대화 구분 없이 합산한다."""
+    start, _end = _today_window()
+    sessions = [{"id": "s-a", "created_at": start}, {"id": "s-b", "created_at": start}]
 
-    from main import _KST
+    def msgs(count):
+        return [{"session_id": "s-a" if i % 2 else "s-b", "role": "user", "transcript": f"turn {i}",
+                 "created_at": start} for i in range(count)]
 
-    today = datetime.now(_KST)
-    monday = today - timedelta(days=today.weekday())
-    sessions, spoken = [], []
-    for day in range(3):
-        at = (monday + timedelta(days=day)).isoformat()
-        sessions.append({"id": f"s-open-{day}", "created_at": at, "ended_at": None, "reopened_at": None})
-    for day in range(2):  # 그중 2일만 실제로 말했다
-        at = (monday + timedelta(days=day)).isoformat()
-        sessions.append({"id": f"s-spoke-{day}", "created_at": at, "ended_at": None, "reopened_at": None})
-        spoken.append(f"s-spoke-{day}")
+    sb, ctx, date_kst, _data = _achievement_ctx(sessions, spoken_ids=["s-a", "s-b"], today_msgs=msgs(9))
+    assert main._eval_task(sb, "user-1", date_kst, "A7", ctx) is False
 
-    sb, ctx, date_kst, _data = _achievement_ctx(sessions, spoken_ids=spoken, today_msgs=[])
+    sb, ctx, date_kst, _data = _achievement_ctx(sessions, spoken_ids=["s-a", "s-b"], today_msgs=msgs(10))
+    assert main._eval_task(sb, "user-1", date_kst, "A7", ctx) is True
 
-    assert len(ctx["week_conv_dates"]) == 2
-    assert main._eval_task(sb, "user-1", date_kst, "E2", ctx) is False
+
+def test_a7_does_not_count_pally_replies():
+    """Pally 발화까지 세면 5번만 말해도 10번이 된다."""
+    start, _end = _today_window()
+    rows = []
+    for i in range(5):
+        rows.append({"session_id": "s-1", "role": "user", "transcript": f"turn {i}", "created_at": start})
+        rows.append({"session_id": "s-1", "role": "pally", "transcript": f"reply {i}", "created_at": start})
+
+    sb, ctx, date_kst, _data = _achievement_ctx([_spoke_session()], spoken_ids=["s-1"], today_msgs=rows)
+
+    assert main._eval_task(sb, "user-1", date_kst, "A7", ctx) is False
+
+
+def test_unknown_daily_task_fails_loudly():
+    import pytest
+
+    sb, ctx, date_kst, _data = _achievement_ctx([], spoken_ids=[], today_msgs=[])
+    with pytest.raises(ValueError):
+        main._eval_task(sb, "user-1", date_kst, "B2", ctx)
 
 
 # ── 오늘의 표현 (F1) ─────────────────────────────────────────────────────────
@@ -968,39 +975,6 @@ def test_f1_does_not_fire_on_a_lookalike_phrase():
         snapshots=[{"expr_id": "b1-into"}],
     )
     assert main._eval_task(sb, "user-1", date_kst, "F1", ctx) is False
-
-
-def test_a_snapshot_taken_before_f1_was_fixed_gets_re_selected():
-    """F1 을 고정 목록에 넣은 날, 그 날 이미 snapshot 이 있던 사용자도 받아야 한다.
-
-    snapshot 을 그대로 쓰면 그 사용자는 하루 종일 표현 카드는 보이는데 과제는
-    없는 상태가 된다.
-    """
-    from types import SimpleNamespace
-    from unittest.mock import Mock
-
-    stale = {"task_ids": ["A1", "D2", "C3"]}        # F1 이 없는 과거 선택
-    written = []
-
-    def table(name):
-        q = Mock()
-        for m in ("select", "eq", "in_", "gte", "lt", "order", "limit"):
-            getattr(q, m).return_value = q
-        q.upsert.side_effect = lambda row, **_: written.append((name, row)) or q
-        q.execute.side_effect = lambda: SimpleNamespace(
-            data=[stale] if name == "daily_task_snapshots" else [])
-        return q
-
-    sb = Mock()
-    sb.table.side_effect = table
-    date_kst = main._kst_date()
-
-    picked = main._resolve_daily_task_ids(sb, "user-1", date_kst)
-
-    assert picked[:2] == ["A1", "F1"]
-    assert ("daily_task_snapshots", {
-        "user_id": "user-1", "date_kst": date_kst, "task_ids": picked,
-    }) in written
 
 
 def test_card_separates_pally_saying_it_from_the_user_saying_it():
@@ -1203,34 +1177,56 @@ def test_f1_completion_remains_done_in_the_achievements_response(monkeypatch):
     evaluate = main._eval_task
     monkeypatch.setattr(main, "get_supabase", lambda: sb)
     monkeypatch.setattr(main, "_kst_date", lambda: day)
-    monkeypatch.setattr(main, "_resolve_daily_task_ids", lambda *_: ["A1", "F1", "A3"])
     monkeypatch.setattr(main, "_gather_achievement_context", lambda *_: dict(ctx))
     monkeypatch.setattr(main, "_eval_task", lambda s, u, d, t, c: evaluate(s, u, d, t, c) if t == "F1" else True)
     monkeypatch.setattr(main, "_compute_streak", lambda *_: 1)
     first = asyncio.run(main.get_achievements(user_id="user-1"))
     data["profiles"][0]["english_level"] = "B2"
     second = asyncio.run(main.get_achievements(user_id="user-1"))
-    assert first["daily_tasks"][1] == second["daily_tasks"][1]
-    assert second["daily_tasks"][1]["status"] == "completed"
+    f1 = [t["id"] for t in second["daily_tasks"]].index("F1")
+    assert first["daily_tasks"][f1] == second["daily_tasks"][f1]
+    assert second["daily_tasks"][f1]["status"] == "completed"
     assert second["streak_count"] == 1
     assert data["streak_days"][-1]["qualified"] is True
 
 
-def test_f1_is_fixed_every_day_for_every_user():
-    """표현 카드가 매일 보이므로 그 Task 도 매일 있어야 한다 (추첨이면 어긋난다)."""
-    assert main._TASK_CATALOG["F1"][0] == "F"  # A~E 는 이미 다 쓰고 있다
-    for user in ("user-a", "user-b"):
-        for day in range(1, 15):
-            ids = main._select_daily_task_ids(user, f"2026-11-{day:02d}")
-            assert len(ids) == 3 and len(set(ids)) == 3
-            assert ids[:2] == ["A1", "F1"]  # 고정 2개 + 추첨 1개
-    # 추첨 슬롯은 고정분을 다시 뽑지 않는다.
-    picked = {
-        ids[2]
-        for day in range(1, 60)
-        for ids in [main._select_daily_task_ids("user-a", f"2026-11-{day % 30 + 1:02d}")]
-    }
-    assert not picked & set(main._FIXED_TASKS)
+def test_every_user_gets_the_same_three_tasks_every_day(monkeypatch):
+    """추첨 없이 매일 같은 3개. 스냅샷 테이블을 읽거나 쓰지 않는다."""
+    import asyncio
+
+    tables = []
+    for user, day in (("user-a", "2026-11-12"), ("user-b", "2026-11-13")):
+        sb, ctx, _day, _data = _achievement_ctx([], spoken_ids=[], today_msgs=[])
+        original = sb.table.side_effect
+        sb.table.side_effect = lambda name, _orig=original: tables.append(name) or _orig(name)
+        monkeypatch.setattr(main, "get_supabase", lambda sb=sb: sb)
+        monkeypatch.setattr(main, "_kst_date", lambda day=day: day)
+        monkeypatch.setattr(main, "_eval_task", lambda *_: False)
+        monkeypatch.setattr(main, "_compute_streak", lambda *_: 0)
+        result = asyncio.run(main.get_achievements(user_id=user))
+        assert [(t["id"], t["title"]) for t in result["daily_tasks"]] == [
+            ("A1", "오늘 Pally와 대화 시작하기"),
+            ("A7", "오늘 Pally와 10번 이상 주고받기"),
+            ("F1", "오늘의 표현 직접 써보기"),
+        ]
+    assert "daily_task_snapshots" not in tables
+
+
+def test_streak_needs_all_three_daily_tasks(monkeypatch):
+    import asyncio
+
+    sb, ctx, day, data = _achievement_ctx([], spoken_ids=[], today_msgs=[])
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_kst_date", lambda: day)
+    monkeypatch.setattr(main, "_compute_streak", lambda *_: 0)
+
+    monkeypatch.setattr(main, "_eval_task", lambda s, u, d, t, c: t != "A7")
+    asyncio.run(main.get_achievements(user_id="user-1"))
+    assert data["streak_days"][-1]["qualified"] is False
+
+    monkeypatch.setattr(main, "_eval_task", lambda *_: True)
+    asyncio.run(main.get_achievements(user_id="user-1"))
+    assert data["streak_days"][-1]["qualified"] is True
 
 
 # ── 현재 Pally 상태(current_axes) — 홈·마이페이지·다음 대화가 같은 값을 쓴다 ──
