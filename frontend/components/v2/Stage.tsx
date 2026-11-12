@@ -12,6 +12,8 @@ type StageProps = {
   state?: StageState;
   /** The lilac light behind Pally. Off on login, error and empty screens. */
   glow?: boolean;
+  /** Light little hops while Pally is generating a reply. */
+  hopping?: boolean;
   className?: string;
 };
 
@@ -33,7 +35,7 @@ const DIMENSIONS = {
  * around the character, never the character itself, which is the live
  * PallyCanvas render of the user's current axes.
  */
-export function Stage({ axes, size = "large", state = "idle", glow = true, className }: StageProps) {
+export function Stage({ axes, size = "large", state = "idle", glow = true, hopping = false, className }: StageProps) {
   const dims = DIMENSIONS[size];
   const gaze: PallyGaze = state === "thinking" ? "up-right" : "center";
   return (
@@ -68,7 +70,9 @@ export function Stage({ axes, size = "large", state = "idle", glow = true, class
           state === "thinking" ? "top-[calc(50%-10px)]" : "top-1/2",
         )}
       >
-        <PallyCanvas axes={axes} gaze={gaze} size={dims.character} />
+        <div className={cn(hopping && "animate-pally-hop motion-reduce:animate-none")}>
+          <PallyCanvas axes={axes} gaze={gaze} size={dims.character} />
+        </div>
       </div>
     </div>
   );

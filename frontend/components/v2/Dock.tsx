@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
-import { IconMic, IconMicOff, IconRotateCcw, IconSkipForward, IconSpinner, IconTranscript, IconVolume } from "./icons";
+import { IconMic, IconMicOff, IconRotateCcw, IconSkipForward, IconTranscript, IconVolume } from "./icons";
 
 export type DockState = "ready" | "recording" | "opening" | "processing" | "speaking" | "retry" | "disabled";
 
@@ -99,6 +99,7 @@ export function Dock({
   const replayHidden = state === "recording" || state === "speaking" || state === "disabled";
   const replayInert = replayHidden ? ({ inert: "" } as Record<string, string>) : {};
   // While a replay plays the center button is the skip control, so it stays enabled.
+  // Waiting on Pally is shown as a dimmed mic, not a spinner; the status line says why.
   const preparing = state === "opening" || state === "processing";
   const micDisabled = preparing || state === "disabled";
 
@@ -151,17 +152,15 @@ export function Dock({
               "absolute left-1/2 top-1/2 grid size-p-mic -translate-x-1/2 -translate-y-1/2 place-items-center rounded-p-full",
               "transition-transform duration-p-fast ease-p-out active:scale-[0.98] disabled:active:scale-100 motion-reduce:transition-none",
               (state === "ready" || state === "retry" || state === "recording") && "bg-p-primary text-p-on-primary hover:bg-p-primary-hover active:bg-p-primary-pressed",
-              preparing && "bg-p-primary-container text-p-primary",
               state === "speaking" && "border-2 border-p-primary bg-p-raised text-p-primary",
-              state === "disabled" && "bg-p-disabled-bg text-p-disabled-text",
+              micDisabled && "bg-p-disabled-bg text-p-disabled-text",
             )}
             disabled={micDisabled}
             onClick={onPressMic}
             type="button"
           >
-            {state === "ready" ? <IconMic size={28} /> : null}
+            {state === "ready" || preparing ? <IconMic size={28} /> : null}
             {state === "recording" ? <span aria-hidden="true" className="block size-[24px] rounded-[4px] bg-p-on-primary" /> : null}
-            {preparing ? <IconSpinner className="animate-spin motion-reduce:animate-none" size={28} /> : null}
             {state === "speaking" ? <IconSkipForward size={28} /> : null}
             {state === "retry" ? <IconRotateCcw size={28} /> : null}
             {state === "disabled" ? <IconMicOff size={28} /> : null}
