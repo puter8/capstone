@@ -485,9 +485,9 @@ export const mockPallyApi: PallyApi = {
       timezone: "Asia/Seoul" as const,
       streak_count: 1,
       daily_tasks: [
-        { id: "A1", title: "Pally에게 말 걸기", description: "오늘 한 번 대화해보세요", status: "completed" as const, completed_at: new Date().toISOString() },
-        { id: "A2", title: "대화 돌아보기", description: "대화 기록을 확인해보세요", status: "default" as const, completed_at: null },
-        { id: "A3", title: "피드백 확인하기", description: "오늘 받은 피드백을 확인해보세요", status: "default" as const, completed_at: null },
+        { id: "A1", title: "오늘 Pally와 대화 시작하기", description: "오늘 Pally와 새 대화를 시작해보세요", status: "completed" as const, completed_at: new Date().toISOString() },
+        { id: "A7", title: "오늘 Pally와 10번 이상 주고받기", description: "오늘 대화에서 Pally와 10번 이상 주고받아보세요", status: "default" as const, completed_at: null },
+        { id: "F1", title: "오늘의 표현 직접 써보기", description: "홈에 뜬 오늘의 표현을 대화에서 한 번 써보세요", status: "default" as const, completed_at: null },
       ],
     };
   },
