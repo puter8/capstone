@@ -54,6 +54,7 @@ from ai.matrix_engine import conversation_mean, replay_cumulative, compute_chara
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
+from ai.user_name import user_name_rule
 from lib import billing, kakaopay, session_feedback, stale_conversations, voice_energy
 from ai.voice_energy import MAX_SECONDS, MAX_WAV_BYTES, MIN_BASELINE_SECONDS
 
@@ -673,14 +674,18 @@ _LEVEL_GUIDE = {
 }
 
 
-def _build_chat_system_prompt(character_name: str, level: str, axes: Dict[str, int]) -> str:
+def _build_chat_system_prompt(
+    character_name: str, level: str, axes: Dict[str, int], user_name: Optional[str] = None
+) -> str:
     level_guide = _LEVEL_GUIDE.get(level, _LEVEL_GUIDE["B1"])
+    name_rule = user_name_rule(user_name)
+    name_line = f"{name_rule}\n" if name_rule else ""
     return f"""\
 You are {character_name}, the user's English conversation friend.
 Your personality right now (show it in every reply; the level and length rules win if they conflict):
 {persona_prompt(axes)}
 {level_guide}
-Keep the entire reply within 90 characters, using at most two short sentences.
+{name_line}Keep the entire reply within 90 characters, using at most two short sentences.
 
 ## Grammar correction rules
 When the user makes grammar or vocabulary mistakes, do not list or explain the mistakes.
@@ -710,9 +715,10 @@ async def _call_gemini_chat(
     character_name: str,
     level: str,
     axes: Dict[str, int],
+    user_name: Optional[str] = None,
 ) -> str:
     """Gemini 2.5 Flash로 Pally 대화 응답 생성 (axes = 이번 턴 EMA 축 → 성격 반영)"""
-    system_prompt = _build_chat_system_prompt(character_name, level, axes)
+    system_prompt = _build_chat_system_prompt(character_name, level, axes, user_name)
 
     contents = []
     for msg in (history or [])[-10:]:
@@ -764,6 +770,7 @@ async def _call_gemini_chat_segments(
     character_name: str,
     level: str,
     axes: Dict[str, int],
+    user_name: Optional[str] = None,
 ) -> tuple:
     """Pally 응답을 색칠 가능한 조각으로 받는다. 반환: (text, segments|None).
 
@@ -778,6 +785,7 @@ async def _call_gemini_chat_segments(
         character_name=character_name,
         level_guide=_LEVEL_GUIDE.get(level, _LEVEL_GUIDE["B1"]),
         persona=persona_prompt(axes),
+        user_name=user_name,
     )
 
     contents = []
@@ -820,7 +828,7 @@ async def _call_gemini_chat_segments(
             # 키가 섞인 URL 이 로그에 남지 않도록 예외 타입만 남긴다.
             logging.warning("segment reply failed (attempt %d): %s", attempt, type(exc).__name__)
 
-    reply = await _call_gemini_chat(utterance, history, character_name, level, axes)
+    reply = await _call_gemini_chat(utterance, history, character_name, level, axes, user_name=user_name)
     return reply, None
 
 
@@ -1375,6 +1383,7 @@ async def _generate_opener_text(
     level: str,
     recent_texts: list,
     expression_rule: Optional[str] = None,
+    user_name: Optional[str] = None,
 ) -> str:
     """ai.opener 호출. 동기 함수라 to_thread 로 offload, 실패 시 재시도.
 
@@ -1407,7 +1416,7 @@ async def _generate_opener_text(
             return await asyncio.wait_for(
                 asyncio.to_thread(
                     generate_opener, axes, level, recent_texts,
-                    _OPENER_CALL_TIMEOUT_S, expression_rule=rule,
+                    _OPENER_CALL_TIMEOUT_S, expression_rule=rule, user_name=user_name,
                 ),
                 timeout=min(_OPENER_TOTAL_TIMEOUT_S, remaining),
             )
@@ -1486,6 +1495,7 @@ async def create_conversation_opener(
         text = await _generate_opener_text(
             axes, session["level"], _recent_session_texts(sb, user_id, conversation_id),
             expression_rule=daily_expression.opener_rule(expr) if expr else None,
+            user_name=_user_display_name(sb, user_id),
         )
         try:
             sb.table("messages").insert({
@@ -1902,10 +1912,16 @@ async def create_turn(
     #    넣으면 표현 등장률은 7/8 로 높았지만 맥락과 어긋났다 ("음악 매일 들어요"
     #    에 "It depends on my mood."). 오프너는 주제를 여는 발화라 표현을 자연스럽게
     #    담을 수 있다.
+    try:
+        user_name = _user_display_name(sb, user_id)
+    except AppError:
+        _release_turn(sb, user_id)
+        raise
     gemini_t0 = time.perf_counter()
     try:
         reply, segments = await _call_gemini_chat_segments(
-            transcript, history, session["character_name"], session["level"], smoothed
+            transcript, history, session["character_name"], session["level"], smoothed,
+            user_name=user_name,
         )
     except Exception as e:
         logging.warning(f"turn Gemini failed: {e}")
@@ -2763,6 +2779,17 @@ def _user_level(sb, user_id: str) -> str:
         logging.error(f"english_level read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read profile")
     return prof.data[0]["english_level"] if prof.data else "B1"
+
+
+def _user_display_name(sb, user_id: str) -> Optional[str]:
+    """profiles.display_name — Pally 가 사용자를 부르는 이름. 프로필이 없거나
+    비어 있으면(컬럼 기본값 '') None 이고, 그때 Pally 는 이름 없이 말한다."""
+    try:
+        prof = sb.table("profiles").select("display_name").eq("id", user_id).execute()
+    except Exception as e:
+        logging.error(f"display_name read failed: {e}")
+        raise AppError(503, "persistence_failed", "Failed to read profile")
+    return (prof.data[0]["display_name"] or None) if prof.data else None
 
 
 def _daily_expression(sb, user_id: str, date_kst: str, level: str):

@@ -15,7 +15,7 @@ reason. Source and reply spans are checked here; whether the source is incorrect
 English remains a model judgment, not something substring checks can prove.
 
 Public API:
-  system_prompt(character_name, level_guide, persona) -> str
+  system_prompt(character_name, level_guide, persona, user_name=None) -> str
   RESPONSE_SCHEMA                      Gemini responseSchema for pieces and evidence
   parse_payload(raw) -> dict | None    tolerant JSON parse (see _salvage)
   build_reply(payload, utterance) -> ReplyParts | None
@@ -28,6 +28,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Optional
+
+from ai.user_name import user_name_rule
 
 # Pally speaks in one breath; the pieces are joined with single spaces.
 MAX_REPLY_CHARS = 90
@@ -84,7 +86,7 @@ _PROMPT = """You are {character_name}, the user's English conversation friend. A
 Your personality right now (show it in every piece; the level and length rules win if they conflict):
 {persona}
 {level_guide}
-Never write meta-commentary like "You can say X" or "The correct form is X".
+{name_rule}Never write meta-commentary like "You can say X" or "The correct form is X".
 Never point out a mistake. Just say it correctly yourself and move on.
 
 Return exactly these six fields, in this order. Decide whether there is an
@@ -176,9 +178,13 @@ question: "Did you rest well?"
 Stay in character as {character_name} at all times. Never break the fourth wall."""
 
 
-def system_prompt(character_name: str, level_guide: str, persona: str) -> str:
+def system_prompt(
+    character_name: str, level_guide: str, persona: str, user_name: Optional[str] = None
+) -> str:
+    rule = user_name_rule(user_name)
     return _PROMPT.format(
-        character_name=character_name, level_guide=level_guide, persona=persona
+        character_name=character_name, level_guide=level_guide, persona=persona,
+        name_rule=f"{rule}\n" if rule else "",
     )
 
 

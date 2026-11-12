@@ -530,7 +530,7 @@ def _opener_client(monkeypatch, *, session, first_message, text="Hey! What music
     monkeypatch.setattr(main, "_recent_session_texts", lambda *_: [])
     monkeypatch.setattr(main, "_user_level", lambda *_: session["level"])
 
-    async def fake_generate(axes, level, recent_texts, expression_rule=None):
+    async def fake_generate(axes, level, recent_texts, expression_rule=None, user_name=None):
         calls.append((axes, level, recent_texts, expression_rule))
         return text
 
@@ -552,6 +552,36 @@ def _tts(monkeypatch, audio="BASE64AUDIO"):
 _OPENER_CONVERSATION_ID = "11111111-1111-4111-8111-111111111111"
 _OPENER_URL = f"/api/conversations/{_OPENER_CONVERSATION_ID}/opener"
 _OPENER_HEADERS = {"Authorization": "Bearer test", "Idempotency-Key": "key-1"}
+
+
+def test_opener_gets_the_profile_display_name(monkeypatch):
+    """Pally 가 사용자 이름을 알도록 profiles.display_name 을 오프너에 넘긴다."""
+    client, _inserted, _calls = _opener_client(
+        monkeypatch, session={"id": _OPENER_CONVERSATION_ID, "level": "A2", "ended_at": None}, first_message=None
+    )
+    _tts(monkeypatch)
+    monkeypatch.setattr(main, "_user_display_name", lambda *_: "민주")
+    seen = []
+
+    async def fake_generate(axes, level, recent_texts, expression_rule=None, user_name=None):
+        seen.append(user_name)
+        return "Hey Minju! What music do you like?"
+
+    monkeypatch.setattr(main, "_generate_opener_text", fake_generate)
+    assert client.post(_OPENER_URL, headers=_OPENER_HEADERS).status_code == 201
+    assert seen == ["민주"]
+
+
+def test_display_name_empty_or_missing_profile_means_no_name():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    for rows, expected in (([{"display_name": "Chanhee"}], "Chanhee"),
+                           ([{"display_name": ""}], None), ([], None)):
+        sb = Mock()
+        sb.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+            SimpleNamespace(data=rows))
+        assert main._user_display_name(sb, "user-1") == expected
 
 
 def test_opener_saves_pally_message_and_returns_audio(monkeypatch):
@@ -1488,7 +1518,9 @@ def test_ungrounded_correction_retries_then_falls_back_without_logging_evidence(
     assert text == "That sounds relaxing. Did you have fun?"
     assert segments is None
     assert post.await_count == main._SEGMENT_ATTEMPTS
-    plain.assert_awaited_once_with(utterance, history, "Pally", "A2", dict(main._INITIAL_AXES))
+    plain.assert_awaited_once_with(
+        utterance, history, "Pally", "A2", dict(main._INITIAL_AXES), user_name=None
+    )
     assert caplog.text.count("segment reply rejected") == main._SEGMENT_ATTEMPTS
     assert utterance not in caplog.text
     assert payload["original_error"] not in caplog.text

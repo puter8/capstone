@@ -112,6 +112,7 @@ def install_turn(monkeypatch, baseline=BASELINE):
     monkeypatch.setattr(main, "_analyze_axes", Mock(return_value={**AXES, "Energy": 100}))
     monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
     monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: AXES["Intimacy"])
+    monkeypatch.setattr(main, "_user_display_name", lambda *_: None)
     monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("I like this conversation", 1)))
     monkeypatch.setattr(main, "_call_gemini_chat", AsyncMock(return_value="What do you like about it?"))
     monkeypatch.setattr(main, "_call_google_tts", AsyncMock(return_value="audio"))
