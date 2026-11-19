@@ -455,6 +455,10 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
         }
         assert all(isinstance(v, int) and v >= 0 for v in db_ms.values())
         assert main._TURN_METRICS[0]["db_total_ms"] == sum(db_ms.values())
+        # 5축 분석은 왕복이 아니지만 같은 미측정 구간에 있다. researched 모드에서는
+        # 발화마다 torch 인코더가 돌아서, 따로 재지 않으면 DB 탓으로 오인하게 된다.
+        assert main._TURN_METRICS[0]["analyze_ms"] >= 0
+        assert main._TURN_METRICS[0]["axis_analyzer"] == main._AXIS_ANALYZER_KIND
 
     asyncio.run(scenario())
 

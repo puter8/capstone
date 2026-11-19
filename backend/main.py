@@ -508,7 +508,7 @@ if _METRICS_TOKEN:
             raise AppError(403, "forbidden", "Invalid metrics token")
         turns = list(_TURN_METRICS)
         stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms",
-                  "db_total_ms", "total_ms")
+                  "db_total_ms", "analyze_ms", "total_ms")
 
         def _summarise(vals: list) -> dict:
             return {
@@ -1938,6 +1938,11 @@ async def create_turn(
     history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
     # 6. 5축 → 누적 → character (분석 어댑터: rule|ml|hybrid|researched, 기본 rule)
     # 앞선 발화는 저장된 원점수를 쓰고, 원점수 저장 전에 남긴 발화만 다시 분석한다.
+    # Not a round trip, but it sits in the same unmeasured stretch as the DB
+    # calls. Under PALLY_AXIS_ANALYZER=researched this is a torch encoder pass
+    # per utterance, not the rule function, so it has to be timed separately
+    # before the gap can be blamed on Supabase.
+    analyze_t0 = time.perf_counter()
     try:
         raw_axes = _analyze_axes(transcript)
         earlier = [m.get("raw_axes") or _analyze_axes(m["transcript"])
@@ -1946,6 +1951,7 @@ async def create_turn(
         logging.exception("turn axis analysis failed")
         _release_turn(sb, user_id)
         raise AppError(502, "analysis_failed", "Failed to analyze the speech style")
+    analyze_ms = round((time.perf_counter() - analyze_t0) * 1000)
     # 닮아가는 Pally: 끝낸 대화들의 표에 이번 대화의 표(지금까지 발화 평균)를 제자리에 넣어
     # 다시 계산한다(_cumulative_state). 친밀도는 접속일 수로 덮는다.
     previous_vote = session.get("axes_contribution")
@@ -2107,6 +2113,8 @@ async def create_turn(
         # never covered: see _timed for why it is broken out call by call.
         "db_ms": dict(db_ms),
         "db_total_ms": sum(db_ms.values()),
+        "analyze_ms": analyze_ms,
+        "axis_analyzer": _AXIS_ANALYZER_KIND,
         "status": status,
     }
     _TURN_METRICS.append(metric)
