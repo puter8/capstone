@@ -201,12 +201,17 @@ def test_complete_atomically_marks_review_work_before_scheduling_and_retries_ide
         process_review.assert_not_called()
         assign_title.assert_not_called()
         for tasks in (first_tasks, repeated_tasks):
-            assert len(tasks.tasks) == 2
-            review_task, title_task = tasks.tasks
+            assert len(tasks.tasks) == 3
+            review_task, memory_task, title_task = tasks.tasks
             assert review_task.func is process_review
             assert review_task.args == (main.get_supabase, "conversation-1", main._conversation_turns)
             assert review_task.kwargs == {}
             assert review_task.is_async is False
+            # Memory extraction is scheduled, never awaited inside the response.
+            assert memory_task.func is main.user_memory.process_session
+            assert memory_task.args == (main.get_supabase, "conversation-1", "user-1",
+                                        main._in_turn_order)
+            assert memory_task.is_async is False
             assert title_task.func is assign_title
             assert title_task.args == ("conversation-1",)
 
@@ -244,9 +249,10 @@ def test_repeated_complete_with_existing_title_only_reschedules_review(monkeypat
     response = asyncio.run(main.complete_conversation("conversation-1", tasks, "user-1", "retry-close"))
 
     assert response["conversation"]["completed_at"] == completed_at
-    assert len(tasks.tasks) == 1
+    assert len(tasks.tasks) == 2
     assert tasks.tasks[0].func is process_review
     assert tasks.tasks[0].kwargs == {}
+    assert tasks.tasks[1].func is main.user_memory.process_session
     process_review.assert_not_called()
     sb.rpc.assert_called_once_with("complete_conversation_with_feedback", {
         "p_conversation_id": "conversation-1",

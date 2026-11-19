@@ -1519,7 +1519,8 @@ def test_ungrounded_correction_retries_then_falls_back_without_logging_evidence(
     assert segments is None
     assert post.await_count == main._SEGMENT_ATTEMPTS
     plain.assert_awaited_once_with(
-        utterance, history, "Pally", "A2", dict(main._INITIAL_AXES), user_name=None
+        utterance, history, "Pally", "A2", dict(main._INITIAL_AXES),
+        user_name=None, memory=None,
     )
     assert caplog.text.count("segment reply rejected") == main._SEGMENT_ATTEMPTS
     assert utterance not in caplog.text
