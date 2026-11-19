@@ -1567,7 +1567,10 @@ def test_metrics_requires_a_valid_token_when_configured():
         'assert client.get("/api/metrics", headers={"X-Metrics-Token": "wrong"}).status_code == 403\n'
         'response = client.get("/api/metrics", headers={"X-Metrics-Token": "secret-token"})\n'
         "assert response.status_code == 200, response.text\n"
-        'assert set(response.json()) == {"count", "stages", "recent"}\n'
+        'assert set(response.json()) == {"count", "stages", "db_calls", "recent"}\n'
+        # db_total_ms sits beside the stage timers, so the Supabase share of a
+        # turn gets a p50 instead of living only inside each "recent" entry.
+        'assert "db_total_ms" in response.json()["stages"]\n'
         'print("OK")\n'
     )
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
