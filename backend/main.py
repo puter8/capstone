@@ -1923,44 +1923,80 @@ async def create_turn(
         _release_turn(sb, user_id)
         raise AppError(422, "speech_not_recognized", "No recognizable speech in audio")
 
-    # 5. 이전 이력 + 누적 axes 로드
-    try:
-        prior = _timed(db_ms, "history_read", lambda: _all_rows(
+    # 5-6. 이력 조회 · 이번 발화 분석 · 친밀도 조회 — 서로 의존하지 않는다.
+    #
+    # Analysing this utterance needs the transcript and nothing else; the two
+    # reads need neither. Run in sequence they cost the sum, run together they
+    # cost the longest one. That matters most under
+    # PALLY_AXIS_ANALYZER=researched, where the analysis is a torch encoder pass
+    # rather than the rule function.
+    #
+    # Each runs in a worker thread because every one of them blocks: the
+    # Supabase client is synchronous and the encoder is CPU work. Left on the
+    # event loop they stall every other request in this process, not just this
+    # turn.
+    work_ms: Dict[str, int] = {}
+
+    def _read_history():
+        return _timed(db_ms, "history_read", lambda: _all_rows(
             lambda a, b: (sb.table("messages").select("id, role, transcript, axes, raw_axes, created_at")
                           .eq("session_id", conversation_id).order("created_at").order("id")
                           .range(a, b).execute()),
             "Failed to load history"))
-    except AppError:
+
+    prior, raw_axes, intimacy = await asyncio.gather(
+        asyncio.to_thread(_read_history),
+        asyncio.to_thread(_timed, work_ms, "analyze_current",
+                          lambda: _analyze_axes(transcript)),
+        asyncio.to_thread(_timed, db_ms, "intimacy_read",
+                          lambda: _intimacy_from_access_days(sb, user_id)),
+        return_exceptions=True,
+    )
+    # Checked in the order the sequential version ran them, so the same failure
+    # still wins when more than one goes wrong.
+    if isinstance(prior, BaseException):
         _release_turn(sb, user_id)
-        raise
+        if isinstance(prior, AppError):
+            raise prior
+        logging.error("turn history read failed: %r", prior)
+        raise AppError(503, "persistence_failed", "Failed to load history")
+    if isinstance(raw_axes, BaseException):
+        _release_turn(sb, user_id)
+        logging.error("turn axis analysis failed: %r", raw_axes)
+        raise AppError(502, "analysis_failed", "Failed to analyze the speech style")
+    if isinstance(intimacy, BaseException):
+        _release_turn(sb, user_id)
+        if isinstance(intimacy, AppError):
+            raise intimacy
+        logging.error("turn intimacy read failed: %r", intimacy)
+        raise AppError(503, "persistence_failed", "Failed to load Pally state")
+
     # The history sent to the AI must alternate user→reply; see _in_turn_order.
     prior_rows = _in_turn_order(prior)
     history = [ChatMessage(role=m["role"], content=m["transcript"]) for m in prior_rows]
-    # 6. 5축 → 누적 → character (분석 어댑터: rule|ml|hybrid|researched, 기본 rule)
     # 앞선 발화는 저장된 원점수를 쓰고, 원점수 저장 전에 남긴 발화만 다시 분석한다.
-    # Not a round trip, but it sits in the same unmeasured stretch as the DB
-    # calls. Under PALLY_AXIS_ANALYZER=researched this is a torch encoder pass
-    # per utterance, not the rule function, so it has to be timed separately
-    # before the gap can be blamed on Supabase.
-    analyze_t0 = time.perf_counter()
+    # This needs prior_rows, so it cannot join the group above; it is normally
+    # free because every recent turn stored its raw_axes.
     try:
-        raw_axes = _analyze_axes(transcript)
-        earlier = [m.get("raw_axes") or _analyze_axes(m["transcript"])
-                   for m in prior_rows if m["role"] == "user" and m.get("transcript")]
+        earlier = await asyncio.to_thread(
+            _timed, work_ms, "analyze_prior",
+            lambda: [m.get("raw_axes") or _analyze_axes(m["transcript"])
+                     for m in prior_rows if m["role"] == "user" and m.get("transcript")])
     except Exception:
         logging.exception("turn axis analysis failed")
         _release_turn(sb, user_id)
         raise AppError(502, "analysis_failed", "Failed to analyze the speech style")
-    analyze_ms = round((time.perf_counter() - analyze_t0) * 1000)
+    analyze_ms = work_ms.get("analyze_current", 0) + work_ms.get("analyze_prior", 0)
     # 닮아가는 Pally: 끝낸 대화들의 표에 이번 대화의 표(지금까지 발화 평균)를 제자리에 넣어
     # 다시 계산한다(_cumulative_state). 친밀도는 접속일 수로 덮는다.
     previous_vote = session.get("axes_contribution")
     try:
-        smoothed = _timed(db_ms, "cumulative_state", lambda: _cumulative_state(sb, user_id, (
-            conversation_id, conversation_mean(earlier + [raw_axes]),
-            previous_vote["first_completed_at"] if previous_vote else None)))
-        smoothed["Intimacy"] = _timed(db_ms, "intimacy_read",
-                                      lambda: _intimacy_from_access_days(sb, user_id))
+        smoothed = await asyncio.to_thread(
+            _timed, db_ms, "cumulative_state",
+            lambda: _cumulative_state(sb, user_id, (
+                conversation_id, conversation_mean(earlier + [raw_axes]),
+                previous_vote["first_completed_at"] if previous_vote else None)))
+        smoothed["Intimacy"] = intimacy
     except AppError:
         _release_turn(sb, user_id)
         raise
@@ -2114,6 +2150,9 @@ async def create_turn(
         "db_ms": dict(db_ms),
         "db_total_ms": sum(db_ms.values()),
         "analyze_ms": analyze_ms,
+        # Split out because a large analyze_prior means old messages are missing
+        # raw_axes and are being re-encoded, which is a different fix.
+        "analyze_ms_parts": dict(work_ms),
         "axis_analyzer": _AXIS_ANALYZER_KIND,
         "status": status,
     }

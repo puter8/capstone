@@ -569,3 +569,79 @@ def test_localhost_switch_does_not_expand_a_wildcard_allowlist(monkeypatch):
     monkeypatch.delenv("CORS_ALLOW_ORIGINS", raising=False)
     monkeypatch.setenv("CORS_ALLOW_LOCALHOST", "1")
     assert main._cors_origins() == ["*"]
+
+
+def test_history_analysis_and_intimacy_run_at_the_same_time(monkeypatch):
+    """STT 뒤 세 작업은 서로의 결과를 쓰지 않으므로 동시에 돌아야 한다.
+
+    순서대로 돌리면 세 비용을 다 더한다. 운영 실측에서 턴 p50 6556ms 중 2428ms 가
+    stt/gemini/tts/save 어디에도 안 잡히는 구간이었고, researched 분석기는 발화마다
+    인코더를 한 번 돌린다. 겹쳐 돌리면 가장 긴 하나만 남는다.
+
+    머신 속도에 의존하지 않도록 "실행 구간이 서로 겹친다"로 검증한다. 누가 다시
+    순차로 바꾸면 구간이 줄줄이 이어져 이 테스트가 깨진다.
+    """
+    import time as _time
+
+    spans = {}
+
+    def _tracked(label, value):
+        def run(*_args, **_kwargs):
+            start = _time.perf_counter()
+            _time.sleep(0.25)
+            spans[label] = (start, _time.perf_counter())
+            return value() if callable(value) else value
+        return run
+
+    reply = "That sounds nice. What did you eat?"
+    sessions, messages = Mock(), Mock()
+    for query in (sessions, messages):
+        for method in ("select", "eq", "order", "insert", "range"):
+            getattr(query, method).return_value = query
+    sessions.execute.return_value = SimpleNamespace(data=[{
+        "id": "conversation-1", "user_id": "user-1", "ended_at": None,
+        "character_name": "Pally", "level": "B1",
+    }])
+    messages.execute.side_effect = [
+        SimpleNamespace(data=[]),
+        SimpleNamespace(data=[{"id": "turn-1", "role": "user",
+                               "created_at": "2026-09-15T00:00:00+00:00"}]),
+    ]
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"sessions": sessions, "messages": messages}[name]
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_read_subscription", lambda *_: None)
+    monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
+    monkeypatch.setattr(main, "_user_display_name", lambda *_: None)
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "_TURN_METRICS", [])
+    monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("I ate lunch", 1.0)))
+    monkeypatch.setattr(main, "_call_gemini_chat", AsyncMock(return_value=reply))
+
+    monkeypatch.setattr(main, "_all_rows", _tracked("history", []))
+    monkeypatch.setattr(main, "_analyze_axes", _tracked("analyze", lambda: dict(main._INITIAL_AXES)))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", _tracked("intimacy", 10))
+
+    async def scenario():
+        _install_transport(monkeypatch,
+                           lambda request: httpx.Response(200, json={"audioContent": "bXAz"}))
+        async with main.app.router.lifespan_context(main.app):
+            request = Request({"type": "http"})
+            request.state.request_id = "test-parallel-turn"
+            await asyncio.wait_for(main.create_turn(
+                "conversation-1", request,
+                UploadFile(filename="test.wav", file=BytesIO(b"test-audio")),
+                "user-1", "request-1",
+            ), timeout=5)
+
+        assert set(spans) == {"history", "analyze", "intimacy"}
+        # 세 구간이 서로 겹친다 = 동시에 돌았다.
+        for a, b in (("history", "analyze"), ("history", "intimacy"), ("analyze", "intimacy")):
+            (a_start, a_end), (b_start, b_end) = spans[a], spans[b]
+            assert a_start < b_end and b_start < a_end, f"{a} and {b} did not overlap"
+        # 합(0.75s)이 아니라 가장 긴 하나(0.25s)에 가까워야 한다.
+        wall = max(e for _, e in spans.values()) - min(s for s, _ in spans.values())
+        assert wall < 0.6, f"the three ran nearly sequentially: {wall:.2f}s"
+
+    asyncio.run(scenario())
