@@ -29,6 +29,7 @@ import httpx
 
 from ai.contracts import AxisResult
 from ai.matrix_engine import compute_character
+from ai.user_name import user_name_rule
 
 # topic -> keywords that mark the topic as recently used (word-boundary match)
 TOPICS: dict[str, tuple[str, ...]] = {
@@ -95,9 +96,9 @@ Rules (the level rules win over the personality if they conflict):
 - {level_guide}
 - End with a question the user can answer about their own life.
 - English only. No emoji, no quotation marks.
-- You know nothing about the user yet: never refer to past chats or things they told you.
+- You know nothing about the user yet except their name: never refer to past chats or things they told you.
 - Do not start with "Hello there". Never offer help ("How can I help/assist").
-{expression_rule}Output only the opener."""
+{name_rule}{expression_rule}Output only the opener."""
 
 _WORD = re.compile(r"[A-Za-z0-9']+")
 _SENTENCE = re.compile(r"[^.!?]+[.!?]+")
@@ -221,8 +222,12 @@ def generate_opener(
     timeout: float = DEFAULT_TIMEOUT_S,
     rng: random.Random | None = None,
     expression_rule: str | None = None,
+    user_name: str | None = None,
 ) -> str:
-    """`expression_rule`: one extra prompt rule, e.g. the day's expression for
+    """`user_name`: profiles.display_name; empty or None means Pally does not
+    know it (see ai.user_name).
+
+    `expression_rule`: one extra prompt rule, e.g. the day's expression for
     Pally to model (see ai.daily_expression.opener_rule). It is appended after
     the fixed rules so the sentence and word limits still bind."""
     rng = rng or random.Random()
@@ -234,6 +239,7 @@ def generate_opener(
         max_words=max_words - PROMPT_WORD_MARGIN,
         level_guide=guide,
         expression_rule=f"{expression_rule}\n" if expression_rule else "",
+        name_rule=f"- {rule}\n" if (rule := user_name_rule(user_name)) else "",
     )
     return validate_opener(_call_gemini(prompt, timeout), max_words)
 

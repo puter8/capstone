@@ -172,6 +172,17 @@ const config: Config = {
       transitionTimingFunction: {
         "p-out": "var(--p-ease-out)",
       },
+      // Two small hops, then a rest, so Pally looks busy without being frantic.
+      keyframes: {
+        "pally-hop": {
+          "0%, 48%, 100%": { transform: "translateY(0)" },
+          "12%, 36%": { transform: "translateY(-9px)" },
+          "24%": { transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        "pally-hop": "pally-hop 1.1s ease-in-out infinite",
+      },
     },
   },
   plugins: [],
