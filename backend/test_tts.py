@@ -445,6 +445,16 @@ def test_turn_returns_spoken_correction_without_generating_review_cards(monkeypa
         assert len(main._TURN_METRICS) == 1
         assert main._TURN_METRICS[0]["request_id"] == "test-spoken-correction"
         assert main._TURN_METRICS[0]["feedback_ms"] == 0
+        # 턴이 기다리는 Supabase 호출마다 시간이 남아야 한다. 운영에서 턴의 절반이
+        # stt/gemini/tts/save 어디에도 안 잡히는 구간이었고, 호출별로 쪼개지 않으면
+        # 어느 호출이 느린지 알 수 없어 고칠 수도 없다.
+        db_ms = main._TURN_METRICS[0]["db_ms"]
+        assert set(db_ms) == {
+            "session_read", "dedup_read", "subscription_read", "reserve_turn",
+            "history_read", "cumulative_state", "intimacy_read", "session_recheck",
+        }
+        assert all(isinstance(v, int) and v >= 0 for v in db_ms.values())
+        assert main._TURN_METRICS[0]["db_total_ms"] == sum(db_ms.values())
 
     asyncio.run(scenario())
 

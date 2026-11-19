@@ -507,19 +507,31 @@ if _METRICS_TOKEN:
         if not secrets.compare_digest(x_metrics_token, _METRICS_TOKEN):
             raise AppError(403, "forbidden", "Invalid metrics token")
         turns = list(_TURN_METRICS)
-        stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms", "total_ms")
-        summary = {}
-        for stage in stages:
-            vals = [t[stage] for t in turns if t.get(stage) is not None]
-            summary[stage] = {
+        stages = ("stt_ms", "gemini_ms", "tts_ms", "feedback_ms", "save_ms",
+                  "db_total_ms", "total_ms")
+
+        def _summarise(vals: list) -> dict:
+            return {
                 "p50": _pct(vals, 50),
                 "p95": _pct(vals, 95),
                 "avg": round(sum(vals) / len(vals)) if vals else None,
                 "max": max(vals) if vals else None,
             }
+
+        summary = {s: _summarise([t[s] for t in turns if t.get(s) is not None])
+                   for s in stages}
+        # Which Supabase call the turn actually waits on. Turns recorded before
+        # these timings existed simply contribute nothing.
+        labels = {label for t in turns for label in (t.get("db_ms") or {})}
+        db_summary = {
+            label: _summarise([t["db_ms"][label] for t in turns
+                               if t.get("db_ms") and label in t["db_ms"]])
+            for label in sorted(labels)
+        }
         return {
             "count": len(turns),
             "stages": summary,
+            "db_calls": db_summary,
             "recent": turns[-20:],
         }
 
@@ -1801,6 +1813,23 @@ def _replayed_turn(sb, conversation_id: str, u: dict) -> dict:
     }
 
 
+def _timed(store: Dict[str, int], label: str, call):
+    """Run a Supabase call and record how long it took, in ms, under `label`.
+
+    Measured 2026-11-19: a turn's p50 was 6556 ms while STT+Gemini+TTS+save
+    accounted for only 4128 ms. The missing 2.4 s was constant whatever the
+    transcript length, so it is per-call cost and not data volume, but nothing
+    timed the individual calls, so which one pays it was unknown. These labels
+    answer that. Exceptions are still raised: the caller's error handling is
+    unchanged, and a failed call is timed like any other.
+    """
+    t0 = time.perf_counter()
+    try:
+        return call()
+    finally:
+        store[label] = store.get(label, 0) + round((time.perf_counter() - t0) * 1000)
+
+
 @app.post("/api/conversations/{conversation_id}/turns", status_code=201,
           dependencies=[Depends(_valid_conversation_id)])
 async def create_turn(
@@ -1821,6 +1850,7 @@ async def create_turn(
         raise AppError(503, "service_unavailable", "Speech/AI provider not configured")
 
     turn_t0 = time.perf_counter()
+    db_ms: Dict[str, int] = {}
 
     sb = get_supabase()
 
@@ -1828,7 +1858,7 @@ async def create_turn(
     try:
         # memory_prompt rides along on a read the turn already does, so telling
         # Pally what it knows about the user costs no extra round trip.
-        sess = sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution, memory_prompt").eq("id", conversation_id).execute()
+        sess = _timed(db_ms, "session_read", lambda: sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution, memory_prompt").eq("id", conversation_id).execute())
     except Exception as e:
         logging.error(f"turn session read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to read conversation")
@@ -1840,7 +1870,7 @@ async def create_turn(
 
     # 2. dedup — 같은 (conversation, idem_key) user turn 이 이미 있으면 재반환
     try:
-        dup = sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute()
+        dup = _timed(db_ms, "dedup_read", lambda: sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute())
     except Exception as e:
         logging.error(f"turn dedup read failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to check idempotency")
@@ -1873,8 +1903,9 @@ async def create_turn(
 
     # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
     #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
-    quota_limit = None if billing.entitled(_read_subscription(sb, user_id)) else FREE_DAILY_TURNS
-    quota_used = _reserve_turn(sb, user_id, quota_limit)
+    subscription = _timed(db_ms, "subscription_read", lambda: _read_subscription(sb, user_id))
+    quota_limit = None if billing.entitled(subscription) else FREE_DAILY_TURNS
+    quota_used = _timed(db_ms, "reserve_turn", lambda: _reserve_turn(sb, user_id, quota_limit))
     if quota_used < 0:
         raise AppError(429, "quota_exceeded", "오늘 사용할 수 있는 대화를 모두 사용했어요.",
                        {"reset_at": _kst_reset_at(), "daily_limit": FREE_DAILY_TURNS})
@@ -1894,11 +1925,11 @@ async def create_turn(
 
     # 5. 이전 이력 + 누적 axes 로드
     try:
-        prior = _all_rows(
+        prior = _timed(db_ms, "history_read", lambda: _all_rows(
             lambda a, b: (sb.table("messages").select("id, role, transcript, axes, raw_axes, created_at")
                           .eq("session_id", conversation_id).order("created_at").order("id")
                           .range(a, b).execute()),
-            "Failed to load history")
+            "Failed to load history"))
     except AppError:
         _release_turn(sb, user_id)
         raise
@@ -1919,10 +1950,11 @@ async def create_turn(
     # 다시 계산한다(_cumulative_state). 친밀도는 접속일 수로 덮는다.
     previous_vote = session.get("axes_contribution")
     try:
-        smoothed = _cumulative_state(sb, user_id, (
+        smoothed = _timed(db_ms, "cumulative_state", lambda: _cumulative_state(sb, user_id, (
             conversation_id, conversation_mean(earlier + [raw_axes]),
-            previous_vote["first_completed_at"] if previous_vote else None))
-        smoothed["Intimacy"] = _intimacy_from_access_days(sb, user_id)
+            previous_vote["first_completed_at"] if previous_vote else None)))
+        smoothed["Intimacy"] = _timed(db_ms, "intimacy_read",
+                                      lambda: _intimacy_from_access_days(sb, user_id))
     except AppError:
         _release_turn(sb, user_id)
         raise
@@ -1980,8 +2012,9 @@ async def create_turn(
     # Guard a close/reopen that happened while speech providers were running.
     # The frontend also waits for its in-flight turn before sending /complete.
     try:
-        latest = (sb.table("sessions").select("id, user_id, ended_at, reopen_count")
-                  .eq("id", conversation_id).execute())
+        latest = _timed(db_ms, "session_recheck",
+                        lambda: sb.table("sessions").select("id, user_id, ended_at, reopen_count")
+                        .eq("id", conversation_id).execute())
     except Exception as exc:
         _release_turn(sb, user_id)
         logging.error("turn session recheck failed: %s", type(exc).__name__)
@@ -2070,6 +2103,10 @@ async def create_turn(
         "feedback_ms": 0,
         "save_ms": save_ms,
         "total_ms": round((time.perf_counter() - turn_t0) * 1000),
+        # Per-call Supabase timings. db_total_ms is what the stage timers above
+        # never covered: see _timed for why it is broken out call by call.
+        "db_ms": dict(db_ms),
+        "db_total_ms": sum(db_ms.values()),
         "status": status,
     }
     _TURN_METRICS.append(metric)
