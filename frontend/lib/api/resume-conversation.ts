@@ -8,6 +8,26 @@ export const CONVERSATION_STORAGE_KEY = "pally:conversationId";
 export const RESUME_INTENT_KEY = "pally:resumeConversationId";
 
 /**
+ * Is there an unfinished conversation for the home screen to bring back?
+ *
+ * Only that is worth a blank loading screen: painting the idle home and then
+ * flipping into a conversation reads as a glitch. With nothing to restore the
+ * home paints at once and fills in usage, name and Pally's look as they arrive.
+ *
+ * Reads only. The home screen's restore is what consumes the resume marker.
+ * The marker is checked before the query because a soft navigation can reach
+ * the first render with the URL not yet committed.
+ */
+export function hasConversationToRestore(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean(
+    window.sessionStorage.getItem(RESUME_INTENT_KEY)
+    || new URLSearchParams(window.location.search).get("conversation_id")
+    || window.localStorage.getItem(CONVERSATION_STORAGE_KEY),
+  );
+}
+
+/**
  * Hands a finished conversation to the home screen without writing to it.
  *
  * Opening a conversation must not change it. Reopening is deferred to the home
