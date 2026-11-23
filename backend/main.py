@@ -1854,13 +1854,27 @@ async def create_turn(
 
     sb = get_supabase()
 
-    # 1. conversation 소유권 (타인 소유는 존재 숨김 → 404)
-    try:
-        # memory_prompt rides along on a read the turn already does, so telling
-        # Pally what it knows about the user costs no extra round trip.
-        sess = _timed(db_ms, "session_read", lambda: sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution, memory_prompt").eq("id", conversation_id).execute())
-    except Exception as e:
-        logging.error(f"turn session read failed: {e}")
+    # 1-2. 소유권 조회 · 중복 조회 · 구독 조회 — 서로의 결과를 쓰지 않는다.
+    #
+    # Run one after another they cost three round trips before the turn even
+    # reaches the audio; together they cost one. The subscription read is
+    # thrown away when the conversation is missing or the turn is a replay,
+    # but it is a single read and those paths are rare, so paying for it
+    # always is cheaper than keeping it on the critical path.
+    #
+    # memory_prompt rides along on a read the turn already does, so telling
+    # Pally what it knows about the user costs no extra round trip.
+    sess, dup, subscription = await asyncio.gather(
+        asyncio.to_thread(_timed, db_ms, "session_read", lambda: sb.table("sessions").select("id, character_name, level, user_id, ended_at, reopen_count, axes_contribution, memory_prompt").eq("id", conversation_id).execute()),
+        asyncio.to_thread(_timed, db_ms, "dedup_read", lambda: sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute()),
+        asyncio.to_thread(_timed, db_ms, "subscription_read", lambda: _read_subscription(sb, user_id)),
+        return_exceptions=True,
+    )
+    # Checked in the order the sequential version ran them, so the same failure
+    # still wins when more than one goes wrong. No quota is reserved yet, so
+    # none of these paths needs _release_turn.
+    if isinstance(sess, BaseException):
+        logging.error(f"turn session read failed: {sess}")
         raise AppError(503, "persistence_failed", "Failed to read conversation")
     if not sess.data or sess.data[0].get("user_id") != user_id:
         raise AppError(404, "not_found", "Conversation not found")
@@ -1868,14 +1882,14 @@ async def create_turn(
     if session.get("ended_at"):
         raise AppError(409, "conversation_closed", "Conversation is already completed")
 
-    # 2. dedup — 같은 (conversation, idem_key) user turn 이 이미 있으면 재반환
-    try:
-        dup = _timed(db_ms, "dedup_read", lambda: sb.table("messages").select("*").eq("session_id", conversation_id).eq("idempotency_key", idem_key).execute())
-    except Exception as e:
-        logging.error(f"turn dedup read failed: {e}")
+    if isinstance(dup, BaseException):
+        logging.error(f"turn dedup read failed: {dup}")
         raise AppError(503, "persistence_failed", "Failed to check idempotency")
     if dup.data:
         return _replayed_turn(sb, conversation_id, dup.data[0])
+
+    if isinstance(subscription, BaseException):
+        raise subscription
 
     # 3. 오디오
     # 클라이언트는 최대 30초 16kHz 모노 WAV 를 보낸다. 그보다 큰 업로드는 메모리·STT 비용만
@@ -1903,9 +1917,9 @@ async def create_turn(
 
     # 3.5. quota 원자적 예약 — AI 부르기 전에 차단 (초과면 여기서 429, 외부 호출 0).
     #      아래에서 turn 이 실패하면 _release_turn 으로 롤백해 차감을 취소한다.
-    subscription = _timed(db_ms, "subscription_read", lambda: _read_subscription(sb, user_id))
     quota_limit = None if billing.entitled(subscription) else FREE_DAILY_TURNS
-    quota_used = _timed(db_ms, "reserve_turn", lambda: _reserve_turn(sb, user_id, quota_limit))
+    quota_used = await asyncio.to_thread(
+        _timed, db_ms, "reserve_turn", lambda: _reserve_turn(sb, user_id, quota_limit))
     if quota_used < 0:
         raise AppError(429, "quota_exceeded", "오늘 사용할 수 있는 대화를 모두 사용했어요.",
                        {"reset_at": _kst_reset_at(), "daily_limit": FREE_DAILY_TURNS})
@@ -2053,10 +2067,13 @@ async def create_turn(
 
     # Guard a close/reopen that happened while speech providers were running.
     # The frontend also waits for its in-flight turn before sending /complete.
+    # Sequential by necessity - the insert must not run before this check - so
+    # this only moves the wait off the event loop, it does not shorten the turn.
     try:
-        latest = _timed(db_ms, "session_recheck",
-                        lambda: sb.table("sessions").select("id, user_id, ended_at, reopen_count")
-                        .eq("id", conversation_id).execute())
+        latest = await asyncio.to_thread(
+            _timed, db_ms, "session_recheck",
+            lambda: sb.table("sessions").select("id, user_id, ended_at, reopen_count")
+            .eq("id", conversation_id).execute())
     except Exception as exc:
         _release_turn(sb, user_id)
         logging.error("turn session recheck failed: %s", type(exc).__name__)
@@ -2073,7 +2090,7 @@ async def create_turn(
     # 9. 저장 — user 행에만 idem_key (unique index 로 중복 저장 차단) — latency 측정
     save_t0 = time.perf_counter()
     try:
-        save = sb.table("messages").insert([
+        save = await asyncio.to_thread(lambda: sb.table("messages").insert([
             {
                 "session_id": conversation_id,
                 "role": "user",
@@ -2096,7 +2113,7 @@ async def create_turn(
                 "character": character,
                 "segments": segments,
             },
-        ]).execute()
+        ]).execute())
     except Exception as e:
         if "conversation_closed" in str(e):
             _release_turn(sb, user_id)
