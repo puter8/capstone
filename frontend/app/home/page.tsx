@@ -179,7 +179,11 @@ export default function HomeV2Page() {
     />
   );
 
-  if (home.isRestoring && !home.paintedFromSnapshot) {
+  // Only a conversation being brought back is worth a blank screen: painting the
+  // idle home and then flipping into a conversation reads as a glitch. With
+  // nothing to restore the home paints at once and fills in usage, name and
+  // Pally's look as they arrive, with the talk button locked until then.
+  if (home.isRestoring && !home.paintedFromSnapshot && home.restoringConversation) {
     return (
       <AppFrame className="items-center justify-center gap-p-4">
         <p className="flex items-center gap-p-2 text-p-label text-p-text-secondary" role="status">

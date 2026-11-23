@@ -25,7 +25,7 @@ import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
 import { userFacingWarningMessages } from "@/lib/api/error-messages";
 import { requestPallyOpener } from "@/lib/api/opener";
 import { markTitlePending } from "@/lib/api/pending-titles";
-import { RESUME_INTENT_KEY } from "@/lib/api/resume-conversation";
+import { hasConversationToRestore, RESUME_INTENT_KEY } from "@/lib/api/resume-conversation";
 import {
   clearUserRouteData,
   forgetRememberedUser,
@@ -76,6 +76,8 @@ export type HomeConversation = {
   warning: string | null;
   isRestoring: boolean;
   paintedFromSnapshot: boolean;
+  /** An unfinished conversation is being brought back, so the screen must wait. */
+  restoringConversation: boolean;
   hasRestoredPally: boolean;
   baselineAllowed: boolean;
   quotaExhausted: boolean;
@@ -98,15 +100,11 @@ export type HomeConversation = {
 };
 
 // Returning to home paints the last known state instead of the full-screen loader.
-// A conversation to restore (stored id or ?conversation_id) still needs the loader.
+// A conversation to restore still needs the loader.
 // Client-only: on a hard load the cache is empty, so server and client markup match.
 function readHomeSnapshot(): HomeSnapshot | null {
   if (typeof window === "undefined") return null;
-  // Checked before the query because a soft navigation can reach this first render
-  // with the URL not yet committed, and the idle home must not paint over a resume.
-  if (window.sessionStorage.getItem(RESUME_INTENT_KEY)) return null;
-  if (new URLSearchParams(window.location.search).get("conversation_id")) return null;
-  if (window.localStorage.getItem(CONVERSATION_KEY)) return null;
+  if (hasConversationToRestore()) return null;
   return peekHomeSnapshot();
 }
 
@@ -145,6 +143,10 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   const [isRestoring, setIsRestoring] = useState(true);
   const [baselineAllowed, setBaselineAllowed] = useState(false);
   const [paintedFromSnapshot, setPaintedFromSnapshot] = useState(snapshot !== null);
+  // Starts true so the server markup and the first client render agree; reading
+  // localStorage during that render would be a hydration mismatch. The effect
+  // below settles it on the next tick, long before the restore completes.
+  const [restoringConversation, setRestoringConversation] = useState(true);
   const [hasRestoredPally, setHasRestoredPally] = useState(snapshot !== null);
   const [warning, setWarning] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageResponse | null>(snapshot?.usage ?? null);
@@ -156,6 +158,14 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   // with no way back but a reload. Dismissing that error re-runs the restore.
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const restoreFailedRef = useRef(false);
+
+  // Nothing to bring back means nothing to wait for: the idle home can paint at
+  // once and fill in usage, name and Pally's look as they arrive. The talk
+  // button stays disabled until the restore finishes (see controlsLocked), so
+  // painting early cannot start a conversation before the screen is ready.
+  useEffect(() => {
+    setRestoringConversation(hasConversationToRestore());
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -833,6 +843,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
     warning,
     isRestoring,
     paintedFromSnapshot,
+    restoringConversation,
     hasRestoredPally,
     baselineAllowed,
     quotaExhausted,

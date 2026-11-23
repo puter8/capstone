@@ -13,6 +13,7 @@
     "check:daily-expression": "tsx scripts/check-daily-expression.ts",
     "check:error-messages": "tsx scripts/check-error-messages.ts",
     "check:feedback-sentence": "tsx scripts/check-feedback-sentence.ts",
+    "check:home-loader": "tsx scripts/check-home-loader.ts",
     "check:home-snapshot": "tsx scripts/check-home-snapshot.ts",
     "check:inline-feedback": "tsx scripts/check-inline-feedback.ts",
     "check:pally-segments": "tsx scripts/check-pally-segments.ts",
