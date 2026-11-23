@@ -666,7 +666,12 @@ def _turn_mocks(monkeypatch, *, sessions_execute, messages_execute, subscription
     monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
     monkeypatch.setattr(main, "_all_rows", lambda *_a, **_k: [])
     monkeypatch.setattr(main, "_analyze_axes", lambda *_: dict(main._INITIAL_AXES))
+    # create_turn 의 첫 줄이 두 키를 다 요구한다. _install_transport 가 CLOUD 키를
+    # 세팅해 주지만 에러 경로 테스트는 거기까지 가지 않으므로 여기서 직접 넣는다.
+    # 로컬은 load_dotenv 로 backend/.env 가 채워져 가려지고, CI 에서만 503
+    # service_unavailable 로 드러난다.
     monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "GOOGLE_CLOUD_API_KEY", "test-key")
     monkeypatch.setattr(main, "_TURN_METRICS", [])
     monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("I ate lunch", 1.0)))
     monkeypatch.setattr(main, "_call_gemini_chat", AsyncMock(return_value="Nice. What did you eat?"))
