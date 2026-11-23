@@ -645,3 +645,134 @@ def test_history_analysis_and_intimacy_run_at_the_same_time(monkeypatch):
         assert wall < 0.6, f"the three ran nearly sequentially: {wall:.2f}s"
 
     asyncio.run(scenario())
+
+
+def _turn_mocks(monkeypatch, *, sessions_execute, messages_execute, subscription):
+    """pre-STT 조회 3개만 바꿔 끼우고 나머지 턴 경로는 통과시키는 공통 설정."""
+    sessions, messages = Mock(), Mock()
+    for query in (sessions, messages):
+        for method in ("select", "eq", "order", "insert", "range"):
+            getattr(query, method).return_value = query
+    sessions.execute.side_effect = sessions_execute
+    messages.execute.side_effect = messages_execute
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"sessions": sessions, "messages": messages}[name]
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_read_subscription", subscription)
+    monkeypatch.setattr(main, "_reserve_turn", lambda *_: 1)
+    monkeypatch.setattr(main, "_release_turn", lambda *_: None)
+    monkeypatch.setattr(main, "_user_display_name", lambda *_: None)
+    monkeypatch.setattr(main, "_cumulative_state", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "_intimacy_from_access_days", lambda *_: 10)
+    monkeypatch.setattr(main, "_all_rows", lambda *_a, **_k: [])
+    monkeypatch.setattr(main, "_analyze_axes", lambda *_: dict(main._INITIAL_AXES))
+    monkeypatch.setattr(main, "GOOGLE_AI_API_KEY", "test-key")
+    monkeypatch.setattr(main, "_TURN_METRICS", [])
+    monkeypatch.setattr(main, "_stt_from_bytes", AsyncMock(return_value=("I ate lunch", 1.0)))
+    monkeypatch.setattr(main, "_call_gemini_chat", AsyncMock(return_value="Nice. What did you eat?"))
+    return sb
+
+
+def _run_turn():
+    request = Request({"type": "http"})
+    request.state.request_id = "test-pre-stt"
+    return main.create_turn(
+        "conversation-1", request,
+        UploadFile(filename="test.wav", file=BytesIO(b"test-audio")),
+        "user-1", "request-1",
+    )
+
+
+OPEN_SESSION = [{"id": "conversation-1", "user_id": "user-1", "ended_at": None,
+                 "character_name": "Pally", "level": "B1"}]
+
+
+def test_the_three_reads_before_stt_run_at_the_same_time(monkeypatch):
+    """소유권·중복·구독 조회는 서로의 결과를 쓰지 않으므로 함께 돌아야 한다.
+
+    순차로 돌리면 STT 에 닿기도 전에 왕복 3회를 쓴다. 운영 실측에서 이 셋은
+    각각 130~136ms 였다.
+    """
+    import time as _time
+
+    spans = {}
+
+    seen = set()
+
+    def _sleep_first(label, first, later=None):
+        """첫 호출만 재며 느리게 돌려준다 — 같은 Mock 을 뒤에서 또 쓰기 때문이다."""
+        def run(*_a, **_k):
+            if label in seen:
+                return later
+            seen.add(label)
+            start = _time.perf_counter()
+            _time.sleep(0.25)
+            spans[label] = (start, _time.perf_counter())
+            return first
+        return run
+
+    timestamp = "2026-09-15T00:00:00+00:00"
+    sb = _turn_mocks(
+        monkeypatch,
+        # sessions 는 뒤에서 종료 여부 재확인에 다시 쓰이고, messages 는 첫 호출이
+        # dedup(중복 없음), 그 뒤가 저장이다.
+        sessions_execute=_sleep_first(
+            "session", SimpleNamespace(data=OPEN_SESSION), SimpleNamespace(data=OPEN_SESSION)),
+        messages_execute=_sleep_first(
+            "dedup", SimpleNamespace(data=[]),
+            SimpleNamespace(data=[{"id": "turn-1", "role": "user", "created_at": timestamp}])),
+        subscription=_sleep_first("subscription", None, None),
+    )
+
+    async def scenario():
+        _install_transport(monkeypatch,
+                           lambda request: httpx.Response(200, json={"audioContent": "bXAz"}))
+        async with main.app.router.lifespan_context(main.app):
+            await asyncio.wait_for(_run_turn(), timeout=5)
+        # 중복으로 오인해 replay 로 빠지면 이 테스트는 아무것도 재지 않는다.
+        assert len(main._TURN_METRICS) == 1
+        assert set(spans) == {"session", "dedup", "subscription"}
+        for a, b in (("session", "dedup"), ("session", "subscription"), ("dedup", "subscription")):
+            (a_s, a_e), (b_s, b_e) = spans[a], spans[b]
+            assert a_s < b_e and b_s < a_e, f"{a} and {b} did not overlap"
+        wall = max(e for _, e in spans.values()) - min(s for s, _ in spans.values())
+        assert wall < 0.6, f"the three ran nearly sequentially: {wall:.2f}s"
+
+    asyncio.run(scenario())
+
+
+
+
+@pytest.mark.parametrize("session_rows,dedup_fails,expected_code", [
+    # 소유권 실패가 중복 조회 실패를 이긴다 — 순차 실행 때와 같은 순서.
+    ([], True, "not_found"),
+    # 세션이 멀쩡하면 그제서야 중복 조회 실패가 드러난다.
+    (OPEN_SESSION, True, "persistence_failed"),
+])
+def test_a_failed_dedup_read_never_outranks_the_ownership_check(
+    monkeypatch, session_rows, dedup_fails, expected_code,
+):
+    """세 조회를 동시에 돌려도 어느 에러가 이기는지는 바뀌면 안 된다.
+
+    남의 대화에 요청하면 404 여야 하고, 중복 조회가 같이 깨졌다고 503 이 되면
+    존재 여부가 에러 코드로 새어나간다.
+    """
+    def _messages(*_a, **_k):
+        if dedup_fails:
+            raise RuntimeError("dedup boom")
+        return SimpleNamespace(data=[])
+
+    _turn_mocks(
+        monkeypatch,
+        sessions_execute=lambda *_a, **_k: SimpleNamespace(data=session_rows),
+        messages_execute=_messages,
+        subscription=lambda *_: None,
+    )
+
+    async def scenario():
+        async with main.app.router.lifespan_context(main.app):
+            with pytest.raises(main.AppError) as raised:
+                await asyncio.wait_for(_run_turn(), timeout=5)
+        assert raised.value.code == expected_code
+
+    asyncio.run(scenario())
