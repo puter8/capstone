@@ -593,11 +593,56 @@ def _parse_wav(audio_bytes: bytes) -> tuple[bytes, int, int] | None:
     return audio_bytes[44:], sample_rate, num_channels
 
 
+# Words the recogniser is right to capitalise mid-sentence. Proper nouns are not
+# in here and will be lowercased at a merged boundary; that is cosmetic, while a
+# sentence break the speaker never made is not (see _join_stt_results).
+_ALWAYS_CAPITALISED = {"i", "i'm", "i've", "i'll", "i'd"}
+
+
+def _decapitalise(text: str) -> str:
+    first, sep, rest = text.partition(" ")
+    if not first[:1].isupper() or first.isupper() or first.lower() in _ALWAYS_CAPITALISED:
+        return text
+    return first[:1].lower() + first[1:] + sep + rest
+
+
 def _join_stt_results(results: list[dict]) -> tuple[str, float]:
-    # STT splits speech at pauses into consecutive results; keep every segment, not just the first.
+    """Join the segments Google splits speech into at pauses.
+
+    Google starts a new result once the speaker pauses for roughly a second, and
+    automatic punctuation then ends each one with a full stop and capitalises the
+    next. Measured against the live API: "I hope <800ms> they can marry" comes
+    back as ['I hope.', 'They can marry.'], which this used to join into
+    "I hope. They can marry."
+
+    A learner hunting for the next word pauses constantly, so a sentence they
+    never ended was reported as two, and the reply then "corrected" a fragment
+    they had not said - teaching a mistake they did not make. That punctuation is
+    the recogniser's guess about a pause, not something the speaker uttered, so
+    it is dropped and the next segment is lowercased again.
+
+    A question or exclamation mark is kept, along with the capital that follows
+    it: those come from intonation the speaker did produce, and the Curiosity
+    axis scores "?" directly. A real pause between two sentences therefore
+    survives when it was spoken as a question, and is merged when it was not -
+    the trade this makes deliberately, because the merge is what the speaker
+    meant far more often.
+    """
     alts = [r.get("alternatives", [{}])[0] for r in results]
-    transcript = " ".join(a.get("transcript", "").strip() for a in alts if a.get("transcript", "").strip())
-    return transcript, min(a.get("confidence", 1.0) for a in alts)
+    confidence = min((a.get("confidence", 1.0) for a in alts), default=1.0)
+    parts = [t for t in (a.get("transcript", "").strip() for a in alts) if t]
+    if not parts:
+        return "", confidence
+
+    merged = parts[0]
+    for part in parts[1:]:
+        if merged.endswith(("?", "!")):
+            merged = f"{merged} {part}"
+            continue
+        if merged.endswith("."):
+            merged = merged[:-1].rstrip()
+        merged = f"{merged} {_decapitalise(part)}"
+    return merged, confidence
 
 
 # ── TTS — Google Cloud Text-to-Speech ────────────────────────────────────────

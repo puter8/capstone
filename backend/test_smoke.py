@@ -1359,6 +1359,53 @@ def test_stt_keeps_every_segment_split_at_pauses():
     assert main._join_stt_results(results) == ("hi Pali yesterday I went to the park", 0.8)
 
 
+def _segments(*texts):
+    return [{"alternatives": [{"transcript": t, "confidence": 0.9}]} for t in texts]
+
+
+def test_a_pause_does_not_become_a_sentence_the_learner_never_ended():
+    """Google 이 쉼마다 결과를 쪼개고 각 조각을 문장으로 마무리한다.
+
+    실호출로 확인: "I hope <800ms 쉼> they can marry" -> ['I hope.', 'They can marry.'].
+    그대로 이으면 "I hope. They can marry." 가 되고, Pally 가 그 조각을 문법 오류로
+    보고 고쳐준다 — 사용자가 하지도 않은 실수를 배우게 된다. 단어를 찾느라 멈추는
+    건 학습자에게 당연한 일이라 이 경로는 드물지 않다.
+    """
+    assert main._join_stt_results(_segments("I hope.", "They can marry."))[0] == \
+        "I hope they can marry."
+    # 실측된 세 조각짜리 사례 (채움말 포함)
+    assert main._join_stt_results(_segments("I hope.", "um,", "They can marry."))[0] == \
+        "I hope um, they can marry."
+
+
+def test_a_spoken_question_keeps_its_mark_and_the_sentence_after_it():
+    """물음표는 기계의 추측이 아니라 사용자가 실제로 낸 억양이다.
+
+    Curiosity 축이 "?" 하나당 12점을 매기므로(ai/analyzer.py), 지우면 5축 캐릭터가
+    통째로 틀어진다. 뒤 문장의 대문자도 진짜 경계이므로 그대로 둔다.
+    """
+    assert main._join_stt_results(_segments("What do you think?", "I like it."))[0] == \
+        "What do you think? I like it."
+    assert main._join_stt_results(_segments("That is amazing!", "Tell me more."))[0] == \
+        "That is amazing! Tell me more."
+
+
+def test_merging_leaves_i_and_acronyms_capitalised():
+    """경계를 이으면서 소문자로 되돌리는 건 인식기가 넣은 대문자뿐이다."""
+    assert main._join_stt_results(_segments("I was tired.", "I went home."))[0] == \
+        "I was tired I went home."
+    assert main._join_stt_results(_segments("I study.", "AI and design."))[0] == \
+        "I study AI and design."
+
+
+def test_a_single_segment_is_left_exactly_as_the_recogniser_wrote_it():
+    """한 결과 안의 문장 경계는 진짜다 — 실측에서 쉼 없이 말한 두 문장은 결과 1개로
+    돌아왔다. 건드리면 멀쩡한 구두점을 망친다."""
+    assert main._join_stt_results(_segments("I went to the park. It was fun."))[0] == \
+        "I went to the park. It was fun."
+    assert main._join_stt_results([]) == ("", 1.0)
+
+
 def test_first_pally_axes_match_the_default_traits():
     """신규 사용자의 홈 Pally(프로필 current_axes)와 마이페이지 기본 태그는 같은 모습이어야 한다."""
     assert main._axes_to_traits(main._INITIAL_AXES) == main._DEFAULT_TRAITS
