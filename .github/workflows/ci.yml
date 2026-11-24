@@ -61,6 +61,7 @@ jobs:
           npm run check:daily-expression
           npm run check:home-loader
           npm run check:home-snapshot
+          npm run check:remembered-axes
           npm run check:inline-feedback
           npm run check:name-edit-dialog
           npm run check:pally-segments

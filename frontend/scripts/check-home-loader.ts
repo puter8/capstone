@@ -64,4 +64,14 @@ match(
   "the loader must be gated on there being a conversation to restore",
 );
 
+// Painting the idle home early means Pally's axes are not loaded yet. The
+// default axes are a yellow round Pally, which is a different character from
+// almost every user's: it must not be drawn and then corrected.
+match(
+  page,
+  /home\.hasRestoredPally \? \(\s*<>\s*<Stage axes=\{home\.axes\}/,
+  "the idle stage must wait for the profile instead of drawing the default axes",
+);
+match(page, /준비하고 있어요/, "the held stage slot must say Pally is on the way");
+
 console.log("home loader: PASS");

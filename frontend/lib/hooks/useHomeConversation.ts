@@ -25,6 +25,7 @@ import { conversationTurnsToMessages } from "@/lib/api/conversation-messages";
 import { userFacingWarningMessages } from "@/lib/api/error-messages";
 import { requestPallyOpener } from "@/lib/api/opener";
 import { markTitlePending } from "@/lib/api/pending-titles";
+import { forgetRememberedAxes, peekRememberedAxes, rememberAxes } from "@/lib/api/remembered-axes";
 import { hasConversationToRestore, RESUME_INTENT_KEY } from "@/lib/api/resume-conversation";
 import {
   clearUserRouteData,
@@ -140,6 +141,9 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   const firstUserTranscriptRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
   const lastAudioRef = useRef<string | null>(null);
+  // Whose look was painted from localStorage, so the session check below can tell
+  // it apart from this user's own and drop another account's character.
+  const rememberedAxesUserRef = useRef<string | null>(null);
   const [limitSheetOpen, setLimitSheetOpen] = useState(false);
   const [quotaExhausted, setQuotaExhausted] = useState(snapshot?.usage?.remaining_turns === 0);
   const [isClosing, setIsClosing] = useState(false);
@@ -168,9 +172,22 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   // once and fill in usage, name and Pally's look as they arrive. The talk
   // button stays disabled until the restore finishes (see controlsLocked), so
   // painting early cannot start a conversation before the screen is ready.
+  //
+  // Pally's look is restored here too. The in-memory snapshot only survives a
+  // soft navigation, so a reload or a fresh tab would hold an empty stage for
+  // three round trips; localStorage covers that. Both reads touch storage and so
+  // cannot run during render without a hydration mismatch, which is why they sit
+  // in an effect: it commits before the browser paints anything but the first
+  // frame, and the profile read below still replaces the value.
   useEffect(() => {
     setRestoringConversation(hasConversationToRestore());
-  }, []);
+    if (snapshot) return;
+    const remembered = peekRememberedAxes();
+    if (!remembered) return;
+    rememberedAxesUserRef.current = remembered.userId;
+    restoreAxes(remembered.axes);
+    setHasRestoredPally(true);
+  }, [restoreAxes, snapshot]);
 
   useEffect(() => {
     let active = true;
@@ -199,6 +216,14 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         setQuotaExhausted(false);
         setHasRestoredPally(false);
         setPaintedFromSnapshot(false);
+      }
+      // The stored look is painted before the session is known, so a device that
+      // changed hands shows the previous account's character for a moment. Drop it.
+      if (rememberedAxesUserRef.current && rememberedAxesUserRef.current !== userId) {
+        rememberedAxesUserRef.current = null;
+        forgetRememberedAxes();
+        resetAxes();
+        setHasRestoredPally(false);
       }
       rememberUser(userId);
       // Start the prompt read before baseline/profile restoration so the card
@@ -274,7 +299,12 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       // Undefined only against a backend deployed before profile.current_axes existed;
       // Pally then keeps the default look instead of guessing.
       const revealedAxes = profileResponse.profile.current_axes;
-      if (revealedAxes) restoreAxes(revealedAxes);
+      if (revealedAxes) {
+        restoreAxes(revealedAxes);
+        // The next cold start paints this instead of waiting for the profile.
+        rememberedAxesUserRef.current = userId;
+        rememberAxes(userId, revealedAxes);
+      }
       setDisplayName(profileResponse.profile.display_name);
       setHasRestoredPally(true);
 
@@ -701,7 +731,11 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       const firstUserTranscript = completed ? firstUserTranscriptRef.current : null;
       // The final axes are Pally's new look. Keep them as the stale profile value so
       // coming back to home does not flash the previous look before the reload.
-      if (userId && firstUserTranscript) patchStaleProfileAxes(userId, getAccumulatedAxes());
+      if (userId && firstUserTranscript) {
+        patchStaleProfileAxes(userId, getAccumulatedAxes());
+        // Pally changed in this conversation; a reload must not bring the old look back.
+        rememberAxes(userId, getAccumulatedAxes());
+      }
       if (conversationId && firstUserTranscript) markTitlePending(conversationId, firstUserTranscript);
       if (completed) {
         const notices = userFacingWarningMessages(completed.warnings);

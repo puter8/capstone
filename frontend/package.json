@@ -21,6 +21,7 @@
     "check:name-edit-dialog": "tsx scripts/check-name-edit-dialog.ts",
     "check:onboarding-save": "tsx scripts/check-onboarding-save.ts",
     "check:query-cache": "tsx scripts/check-query-cache.ts",
+    "check:remembered-axes": "tsx scripts/check-remembered-axes.ts",
     "check:route-snapshots": "tsx scripts/check-route-snapshots.ts",
     "check:supabase": "tsx scripts/check-supabase.ts",
     "check:v2-tokens": "tsx scripts/check-v2-tokens.ts",
