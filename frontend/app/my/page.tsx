@@ -14,9 +14,12 @@ import { Sheet } from "@/components/v2/Sheet";
 import { Toast } from "@/components/v2/Toast";
 import { TraitChip } from "@/components/v2/TraitChip";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import type { ProfileResponse, Subscription, UserProfile } from "@/lib/api";
+import type { ProfileResponse, Subscription, SubscriptionResponse, UserProfile } from "@/lib/api";
 import { CONVERSATION_STORAGE_KEY } from "@/lib/api/resume-conversation";
-import { clearUserRouteData, getCurrentUserId, invalidateProfile, loadProfile, loadSubscription, peekProfileSnapshot } from "@/lib/api/route-data";
+import {
+  cacheProfile, clearUserRouteData, getCurrentUserId, loadProfile, loadSubscription,
+  peekProfileSnapshot, peekSubscriptionSnapshot, schedulePrimaryRoutePrefetch,
+} from "@/lib/api/route-data";
 import type { RouteSnapshot } from "@/lib/api/route-data";
 import { DISPLAY_NAME_MAX_LENGTH } from "@/lib/display-name";
 import { supabase } from "@/lib/supabase/client";
@@ -31,12 +34,20 @@ function readProfileSnapshot(): RouteSnapshot<ProfileResponse> | null {
   return peekProfileSnapshot();
 }
 
+// The plan is painted only when it is known. Until then the label stays empty: showing
+// "무료" to a paying user, even for a moment, is a wrong answer rather than a loading state.
+function readSubscriptionSnapshot(): RouteSnapshot<SubscriptionResponse> | null {
+  if (typeof window === "undefined") return null;
+  return peekSubscriptionSnapshot();
+}
+
 export default function MyV2Page() {
   const router = useRouter();
   const [snapshot] = useState(readProfileSnapshot);
+  const [subscriptionSnapshot] = useState(readSubscriptionSnapshot);
   const [sheet, setSheet] = useState<SheetKind>(null);
   const [profile, setProfile] = useState<UserProfile | null>(snapshot ? snapshot.data.profile : null);
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [subscription, setSubscription] = useState<Subscription | null>(subscriptionSnapshot ? subscriptionSnapshot.data.subscription : null);
   const [isLoading, setIsLoading] = useState(snapshot === null);
   // Account actions need the verified user id, even when the profile is painted from the snapshot.
   const [sessionVerified, setSessionVerified] = useState(false);
@@ -55,6 +66,7 @@ export default function MyV2Page() {
 
   useEffect(() => {
     let active = true;
+    let cancelPrefetch: (() => void) | null = null;
     const load = async () => {
       const userId = await getCurrentUserId();
       userIdRef.current = userId;
@@ -65,6 +77,7 @@ export default function MyV2Page() {
         setProfile(null);
         setIsLoading(true);
       }
+      if (subscriptionSnapshot && subscriptionSnapshot.userId !== userId) setSubscription(null);
       void pallyApi.recordActivityEvent({
         event_id: crypto.randomUUID(),
         event_type: "profile_opened",
@@ -79,7 +92,11 @@ export default function MyV2Page() {
         })
         .catch((caught: unknown) => console.error("Subscription status failed", caught));
       const { profile: nextProfile } = await loadProfile(userId);
-      if (active) setProfile(nextProfile);
+      if (!active) return;
+      setProfile(nextProfile);
+      // Opened without passing through home (a reload on this tab): warm the tabs
+      // that have nothing to paint yet.
+      cancelPrefetch = schedulePrimaryRoutePrefetch(userId, { onlyMissing: true });
     };
 
     void load()
@@ -95,8 +112,9 @@ export default function MyV2Page() {
       });
     return () => {
       active = false;
+      cancelPrefetch?.();
     };
-  }, [router, snapshot]);
+  }, [router, snapshot, subscriptionSnapshot]);
 
   const openNameSheet = () => {
     setNameDraft(profile?.display_name ?? "");
@@ -113,8 +131,10 @@ export default function MyV2Page() {
     try {
       const response = await pallyApi.updateProfile({ display_name: nextName });
       setProfile(response.profile);
+      // The response is the saved profile. Keeping it, rather than only expiring the
+      // old one, is what stops home and this tab from painting the previous name.
       const userId = userIdRef.current;
-      if (userId) invalidateProfile(userId);
+      if (userId) cacheProfile(userId, response);
       setSheet(null);
     } catch (caught) {
       console.error("Name change failed", caught);
@@ -203,7 +223,7 @@ export default function MyV2Page() {
   };
 
   const isPro = subscription?.entitled ?? false;
-  const planLabel = isPro ? "Pro" : "무료";
+  const planLabel = subscription ? (isPro ? "Pro" : "무료") : undefined;
   const actionsLocked = !profile || !sessionVerified || isDeletingHistory || isDeleting || accountDeleted;
 
   return (
@@ -220,7 +240,8 @@ export default function MyV2Page() {
                 <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
                   <h2 className="truncate text-p-section tracking-[-0.02em] text-p-text">{profile.display_name}</h2>
                   <p className="text-p-caption text-p-text-muted">
-                    <span lang="en">{profile.english_level}</span> · {isPro ? "Pro 이용 중" : "무료 이용 중"}
+                    <span lang="en">{profile.english_level}</span>
+                    {subscription ? ` · ${isPro ? "Pro 이용 중" : "무료 이용 중"}` : null}
                   </p>
                 </div>
                 <button
