@@ -6,8 +6,9 @@ import { useEffect, useState } from "react";
 import { AppFrame } from "@/components/v2/AppFrame";
 import { Button } from "@/components/v2/Button";
 import { IconSpinner } from "@/components/v2/icons";
-import { pallyApi, PallyApiError } from "@/lib/api";
+import { PallyApiError } from "@/lib/api";
 import { signInErrorMessage } from "@/lib/api/error-messages";
+import { clearUserRouteData, getCurrentUserId, loadProfile } from "@/lib/api/route-data";
 import { supabase } from "@/lib/supabase/client";
 import { routes } from "@/lib/v2/routes";
 
@@ -30,7 +31,12 @@ export default function AuthCallbackV2Page() {
       }
 
       try {
-        const { profile } = await pallyApi.getProfile();
+        // Read through the cache so home, which opens next, reuses this profile
+        // instead of asking for it again.
+        const userId = await getCurrentUserId();
+        const { profile } = await loadProfile(userId);
+        // Onboarding rewrites the profile, so one read before it must not be kept.
+        if (!profile.onboarding_completed) clearUserRouteData(userId);
         router.replace(profile.onboarding_completed ? routes.home : routes.onboarding);
       } catch (caught) {
         if (caught instanceof PallyApiError && caught.code === "profile_not_found") {

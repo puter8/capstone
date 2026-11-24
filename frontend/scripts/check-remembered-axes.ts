@@ -107,10 +107,14 @@ for (const [needle, reason] of [
   equal(hook.includes(needle), true, reason);
 }
 
-// The four home reads must go out together: the baseline gate used to sit alone
-// in front of the profile read that decides Pally's look.
-const gateIndex = hook.indexOf("const baseline = await baselinePromise");
-const profileIndex = hook.indexOf("const profilePromise = loadProfile(userId)");
-equal(profileIndex >= 0 && gateIndex > profileIndex, true, "the profile read must start before the baseline gate blocks");
+// Pally's look comes from the profile, so that read must not sit behind the
+// voice-baseline gate, which only decides whether to redirect. Both reads are
+// started before either is awaited; this pins the order rather than the shape,
+// so it holds however the two are grouped.
+const profileIndex = hook.indexOf("loadProfile(userId)");
+const gateIndex = hook.search(/const baseline = await /);
+equal(profileIndex >= 0, true, "the home hook must read the profile");
+equal(gateIndex >= 0, true, "the home hook must still gate on the voice baseline");
+equal(gateIndex > profileIndex, true, "the profile read must start before the baseline gate blocks");
 
 console.log("remembered axes: PASS");

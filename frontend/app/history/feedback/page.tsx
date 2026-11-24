@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { AppFrame } from "@/components/v2/AppFrame";
 import { BottomNav } from "@/components/v2/BottomNav";
@@ -11,9 +11,12 @@ import { IconSpinner } from "@/components/v2/icons";
 import { Stage } from "@/components/v2/Stage";
 import { TopBar } from "@/components/v2/TopBar";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import type { Conversation, ConversationDetailResponse, ConversationTurn, FeedbackItem } from "@/lib/api";
+import type { Conversation, ConversationTurn, FeedbackItem } from "@/lib/api";
 import { recordFeedbackItemOpened } from "@/lib/analytics/activity-events";
-import { getCurrentUserId, invalidateConversationData, loadConversationPage, loadHistoryPage, peekConversationPage } from "@/lib/api/route-data";
+import {
+  getCurrentUserId, invalidateHistory, loadConversationPage, loadHistoryPage,
+  peekConversationPage, peekHistoryItem, reloadConversationPages,
+} from "@/lib/api/route-data";
 import { formatClockTime, formatLongDate } from "@/lib/v2/format";
 import { routes } from "@/lib/v2/routes";
 
@@ -26,21 +29,49 @@ function toFeedbackGroups(turns: readonly ConversationTurn[]): FeedbackGroup[] {
     .map((turn) => ({ turnId: turn.id, utterance: turn.user_transcript, items: turn.feedback }));
 }
 
-// A conversation opened again in this tab is already in the cache, so paint it instead
-// of showing the loader; the effect below still re-reads and replaces it. Client-only:
-// on a hard load the cache is empty, so server and client markup match.
-function readCachedDetail(): ConversationDetailResponse | null {
-  if (typeof window === "undefined") return null;
-  const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
-  if (!requestedId) return null;
-  return peekConversationPage(requestedId) ?? null;
-}
-
 const WORDMARK_STYLE = { fontVariationSettings: '"SOFT" 0, "WONK" 1' } as const;
 
+function LoadingBody() {
+  return (
+    <div aria-busy="true" className="flex flex-col items-center gap-p-4 px-p-5 pt-p-12 text-center" role="status">
+      <IconSpinner className="animate-spin text-p-text-secondary motion-reduce:animate-none" size={24} />
+      <p className="text-p-label text-p-text-secondary">피드백을 불러오고 있어요</p>
+    </div>
+  );
+}
+
+// useSearchParams needs a Suspense boundary on a prerendered page; this is what the
+// static markup and a hard load show until the screen below renders in the browser.
 export default function FeedbackV2Page() {
+  return (
+    <Suspense
+      fallback={(
+        <AppFrame withBottomNav>
+          <TopBar backHref={routes.history} title="대화 피드백" variant="back" />
+          <LoadingBody />
+          <BottomNav />
+        </AppFrame>
+      )}
+    >
+      <FeedbackScreen />
+    </Suspense>
+  );
+}
+
+function FeedbackScreen() {
   const router = useRouter();
-  const [cached] = useState(readCachedDetail);
+  // From the router, not window.location: on a soft navigation the first render runs
+  // before the URL is committed, so the address bar still names the previous screen
+  // and a cached conversation would be missed for a frame.
+  const requestedId = useSearchParams().get("conversation_id");
+  // A conversation opened again in this tab is already in the cache, so paint it instead
+  // of showing the loader; the effect below still re-reads and replaces it. On a hard
+  // load the cache is empty, so server and client markup match.
+  const [cached] = useState(() => (requestedId ? peekConversationPage(requestedId) ?? null : null));
+  // Opened for the first time: the title and date the user just tapped in the list are
+  // already known, so they are shown while the corrections load. The correction count
+  // is not: the list's number and the one summed from loaded pages can differ.
+  const [preview] = useState(() => (requestedId ? peekHistoryItem(requestedId) : null));
   const [conversation, setConversation] = useState<Conversation | null>(cached?.conversation ?? null);
   const [feedback, setFeedback] = useState<FeedbackGroup[]>(cached ? toFeedbackGroups(cached.turns) : []);
   const [isLoading, setIsLoading] = useState(cached === null);
@@ -70,7 +101,6 @@ export default function FeedbackV2Page() {
     const loadFeedback = async () => {
       try {
         const userId = await getCurrentUserId();
-        const requestedId = new URLSearchParams(window.location.search).get("conversation_id");
         const conversationId = requestedId ?? (await loadHistoryPage(userId)).items[0]?.id;
         if (!conversationId) return;
         userIdRef.current = userId;
@@ -106,7 +136,7 @@ export default function FeedbackV2Page() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [requestedId, router]);
 
   const loadMore = useCallback(async () => {
     const userId = userIdRef.current;
@@ -155,9 +185,9 @@ export default function FeedbackV2Page() {
       refreshingRef.current = true;
       setIsRefreshing(true);
       try {
-        const pages = await Promise.all(loadedCursorsRef.current.map((cursor) => (
-          pallyApi.getConversation(conversationId, { cursor, limit: 50 })
-        )));
+        // Through the cache, so the pages polled here are also what this screen paints
+        // the next time it opens, instead of the pending state it was first read in.
+        const pages = await reloadConversationPages(userId, conversationId, loadedCursorsRef.current);
         if (cancelled) return;
         const turns = pages.flatMap((page) => page.turns);
         const pending = turns.some((turn) => turn.feedback_pending);
@@ -166,7 +196,9 @@ export default function FeedbackV2Page() {
         setFeedbackPending(pending);
         setIsActiveConversation(pages[0].conversation.status === "active");
         setNextCursor(pages[pages.length - 1].next_cursor);
-        invalidateConversationData(userId, conversationId);
+        // Finished extraction changes the list's correction count, once. A poll that
+        // is still pending changes nothing the other tabs show.
+        if (!pending) invalidateHistory(userId);
         attempts += 1;
         if (pending && attempts < 10 && pages[0].conversation.status === "completed") {
           timer = setTimeout(() => { void poll(); }, 3000);
@@ -209,32 +241,28 @@ export default function FeedbackV2Page() {
   }, []);
 
   const totalCorrections = feedback.reduce((sum, group) => sum + group.items.length, 0);
-  const title = conversation?.title ?? "Chat with Pally";
+  const header = conversation ?? (isLoading ? preview : null);
+  const title = header?.title ?? "Chat with Pally";
 
   return (
     <AppFrame withBottomNav>
       <TopBar backHref={routes.history} title="대화 피드백" variant="back" />
-      {isLoading ? (
-        <div aria-busy="true" className="flex flex-col items-center gap-p-4 px-p-5 pt-p-12 text-center" role="status">
-          <IconSpinner className="animate-spin text-p-text-secondary motion-reduce:animate-none" size={24} />
-          <p className="text-p-label text-p-text-secondary">피드백을 불러오고 있어요</p>
-        </div>
-      ) : null}
-      {!isLoading && conversation ? (
+      {header ? (
         <header className="flex flex-col gap-[6px] px-p-5 pb-p-5 pt-p-2">
           <p className="text-p-eyebrow text-p-text-muted">
-            {formatLongDate(conversation.started_at)} · {formatClockTime(conversation.started_at)}
+            {formatLongDate(header.started_at)} · {formatClockTime(header.started_at)}
           </p>
           <h1 className="font-p-brand text-p-title-en text-p-text [overflow-wrap:anywhere]" lang="en" style={WORDMARK_STYLE}>
             {title}
           </h1>
           <div className="flex flex-wrap gap-[6px] pt-[6px]">
-            {totalCorrections > 0 ? (
+            {conversation && totalCorrections > 0 ? (
               <span className="rounded-p-full bg-p-primary-container px-[10px] py-p-1 text-p-eyebrow text-p-primary">고친 표현 {totalCorrections}개</span>
             ) : null}
           </div>
         </header>
       ) : null}
+      {isLoading ? <LoadingBody /> : null}
       {error ? (
         <div className="flex flex-col items-center gap-p-4 px-p-5 pt-p-8 text-center" role="alert">
           <Stage glow={false} size="compact" />

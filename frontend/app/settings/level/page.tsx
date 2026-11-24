@@ -11,16 +11,30 @@ import { Sheet } from "@/components/v2/Sheet";
 import { Toast } from "@/components/v2/Toast";
 import { TopBar } from "@/components/v2/TopBar";
 import { pallyApi, PallyApiError } from "@/lib/api";
-import { cacheProfile, getCurrentUserId, loadDailyExpression, loadProfile } from "@/lib/api/route-data";
+import type { ProfileResponse } from "@/lib/api";
+import { cacheProfile, getCurrentUserId, loadDailyExpression, loadProfile, peekProfileSnapshot } from "@/lib/api/route-data";
+import type { RouteSnapshot } from "@/lib/api/route-data";
 import type { Level } from "@/lib/types/session";
 import { routes } from "@/lib/v2/routes";
 
+// Coming from the My page the profile is already in the cache, so paint it instead of
+// a spinner. Client-only: on a hard load the cache is empty, so server and client match.
+function readProfileSnapshot(): RouteSnapshot<ProfileResponse> | null {
+  if (typeof window === "undefined") return null;
+  return peekProfileSnapshot();
+}
+
 export default function LevelSettingsV2Page() {
   const router = useRouter();
-  const [level, setLevel] = useState<Level | null>(null);
-  const [savedLevel, setSavedLevel] = useState<Level | null>(null);
+  const [snapshot] = useState(readProfileSnapshot);
+  const snapshotLevel = snapshot ? snapshot.data.profile.english_level : null;
+  const [level, setLevel] = useState<Level | null>(snapshotLevel);
+  const [savedLevel, setSavedLevel] = useState<Level | null>(snapshotLevel);
   const [completedLevel, setCompletedLevel] = useState<Level | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(snapshot === null);
+  // Saving waits for the session and a fresh profile even when the level is already
+  // painted: the cached one may be from another account or changed on another device.
+  const [verified, setVerified] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const userIdRef = useRef<string | null>(null);
@@ -31,12 +45,20 @@ export default function LevelSettingsV2Page() {
     getCurrentUserId()
       .then(async (userId) => {
         userIdRef.current = userId;
+        if (active && snapshot && snapshot.userId !== userId) {
+          // The painted level belongs to a previous account: hide it until the fresh read.
+          setLevel(null);
+          setSavedLevel(null);
+          setIsLoading(true);
+        }
         return loadProfile(userId);
       })
       .then(({ profile }) => {
         if (active) {
-          setLevel(profile.english_level);
+          // Keep a choice the user already made on the painted list.
+          setLevel((current) => (current === null || current === snapshotLevel ? profile.english_level : current));
           setSavedLevel(profile.english_level);
+          setVerified(true);
         }
       })
       .catch((caught: unknown) => {
@@ -52,11 +74,11 @@ export default function LevelSettingsV2Page() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, snapshot, snapshotLevel]);
 
   const saveLevel = async () => {
     const userId = userIdRef.current;
-    if (savingRef.current || isLoading || !userId || !level || savedLevel === null || level === savedLevel) return;
+    if (savingRef.current || isLoading || !verified || !userId || !level || savedLevel === null || level === savedLevel) return;
     savingRef.current = true;
     setIsSaving(true);
     setError(null);
@@ -121,7 +143,7 @@ export default function LevelSettingsV2Page() {
       </div>
       <div className="sticky bottom-0 bg-p-bg px-p-5 pb-[calc(var(--p-space-6)+env(safe-area-inset-bottom))] pt-p-2">
         <Button
-          disabled={locked || level === savedLevel}
+          disabled={locked || !verified || level === savedLevel}
           fullWidth
           loading={isSaving}
           loadingLabel="저장 중…"

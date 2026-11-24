@@ -12,7 +12,7 @@ import { Toast } from "@/components/v2/Toast";
 import { TopBar } from "@/components/v2/TopBar";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { BillingHistoryEntry, BillingOverviewResponse, BillingProduct } from "@/lib/api";
-import { clearUserRouteData, getCurrentUserId, invalidateSubscription, invalidateUsage } from "@/lib/api/route-data";
+import { clearUserRouteData, getCurrentUserId, invalidateSubscription, invalidateUsage, syncSubscription } from "@/lib/api/route-data";
 import {
   canStartCheckout, checkoutBlockMessage, firstCharge, formatBillingDate,
   formatWon, hasBillingAccess, historyLabel, planName, renewalDisclosure, validatedCheckoutUrl,
@@ -124,8 +124,7 @@ export default function PlansV2Page() {
     const [catalog, overview] = await Promise.all([pallyApi.getBillingProducts(), pallyApi.getBillingOverview()]);
     if (!isCurrentSession(generation) || id !== requestId.current || userIdRef.current !== userId) return null;
     const next = { products: catalog.products, overview };
-    invalidateSubscription(userId);
-    invalidateUsage(userId);
+    syncSubscription(userId, overview.subscription);
     if (mounted.current && id === requestId.current) {
       setData(next);
       setSelectedId((current) => catalog.products.some((product) => product.id === current)

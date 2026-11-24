@@ -10,7 +10,7 @@ import { StreakHero } from "@/components/v2/StreakHero";
 import { TaskRow } from "@/components/v2/TaskRow";
 import { pallyApi, PallyApiError } from "@/lib/api";
 import type { AchievementsResponse } from "@/lib/api";
-import { getCurrentUserId, loadAchievements, peekAchievementsSnapshot } from "@/lib/api/route-data";
+import { getCurrentUserId, loadAchievements, peekAchievementsSnapshot, schedulePrimaryRoutePrefetch } from "@/lib/api/route-data";
 import type { RouteSnapshot } from "@/lib/api/route-data";
 import { routes } from "@/lib/v2/routes";
 import { cn } from "@/lib/utils";
@@ -40,6 +40,7 @@ export default function RankingV2Page() {
 
   useEffect(() => {
     let active = true;
+    let cancelPrefetch: (() => void) | null = null;
     const load = async () => {
       const userId = await getCurrentUserId();
       if (!active) return;
@@ -57,7 +58,11 @@ export default function RankingV2Page() {
         console.error("Activity event failed", caught);
       });
       const response = await loadAchievements(userId);
-      if (active) setData(response);
+      if (!active) return;
+      setData(response);
+      // Opened without passing through home (a reload on this tab): warm the tabs
+      // that have nothing to paint yet.
+      cancelPrefetch = schedulePrimaryRoutePrefetch(userId, { onlyMissing: true });
     };
     void load()
       .catch((caught: unknown) => {
@@ -70,7 +75,10 @@ export default function RankingV2Page() {
       .finally(() => {
         if (active) setIsLoading(false);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      cancelPrefetch?.();
+    };
   }, [router, snapshot]);
 
   // Pin expression practice regardless of completion, preserving the other tasks' order.

@@ -1,10 +1,12 @@
 import type {
   AchievementsResponse,
   ConversationDetailResponse,
+  ConversationListItem,
   ConversationListResponse,
   DailyExpressionResponse,
   EnergyBaselineResponse,
   ProfileResponse,
+  Subscription,
   SubscriptionResponse,
   UsageQuota,
   UsageResponse,
@@ -18,7 +20,11 @@ import { clearUser, evict, invalidate, peekStale, prefetch, read, write, writeSt
 import { supabase } from "@/lib/supabase/client";
 import type { Axes } from "@/lib/types/character";
 
-const USAGE_TTL_MS = 15_000;
+// Usage changes in three ways this tab knows exactly: a turn (its response carries the
+// new count), the daily reset (reset_at) and a plan change (syncSubscription). The
+// lifetime only bounds what it cannot see, turns taken on another device, and the
+// server refuses a turn over the limit whatever is painted here.
+const USAGE_TTL_MS = 60_000;
 const CONVERSATION_TTL_MS = 30_000;
 // A page of a finished conversation with no extraction left cannot change on its own.
 // Reopening, a new turn and completion all invalidate the entry, so the only thing a
@@ -68,22 +74,41 @@ export async function getCurrentUserId(): Promise<string> {
 
 export interface HomeSnapshot {
   userId: string;
-  usage: UsageResponse;
+  /** Null when no usage is known to still hold: home then paints without the count. */
+  usage: UsageResponse | null;
   profile: ProfileResponse["profile"];
   subscription: SubscriptionResponse["subscription"] | null;
 }
 
-// Last known home data for the remembered user, even if expired. Null until the
-// user has loaded both usage and profile once, so a cold start still shows the loader.
+/**
+ * Whether a usage value still describes the current day. The daily count resets at
+ * `reset_at`, so a value read before that moment is known to be wrong after it and
+ * must not be painted, however recently it was loaded.
+ */
+export function isUsageCurrent(usage: UsageResponse, now: number = Date.now()): boolean {
+  const resetAt = Date.parse(usage.reset_at);
+  return !Number.isNaN(resetAt) && now < resetAt;
+}
+
+// Never past the daily reset: a count read a second before midnight is wrong a second after.
+function usageTtl(usage: UsageResponse): number {
+  const resetAt = Date.parse(usage.reset_at);
+  if (Number.isNaN(resetAt)) return 0;
+  return Math.max(0, Math.min(USAGE_TTL_MS, resetAt - Date.now()));
+}
+
+// Last known home data for the remembered user, even if expired. Null until the user
+// has loaded the profile once, so a cold start still shows the loader. Usage is left
+// out when it was evicted or its day has ended; the screen does not wait for it.
 export function peekHomeSnapshot(): HomeSnapshot | null {
   if (!rememberedUserId) return null;
-  const usage = peekStale<UsageResponse>(rememberedUserId, CACHE_KEYS.usage);
   const profile = peekStale<ProfileResponse>(rememberedUserId, CACHE_KEYS.profile);
-  if (!usage || !profile) return null;
+  if (!profile) return null;
+  const usage = peekStale<UsageResponse>(rememberedUserId, CACHE_KEYS.usage);
   const subscription = peekStale<SubscriptionResponse>(rememberedUserId, CACHE_KEYS.subscription);
   return {
     userId: rememberedUserId,
-    usage,
+    usage: usage && isUsageCurrent(usage) ? usage : null,
     profile: profile.profile,
     subscription: subscription ? subscription.subscription : null,
   };
@@ -112,6 +137,29 @@ export function peekAchievementsSnapshot(): RouteSnapshot<AchievementsResponse> 
 
 export function peekProfileSnapshot(): RouteSnapshot<ProfileResponse> | null {
   return peekRouteSnapshot(CACHE_KEYS.profile);
+}
+
+/**
+ * Last known plan, or null when it is not known. A paid period that has ended since
+ * the value was read is not known either: the plan label must stay empty until the
+ * fresh read rather than show a plan the user may no longer have.
+ */
+export function peekSubscriptionSnapshot(): RouteSnapshot<SubscriptionResponse> | null {
+  const snapshot = peekRouteSnapshot<SubscriptionResponse>(CACHE_KEYS.subscription);
+  if (!snapshot) return null;
+  const { entitled, current_period_end: periodEnd } = snapshot.data.subscription;
+  if (entitled && periodEnd && Date.now() >= Date.parse(periodEnd)) return null;
+  return snapshot;
+}
+
+/**
+ * The list row of a conversation, from the first page of the list if this tab has it.
+ * Lets the detail screen show the title and date the user just tapped while the
+ * detail itself is still loading.
+ */
+export function peekHistoryItem(conversationId: string): ConversationListItem | null {
+  const list = peekHistorySnapshot();
+  return list?.data.items.find((item) => item.id === conversationId) ?? null;
 }
 
 function expressionDate(): string {
@@ -146,10 +194,11 @@ export function usageFromQuota(current: UsageResponse | null | undefined, quota:
   };
 }
 
-// After a turn the server value is already known from the response. Keep it as the
-// stale value so returning to home does not flash the old count before the reload.
-export function patchStaleUsage(userId: string, quota: UsageQuota): void {
-  writeStale(userId, CACHE_KEYS.usage, usageFromQuota(peekStale<UsageResponse>(userId, CACHE_KEYS.usage), quota));
+// After a turn the server value is already known from the response, so it is stored
+// as a fresh read: returning to home neither flashes the old count nor asks again.
+export function cacheTurnUsage(userId: string, quota: UsageQuota): void {
+  const usage = usageFromQuota(peekStale<UsageResponse>(userId, CACHE_KEYS.usage), quota);
+  write(userId, CACHE_KEYS.usage, usageTtl(usage), usage);
 }
 
 // Same for Pally's look: a finished conversation changes current_axes. Traits and
@@ -161,7 +210,7 @@ export function patchStaleProfileAxes(userId: string, axes: Axes): void {
 }
 
 export function loadUsage(userId: string): Promise<UsageResponse> {
-  return read(userId, CACHE_KEYS.usage, USAGE_TTL_MS, () => pallyApi.getUsage());
+  return read(userId, CACHE_KEYS.usage, usageTtl, () => pallyApi.getUsage());
 }
 
 export function loadSubscription(userId: string): Promise<SubscriptionResponse> {
@@ -176,7 +225,9 @@ export function cacheProfile(userId: string, response: ProfileResponse): void {
   const previous = peekStale<ProfileResponse>(userId, CACHE_KEYS.profile);
   if (previous?.profile.english_level !== response.profile.english_level) {
     invalidateDailyExpression(userId);
-    evict(userId, CACHE_KEYS.achievements);
+    // The three daily tasks are the same at every level and a completed one stays
+    // completed, so the old value is still paintable; it only needs a re-read.
+    invalidate(userId, CACHE_KEYS.achievements);
   }
   write(userId, CACHE_KEYS.profile, ROUTE_DATA_TTL_MS, response);
 }
@@ -195,6 +246,10 @@ export function loadHistoryPage(userId: string, cursor?: string): Promise<Conver
 export function reloadHistoryFirstPage(userId: string): Promise<ConversationListResponse> {
   invalidate(userId, `${CACHE_KEYS.history}first`);
   return loadHistoryPage(userId);
+}
+
+export function invalidateHistory(userId: string): void {
+  invalidate(userId, CACHE_KEYS.history);
 }
 
 /**
@@ -250,8 +305,22 @@ export function peekConversationPage(conversationId: string): ConversationDetail
   );
 }
 
+/**
+ * Re-read pages of one conversation through the cache, so what the detail screen polls
+ * is also what it paints the next time it opens. Nothing else is touched: a page that
+ * is still being extracted changes neither the list nor the achievements.
+ */
+export function reloadConversationPages(
+  userId: string,
+  conversationId: string,
+  cursors: ReadonlyArray<string | undefined>,
+): Promise<ConversationDetailResponse[]> {
+  invalidate(userId, `${CACHE_KEYS.conversation}${conversationId}:`);
+  return Promise.all(cursors.map((cursor) => loadConversationPage(userId, conversationId, cursor)));
+}
+
 // Evict rather than expire: usage and subscription change with plan changes, so an
-// old value must not be painted before the reload. Turns re-seed it via patchStaleUsage.
+// old value must not be painted before the reload. Turns re-seed it via cacheTurnUsage.
 export function invalidateUsage(userId: string): void {
   evict(userId, CACHE_KEYS.usage);
 }
@@ -262,6 +331,30 @@ export function invalidateProfile(userId: string): void {
 
 export function invalidateSubscription(userId: string): void {
   evict(userId, CACHE_KEYS.subscription);
+}
+
+function sameSubscription(a: Subscription, b: Subscription): boolean {
+  return a.plan === b.plan
+    && a.status === b.status
+    && a.entitled === b.entitled
+    && a.product_id === b.product_id
+    && a.current_period_end === b.current_period_end
+    && a.will_renew === b.will_renew
+    && a.entitlements.length === b.entitlements.length
+    && a.entitlements.every((entitlement) => b.entitlements.includes(entitlement));
+}
+
+/**
+ * Reconcile the cache with a subscription just read from the server. Usage is dropped
+ * only when the plan really differs from what was cached, so looking at the billing
+ * screen does not empty it. With nothing cached there is nothing to compare against,
+ * and it is dropped as before. The subscription itself is the server's current answer
+ * and is kept as such, which is also what the next comparison is made against.
+ */
+export function syncSubscription(userId: string, latest: Subscription): void {
+  const cached = peekStale<SubscriptionResponse>(userId, CACHE_KEYS.subscription);
+  if (!cached || !sameSubscription(cached.subscription, latest)) invalidateUsage(userId);
+  write(userId, CACHE_KEYS.subscription, ROUTE_DATA_TTL_MS, { subscription: latest });
 }
 
 export function invalidateConversationData(userId: string, conversationId?: string): void {
@@ -289,7 +382,7 @@ export async function prefetchRouteData(href: string, userId?: string): Promise<
     await Promise.all([
       loadProfile(scope),
       loadDailyExpression(scope),
-      prefetch(scope, CACHE_KEYS.usage, USAGE_TTL_MS, () => pallyApi.getUsage()),
+      loadUsage(scope),
       prefetch(scope, CACHE_KEYS.subscription, ROUTE_DATA_TTL_MS, () => pallyApi.getSubscription()),
     ]);
     return;
@@ -323,15 +416,25 @@ function canPrefetchOnCurrentNetwork(): boolean {
   return connection.effectiveType === undefined || connection.effectiveType === "4g";
 }
 
-export function schedulePrimaryRoutePrefetch(userId: string): () => void {
+const PRIMARY_ROUTES = [
+  { href: "/history", key: `${CACHE_KEYS.history}first` },
+  { href: "/ranking", key: CACHE_KEYS.achievements },
+  { href: "/my", key: CACHE_KEYS.profile },
+] as const;
+
+/**
+ * Warm the other tabs while the current one is idle. `onlyMissing` skips a tab that
+ * already has a value to paint, even an expired one: that tab opens without a loader
+ * and re-reads itself, so asking again here would only add a request per visit.
+ */
+export function schedulePrimaryRoutePrefetch(userId: string, options: { onlyMissing?: boolean } = {}): () => void {
   if (!canPrefetchOnCurrentNetwork()) return () => undefined;
 
   const run = () => {
-    void Promise.allSettled([
-      prefetchRouteData("/history", userId),
-      prefetchRouteData("/ranking", userId),
-      prefetchRouteData("/my", userId),
-    ]).then((results) => {
+    const targets = options.onlyMissing
+      ? PRIMARY_ROUTES.filter((route) => peekStale(userId, route.key) === undefined)
+      : PRIMARY_ROUTES;
+    void Promise.allSettled(targets.map((route) => prefetchRouteData(route.href, userId))).then((results) => {
       for (const result of results) {
         if (result.status === "rejected") console.error("Route data prefetch failed", result.reason);
       }
