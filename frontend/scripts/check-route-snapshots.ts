@@ -161,6 +161,49 @@ async function main(): Promise<void> {
   equal(Date.now, realNow, "the clock must be put back");
   route.clearUserRouteData("user-4");
 
+  // Polling a page that is still being extracted goes through the cache, so reopening
+  // the conversation paints what the poll last saw rather than the pending state.
+  route.rememberUser("user-4");
+  pallyApi.getConversation = async () => detail({}, true);
+  await route.loadConversationPage("user-4", "conversation-1");
+  await route.loadHistoryPage("user-4");
+  const historyReads = calls.history;
+  pallyApi.getConversation = async () => detail();
+  const [polled] = await route.reloadConversationPages("user-4", "conversation-1", [undefined]);
+  equal(polled.turns[0].feedback_pending, false);
+  equal(route.peekConversationPage("conversation-1")?.turns[0].feedback_pending, false,
+    "the polled page replaces the pending one in the cache");
+  equal(route.peekHistoryItem("conversation-1")?.title, "Weekend plans",
+    "the list row is available to the detail screen while it loads");
+  await route.loadHistoryPage("user-4");
+  equal(calls.history, historyReads, "polling one conversation leaves the list alone");
+  route.invalidateHistory("user-4");
+  await route.loadHistoryPage("user-4");
+  equal(calls.history, historyReads + 1, "finished extraction re-reads the list once");
+
+  // A level change re-reads achievements but keeps the old value paintable: the daily
+  // tasks are the same at every level.
+  await route.loadProfile("user-4");
+  await route.loadAchievements("user-4");
+  const achievementReads = calls.achievements;
+  route.cacheProfile("user-4", { profile: { ...profile.profile, english_level: "C1" } });
+  deepEqual(route.peekAchievementsSnapshot()?.data, achievements, "achievements stay paintable after a level change");
+  await route.loadAchievements("user-4");
+  equal(calls.achievements, achievementReads + 1, "and are read again");
+
+  // Warming from a tab other than home skips whatever already has a value to paint.
+  setNavigator({});
+  const warmed = { ...calls };
+  route.schedulePrimaryRoutePrefetch("user-4", { onlyMissing: true });
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  deepEqual(calls, warmed, "tabs that can already paint are not requested again");
+  route.clearUserRouteData("user-4");
+  route.schedulePrimaryRoutePrefetch("user-4", { onlyMissing: true });
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  deepEqual(calls, { achievements: warmed.achievements + 1, history: warmed.history + 1, profile: warmed.profile + 1 },
+    "tabs with nothing to paint are warmed");
+  route.clearUserRouteData("user-4");
+
   // Voice baseline: home waits for this first, so a registered user must not pay a
   // round trip for it on every visit, and "required" must never be served from cache.
   const prompts: EnergyBaselinePrompts = ["one", "two", "three"];

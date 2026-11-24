@@ -12,7 +12,10 @@ import { PallyApiError } from "@/lib/api";
 import type { ConversationListItem, ConversationListResponse } from "@/lib/api";
 import { isTitlePending } from "@/lib/api/pending-titles";
 import { resumeConversation } from "@/lib/api/resume-conversation";
-import { getCurrentUserId, loadHistoryPage, peekHistorySnapshot, reloadHistoryFirstPage } from "@/lib/api/route-data";
+import {
+  getCurrentUserId, loadHistoryPage, peekHistorySnapshot,
+  reloadHistoryFirstPage, schedulePrimaryRoutePrefetch,
+} from "@/lib/api/route-data";
 import type { RouteSnapshot } from "@/lib/api/route-data";
 import { formatDayGroup } from "@/lib/v2/format";
 import { routes } from "@/lib/v2/routes";
@@ -68,6 +71,7 @@ export default function HistoryV2Page() {
 
   useEffect(() => {
     let active = true;
+    let cancelPrefetch: (() => void) | null = null;
 
     const loadFirstPage = async () => {
       const userId = await getCurrentUserId();
@@ -83,6 +87,9 @@ export default function HistoryV2Page() {
       setItems(response.items);
       setNextCursor(response.next_cursor);
       setVerifiedUserId(userId);
+      // Opened without passing through home (a reload on this tab): warm the tabs
+      // that have nothing to paint yet.
+      cancelPrefetch = schedulePrimaryRoutePrefetch(userId, { onlyMissing: true });
     };
 
     void loadFirstPage()
@@ -99,6 +106,7 @@ export default function HistoryV2Page() {
 
     return () => {
       active = false;
+      cancelPrefetch?.();
     };
   }, [router, snapshot]);
 

@@ -31,6 +31,7 @@ import {
   forgetRememberedUser,
   invalidateConversationData,
   invalidateProfile,
+  cacheTurnUsage,
   invalidateUsage,
   loadConversationPage,
   loadDailyExpression,
@@ -39,7 +40,6 @@ import {
   loadSubscription,
   loadUsage,
   patchStaleProfileAxes,
-  patchStaleUsage,
   peekHomeSnapshot,
   rememberUser,
   schedulePrimaryRoutePrefetch,
@@ -55,6 +55,11 @@ import type { Axes } from "@/lib/types/character";
 import type { Message } from "@/lib/types/message";
 
 export const CONVERSATION_KEY = "pally:conversationId";
+
+// Read usage slightly after the reset so the server has rolled over to the new day.
+const USAGE_RESET_SLACK_MS = 2_000;
+// setTimeout overflows past 2^31 ms and fires at once.
+const MAX_TIMER_DELAY_MS = 2_147_000_000;
 
 export type HomeRoutes = {
   /** Where to send a signed-out user. */
@@ -136,7 +141,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
   const userIdRef = useRef<string | null>(null);
   const lastAudioRef = useRef<string | null>(null);
   const [limitSheetOpen, setLimitSheetOpen] = useState(false);
-  const [quotaExhausted, setQuotaExhausted] = useState(snapshot?.usage.remaining_turns === 0);
+  const [quotaExhausted, setQuotaExhausted] = useState(snapshot?.usage?.remaining_turns === 0);
   const [isClosing, setIsClosing] = useState(false);
   // Controls stay disabled until the session and fresh data are verified, even when
   // the screen is already painted from the snapshot.
@@ -206,15 +211,9 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       const storedId = window.localStorage.getItem(CONVERSATION_KEY);
       const conversationId = requestedId ?? storedId;
 
-      const baseline = await loadEnergyBaseline(userId);
-      if (!active) return;
-      if (baseline.status === "required") {
-        if (conversationId) window.localStorage.setItem(CONVERSATION_KEY, conversationId);
-        router.replace(routes.onboardingVoice);
-        return;
-      }
-      setBaselineAllowed(true);
-
+      // Started together with the baseline read instead of after it: the baseline only
+      // decides whether to redirect, and waiting for it first put a full round trip in
+      // front of the data every visit needs.
       const usagePromise = loadUsage(userId);
       const profilePromise = loadProfile(userId);
       // A stale stored id (deleted conversation, another account on this device) must not
@@ -228,6 +227,23 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
           throw caught;
         })
         : Promise.resolve(null);
+      // Settled as a group so a failure here is not an unhandled rejection while the
+      // baseline is still being awaited; it is rethrown below once the baseline allows.
+      const homeData = Promise.allSettled([usagePromise, profilePromise, detailPromise]);
+
+      const baseline = await loadEnergyBaseline(userId);
+      if (!active) return;
+      if (baseline.status === "required") {
+        if (conversationId) window.localStorage.setItem(CONVERSATION_KEY, conversationId);
+        void homeData.then((results) => {
+          for (const result of results) {
+            if (result.status === "rejected") console.error("Home data load before voice registration failed", result.reason);
+          }
+        });
+        router.replace(routes.onboardingVoice);
+        return;
+      }
+      setBaselineAllowed(true);
 
       void loadSubscription(userId)
         .then((response) => {
@@ -241,12 +257,14 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         occurred_at: new Date().toISOString(),
       }).catch((error: unknown) => console.error("Activity event failed", error));
 
-      const [usageResponse, profileResponse, detail] = await Promise.all([
-        usagePromise,
-        profilePromise,
-        detailPromise,
-      ]);
+      const [usageResult, profileResult, detailResult] = await homeData;
       if (!active) return;
+      if (usageResult.status === "rejected") throw usageResult.reason;
+      if (profileResult.status === "rejected") throw profileResult.reason;
+      if (detailResult.status === "rejected") throw detailResult.reason;
+      const usageResponse = usageResult.value;
+      const profileResponse = profileResult.value;
+      const detail = detailResult.value;
 
       setUsage(usageResponse);
       const exhausted = usageResponse.remaining_turns === 0;
@@ -314,6 +332,50 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
       cancelPrefetch?.();
     };
   }, [resetAxes, restoreAttempt, restoreAxes, router, routes.home, routes.login, routes.onboardingVoice, snapshot, updateFromChatResponse]);
+
+  // The daily count resets at `reset_at` even while this screen stays open. Without a
+  // re-read the old count, and an exhausted quota's locked button, would stay until the
+  // user left and came back. Timers can be held back while the tab is hidden, so the
+  // same check runs when it becomes visible again.
+  const usageResetAt = usage?.reset_at ?? null;
+  useEffect(() => {
+    if (!usageResetAt) return;
+    const resetAt = Date.parse(usageResetAt);
+    if (Number.isNaN(resetAt)) return;
+    let active = true;
+    let refreshing = false;
+
+    const refreshUsage = () => {
+      const userId = userIdRef.current;
+      if (!userId || refreshing) return;
+      refreshing = true;
+      invalidateUsage(userId);
+      void loadUsage(userId)
+        .then((response) => {
+          if (!active) return;
+          setUsage(response);
+          const exhausted = response.remaining_turns === 0;
+          setQuotaExhausted(exhausted);
+          if (!exhausted) setLimitSheetOpen(false);
+        })
+        .catch((error: unknown) => console.error("Usage refresh after the daily reset failed", error))
+        .finally(() => {
+          refreshing = false;
+        });
+    };
+
+    const delay = resetAt - Date.now() + USAGE_RESET_SLACK_MS;
+    const timer = delay <= MAX_TIMER_DELAY_MS ? window.setTimeout(refreshUsage, Math.max(0, delay)) : null;
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && Date.now() >= resetAt) refreshUsage();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      active = false;
+      if (timer !== null) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [usageResetAt]);
 
   const ensureConversation = useCallback(async () => {
     // Both the opener and a turn come through here before writing, so this is where a
@@ -513,7 +575,7 @@ export function useHomeConversation(routes: HomeRoutes): HomeConversation {
         }
         if (quota) {
           setUsage((current) => usageFromQuota(current, quota));
-          if (userId) patchStaleUsage(userId, quota);
+          if (userId) cacheTurnUsage(userId, quota);
         }
         const notices = userFacingWarningMessages(response.warnings);
         if (response.replayed) notices.push("네트워크 재시도로 저장된 응답을 다시 불러왔어요.");
