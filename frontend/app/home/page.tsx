@@ -225,10 +225,28 @@ export default function HomeV2Page() {
           <DailyExpressionCard />
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-p-1">
-          <Stage axes={home.axes} className="h-[220px] shrink-0 max-[359px]:h-[140px]" size={compactHome ? "compact" : "large"} state="idle" />
-          <p className="font-p-brand text-p-quote italic text-p-text-secondary" lang="en">
-            Pally&apos;s here to chat!
-          </p>
+          {/* Pally's look comes from the profile, so a cold load has nothing to draw
+              yet. Painting the default axes would show a yellow stranger that snaps
+              into the real character once the profile lands; hold the slot instead. */}
+          {home.hasRestoredPally ? (
+            <>
+              <Stage axes={home.axes} className="h-[220px] shrink-0 max-[359px]:h-[140px]" size={compactHome ? "compact" : "large"} state="idle" />
+              <p className="font-p-brand text-p-quote italic text-p-text-secondary" lang="en">
+                Pally&apos;s here to chat!
+              </p>
+            </>
+          ) : (
+            <>
+              {/* A failed restore leaves this branch for good until the user retries
+                  through the error toast, so stop spinning and say what happened. */}
+              <div aria-hidden="true" className="flex h-[220px] shrink-0 items-center justify-center max-[359px]:h-[140px]">
+                {hasError ? null : <IconSpinner className="animate-spin motion-reduce:animate-none" size={24} />}
+              </div>
+              <p className="text-p-quote text-p-text-secondary" role="status">
+                {hasError ? "Pally를 불러오지 못했어요" : "Pally를 준비하고 있어요"}
+              </p>
+            </>
+          )}
         </div>
         <div className="px-p-5 pb-p-4 pt-p-2">
           <TalkCta
