@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { Axes, DEFAULT_AXES } from '@/lib/types/character';
+import { curiosityBodyRgb, curiosityHighlightRgb } from '@/lib/pally-color';
 
 export type PallyGaze = 'center' | 'up-right';
 
@@ -20,24 +21,6 @@ function tier(v: number): 0 | 1 | 2 {
   if (v <= 33) return 0;
   if (v <= 66) return 1;
   return 2;
-}
-
-// Curiosity → body colour, continuous blue → yellow → red (final mapping, 2026-10-14).
-function curiosityRgb(v: number): [number, number, number] {
-  const t = Math.max(0, Math.min(100, v)) / 100;
-  let h: number, s: number, l: number;
-  if (t <= 0.5) {
-    const u = t / 0.5;
-    h = 210 + (52 - 210) * u; s = 55 + (90 - 55) * u; l = 63 + (61 - 63) * u;
-  } else {
-    const u = (t - 0.5) / 0.5;
-    h = 52 + (0 - 52) * u; s = 90 + (100 - 90) * u; l = 61 + (71 - 61) * u;
-  }
-  s /= 100; l /= 100;
-  const k = (n: number) => (n + h / 30) % 12;
-  const a = s * Math.min(l, 1 - l);
-  const f = (n: number) => Math.round((l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))) * 255);
-  return [f(0), f(8), f(4)];
 }
 
 function drawStar(
@@ -112,7 +95,7 @@ export default function PallyCanvas({
     ctx.clearRect(0, 0, size, size);
 
     // Final mapping (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14):
-    // Intimacy=mouth, Energy=body shape, Curiosity=body colour (continuous),
+    // Intimacy=mouth, Energy=body shape, Curiosity=body colour (continuous, brand arc since 2026-11-24),
     // Formality=eyes, Humor=whole-body motion.
     //
     // Humor → 움직임(bob/bounce/wiggle): serious=거의 정지, ridiculous=활발한 wiggle.
@@ -127,7 +110,9 @@ export default function PallyCanvas({
     ctx.save();
     ctx.translate(cx + oX, cy + oY);
 
-    const [r, g, b] = curiosityRgb(ax.Curiosity);
+    // Curiosity → body colour: lavender → rose → apricot (lib/pally-color.ts, 2026-11-24).
+    const [r, g, b] = curiosityBodyRgb(ax.Curiosity);
+    const [hr, hg, hb] = curiosityHighlightRgb(ax.Curiosity);
     // Energy → body shape: calm=circle → lively=rounded square → energetic=8-point star
     const sT = tier(ax.Energy);
 
@@ -145,7 +130,7 @@ export default function PallyCanvas({
     }
 
     const grad = ctx.createRadialGradient(-bs * 0.15, -bs * 0.2, bs * 0.05, 0, 0, bs);
-    grad.addColorStop(0, `rgba(${Math.min(r+70,255)},${Math.min(g+70,255)},${Math.min(b+70,255)},1)`);
+    grad.addColorStop(0, `rgba(${hr},${hg},${hb},1)`);
     grad.addColorStop(1, `rgba(${r},${g},${b},1)`);
     ctx.fillStyle = grad;
     ctx.fill();

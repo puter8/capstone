@@ -65,5 +65,6 @@ jobs:
           npm run check:inline-feedback
           npm run check:name-edit-dialog
           npm run check:pally-segments
+          npm run check:pally-color
           npm run check:v2-tokens
           npm run check:v2-routes
