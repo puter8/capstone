@@ -201,8 +201,7 @@ def test_http_error_status_is_rejected(fake_client):
 
 # Axis -> the trait line it owns, and that line's label per renderer tier.
 _PERSONA_BANDS = {
-    "Formality": ("Tone", ("blunt and direct, no slang", "relaxed", "polite and proper")),
-    "Energy": ("Energy", ("calm and gentle", "upbeat", "super excited")),
+    "Formality": ("Tone", ("blunt and direct, no slang", "relaxed", "polite and proper")),    "Energy": ("Energy", ("calm and gentle", "upbeat", "super excited")),
     "Humor": ("Humor", ("sincere", "lightly playful", "goofy and teasing")),
     "Intimacy": ("Closeness", ("friendly but a little reserved", "warm", "like a best friend")),
     "Curiosity": ("Curiosity", ("simple, direct question", "interested question",
@@ -216,10 +215,12 @@ def _renderer_tier(value: int) -> int:
 
 
 def _trait_lines(axes: dict) -> dict:
-    return dict(
+    """Line name -> band label, without the "(...)" style detail after it."""
+    lines = dict(
         line.removeprefix("- ").split(": ", 1)
         for line in opener.persona_prompt(axes).splitlines()
     )
+    return {name: text.split(" (", 1)[0] for name, text in lines.items()}
 
 
 @pytest.mark.parametrize("axis", sorted(_PERSONA_BANDS))
@@ -259,4 +260,18 @@ def test_the_low_formality_band_does_not_ask_for_slang():
 
 def test_all_five_axes_reach_the_prompt():
     lines = _trait_lines(AXES)
-    assert set(lines) == {"Tone", "Energy", "Humor", "Closeness", "Curiosity"}
+    assert set(lines) == {"Tone", "Energy", "Humor", "Closeness", "Curiosity", "Sample words"}
+
+
+def test_sample_words_rotate_between_calls():
+    """The model copies whatever words it is shown; one fixed list made every
+    excited opener start with the same word."""
+    axes = dict(AXES, Formality=100, Energy=100)
+    prompts = {opener.persona_prompt(axes, random.Random(seed)) for seed in range(10)}
+    assert len(prompts) > 1
+
+
+def test_sample_word_pools_stay_free_of_slang():
+    slang = {"gonna", "wanna", "kinda", "dude", "yo", "epic", "legit", "for real"}
+    for band, words in opener.CUE_WORDS.items():
+        assert not slang & {w.casefold() for w in words}, band

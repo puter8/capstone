@@ -91,13 +91,14 @@ Your personality right now:
 Topic to open with: {topic}
 
 Rules (the level rules win over the personality if they conflict):
-- 1 or 2 short sentences, at most {max_words} words in total.
+- 1 or 2 short sentences, at most {max_words} words in total: at most one
+  statement, then one question.
 - {level_guide}
 - End with a question the user can answer about their own life.
 - English only. No emoji, no quotation marks.
 - You know nothing about the user yet except their name: never refer to past chats or things they told you.
 - Do not start with "Hello there". Never offer help ("How can I help/assist").
-{name_rule}{expression_rule}Output only the opener."""
+{name_rule}{expression_rule}Output only the opener. Nothing comes after its question: the last character is "?"."""
 
 _WORD = re.compile(r"[A-Za-z0-9']+")
 _SENTENCE = re.compile(r"[^.!?]+[.!?]+")
@@ -118,7 +119,35 @@ def _band(value: int, low: str, mid: str, high: str) -> str:
     return low if value < 34 else mid if value < 67 else high
 
 
-def persona_prompt(axes: dict) -> str:
+# Spoken sample words per band, appended to the band label as "(e.g. ...)".
+# With labels alone, flash-lite gave the most formal and the most casual
+# persona nearly the same reply, differing only in exclamation marks
+# (2026-11-24 probe). persona_prompt shows a random few per call because the
+# model copies whatever words it is shown: a fixed short list made every
+# excited opener start with the same word. Rules for the pools:
+# - spoken words only, since TTS reads the reply aloud;
+# - no slang, for the same reason the low Formality band says "no slang";
+# - no standalone sentences ("I would love to hear more", "That's amazing"):
+#   the model used them as an extra sentence and broke the opener's sentence
+#   and closing-question checks.
+CUE_WORDS: dict[str, tuple[str, ...]] = {
+    "relaxed": ("cool", "pretty good", "nice", "sounds fun", "not bad",
+                "oh yeah", "fair enough", "got it", "makes sense"),
+    "polite": ("That sounds lovely", "I see", "How nice", "How wonderful",
+               "What a lovely idea", "How delightful", "I am glad to hear",
+               "That must be nice"),
+    "excited": ("Whoa", "Oh my gosh", "awesome", "Wow", "so cool", "amazing",
+                "fantastic", "great"),
+}
+CUES_PER_PROMPT = 3
+
+
+def _cues(band: str, rng: random.Random) -> str:
+    words = ", ".join(f"'{w}'" for w in rng.sample(CUE_WORDS[band], CUES_PER_PROMPT))
+    return f" (e.g. {words})"
+
+
+def persona_prompt(axes: dict, rng: random.Random | None = None) -> str:
     """5 axes -> trait lines shared by the opener and the per-turn chat prompt.
 
     Banded on the raw axes, which is what the renderer and the trait tags band,
@@ -134,6 +163,7 @@ def persona_prompt(axes: dict) -> str:
     identical trait lines. compute_character still drives nothing here; it
     remains the renderer's and the analyzer's own mapping.
     """
+    rng = rng or random.Random()
     return "\n".join([
         # Formality runs the other way from the rest: 0 is informal, 100 formal.
         # The low band says blunt, not slangy, to match the trait tag
@@ -143,11 +173,26 @@ def persona_prompt(axes: dict) -> str:
         # a learner at Formality 30 got openers like "Yo dude! What's up with
         # your pals?" where they used to get "Hey! What music are you digging?".
         # Pally's line is the model the learner copies, so it stays teachable.
-        "- Tone: " + _band(axes["Formality"], "blunt and direct, no slang", "relaxed", "polite and proper"),
-        "- Energy: " + _band(axes["Energy"], "calm and gentle", "upbeat", "super excited"),
+        # The blunt band gets a style, not sample words: a bare "Okay." or
+        # "Sure." opening counts as an extra sentence in validate_opener.
+        "- Tone: " + _band(
+            axes["Formality"],
+            "blunt and direct, no slang (short plain sentences, straight to the point)",
+            "relaxed" + _cues("relaxed", rng),
+            "polite and proper" + _cues("polite", rng),
+        ),
+        # "no exclamation marks" alone made the model drop the '?' too.
+        "- Energy: " + _band(
+            axes["Energy"],
+            "calm and gentle (soft, even sentences, no exclamation marks; questions still end with '?')",
+            "upbeat (positive, at most one exclamation mark)",
+            "super excited" + _cues("excited", rng),
+        ),
         "- Humor: " + _band(axes["Humor"], "sincere", "lightly playful", "goofy and teasing"),
         "- Closeness: " + _band(axes["Intimacy"], "friendly but a little reserved", "warm", "like a best friend"),
         "- Curiosity: " + _band(axes["Curiosity"], "simple, direct question", "interested question", "eager, specific question"),
+        ("- Sample words: the quoted words show the style, they are not a script. Use at most"
+         " one per reply, and never repeat a word or phrase you already said in this chat."),
     ])
 
 
@@ -256,7 +301,7 @@ def generate_opener(
     axes = AxisResult(**axes).to_axes_dict()
     guide, max_words = LEVEL_RULES.get(level, LEVEL_RULES["B1"])
     prompt = _SYSTEM_PROMPT.format(
-        persona=persona_prompt(axes),
+        persona=persona_prompt(axes, rng),
         topic=pick_topic(recent_texts, rng),
         max_words=max_words - PROMPT_WORD_MARGIN,
         level_guide=guide,
