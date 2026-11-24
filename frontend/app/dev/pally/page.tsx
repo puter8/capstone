@@ -46,7 +46,7 @@ function tierLabel(axis: keyof Axes, v: number): string {
     Formality: ['단순한 점', '흰자+동공', '반짝이는 눈'],
     Energy:    ['원', '둥근 사각', '8각 별'],
     Intimacy:  ['ㅅ자 입', '작은 미소', '활짝 웃는 입'],
-    Curiosity: ['파랑', '노랑', '빨강'],
+    Curiosity: ['라벤더', '로즈', '살구'],
   };
   return map[axis][t];
 }
