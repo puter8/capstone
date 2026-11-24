@@ -243,7 +243,7 @@ export default function HomeV2Page() {
                 {hasError ? null : <IconSpinner className="animate-spin motion-reduce:animate-none" size={24} />}
               </div>
               <p className="text-p-quote text-p-text-secondary" role="status">
-                {hasError ? "Pally를 불러오지 못했어요" : "Pally를 준비하고 있어요"}
+                {hasError ? "Pally를 불러오지 못했어요" : "Pally가 준비하고 있어요"}
               </p>
             </>
           )}

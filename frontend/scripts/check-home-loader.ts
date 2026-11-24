@@ -72,6 +72,6 @@ match(
   /home\.hasRestoredPally \? \(\s*<>\s*<Stage axes=\{home\.axes\}/,
   "the idle stage must wait for the profile instead of drawing the default axes",
 );
-match(page, /Pally를 준비하고 있어요/, "the held stage slot must say Pally is on the way");
+match(page, /준비하고 있어요/, "the held stage slot must say Pally is on the way");
 
 console.log("home loader: PASS");

@@ -11,6 +11,7 @@ import type {
 } from "@/lib/api/contracts";
 import { PallyApiError } from "@/lib/api/contracts";
 import { isFallbackTitle } from "@/lib/api/pending-titles";
+import { forgetRememberedAxes, peekRememberedAxes } from "@/lib/api/remembered-axes";
 import { SESSION_ERROR_MESSAGE } from "@/lib/api/error-messages";
 import { pallyApi } from "@/lib/api";
 import { clearUser, evict, invalidate, peekStale, prefetch, read, write, writeStale } from "@/lib/api/query-cache";
@@ -272,6 +273,9 @@ export function invalidateConversationData(userId: string, conversationId?: stri
 export function clearUserRouteData(userId: string): void {
   clearUser(userId);
   if (rememberedUserId === userId) rememberedUserId = null;
+  // Pally's look outlives the tab, so dropping a user's data has to reach it too.
+  // Only this user's: signing out must not wipe the look of whoever logs in next.
+  if (peekRememberedAxes()?.userId === userId) forgetRememberedAxes();
 }
 
 export async function invalidateCurrentUserConversationData(conversationId?: string): Promise<void> {
