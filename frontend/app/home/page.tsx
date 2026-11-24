@@ -238,11 +238,18 @@ export default function HomeV2Page() {
           ) : (
             <>
               {/* A failed restore leaves this branch for good until the user retries
-                  through the error toast, so stop spinning and say what happened. */}
+                  through the error toast, so stop spinning and say what happened.
+                  Both parts fade in late (animate-wait-reveal): a returning user's
+                  look comes from localStorage on the first tick after mount, and a
+                  spinner that appears for one frame reads as a flicker. */}
               <div aria-hidden="true" className="flex h-[220px] shrink-0 items-center justify-center max-[359px]:h-[140px]">
-                {hasError ? null : <IconSpinner className="animate-spin motion-reduce:animate-none" size={24} />}
+                {hasError ? null : (
+                  <span className="animate-wait-reveal motion-reduce:animate-none">
+                    <IconSpinner className="animate-spin motion-reduce:animate-none" size={24} />
+                  </span>
+                )}
               </div>
-              <p className="text-p-quote text-p-text-secondary" role="status">
+              <p className="animate-wait-reveal text-p-quote text-p-text-secondary motion-reduce:animate-none" role="status">
                 {hasError ? "Pally를 불러오지 못했어요" : "Pally가 준비하고 있어요"}
               </p>
             </>

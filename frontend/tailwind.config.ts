@@ -179,9 +179,17 @@ const config: Config = {
           "12%, 36%": { transform: "translateY(-9px)" },
           "24%": { transform: "translateY(0)" },
         },
+        "wait-reveal": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
       },
       animation: {
         "pally-hop": "pally-hop 1.1s ease-in-out infinite",
+        // Held back so a wait that resolves in a frame or two never flashes a
+        // spinner. Pally's look comes from localStorage on a cold start, which
+        // lands on the first tick after mount, so usually nothing is shown at all.
+        "wait-reveal": "wait-reveal 180ms var(--p-ease-out) 220ms both",
       },
     },
   },
