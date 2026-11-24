@@ -189,3 +189,74 @@ def test_http_error_status_is_rejected(fake_client):
     with pytest.raises(OpenerRejected) as e:
         opener._call_gemini("p", 1.0)
     assert e.value.reason == "http_503"
+
+
+# ---------------------------------------------------------------------------
+# persona_prompt bands the RAW axes at the same cuts as the renderer
+# (frontend/components/pally/PallyCanvas.tsx tier) and the My-page trait tags
+# (backend/main.py _TRAIT_TIERS). It used to band compute_character's weighted
+# sums for Tone, Energy and Humor, which pull toward the middle, so what Pally
+# looked like and how it talked came from different numbers.
+# ---------------------------------------------------------------------------
+
+# Axis -> the trait line it owns, and that line's label per renderer tier.
+_PERSONA_BANDS = {
+    "Formality": ("Tone", ("blunt and direct, no slang", "relaxed", "polite and proper")),
+    "Energy": ("Energy", ("calm and gentle", "upbeat", "super excited")),
+    "Humor": ("Humor", ("sincere", "lightly playful", "goofy and teasing")),
+    "Intimacy": ("Closeness", ("friendly but a little reserved", "warm", "like a best friend")),
+    "Curiosity": ("Curiosity", ("simple, direct question", "interested question",
+                                "eager, specific question")),
+}
+
+
+def _renderer_tier(value: int) -> int:
+    """frontend/components/pally/PallyCanvas.tsx tier()."""
+    return 0 if value <= 33 else 1 if value <= 66 else 2
+
+
+def _trait_lines(axes: dict) -> dict:
+    return dict(
+        line.removeprefix("- ").split(": ", 1)
+        for line in opener.persona_prompt(axes).splitlines()
+    )
+
+
+@pytest.mark.parametrize("axis", sorted(_PERSONA_BANDS))
+def test_every_trait_line_bands_its_own_axis_like_the_renderer(axis):
+    line_name, labels = _PERSONA_BANDS[axis]
+    for value in range(101):
+        axes = dict(AXES, **{axis: value})
+        assert _trait_lines(axes)[line_name] == labels[_renderer_tier(value)], (
+            f"{axis}={value} must put {line_name} in the same band as Pally's shape"
+        )
+
+
+@pytest.mark.parametrize("axis", sorted(_PERSONA_BANDS))
+def test_a_trait_line_moves_only_with_its_own_axis(axis):
+    """compute_character mixed all five axes into each tone line, so a user
+    could change one axis and watch a different trait flip."""
+    line_name, _ = _PERSONA_BANDS[axis]
+    baseline = _trait_lines(AXES)[line_name]
+    for other in _PERSONA_BANDS:
+        if other == axis:
+            continue
+        for value in (0, 100):
+            axes = dict(AXES, **{other: value})
+            assert _trait_lines(axes)[line_name] == baseline, (
+                f"{other}={value} must not move the {line_name} line"
+            )
+
+
+def test_the_low_formality_band_does_not_ask_for_slang():
+    """Pally's line is what the learner imitates. Asking the low Formality band
+    for slang produced "Yo dude! What's up with your pals?" openers for a B1
+    learner, in 7 of 9 samples, where "blunt" produced none."""
+    blunt = _trait_lines(dict(AXES, Formality=10))["Tone"]
+    assert "slang" in blunt and "no slang" in blunt
+    assert "casual" not in blunt
+
+
+def test_all_five_axes_reach_the_prompt():
+    lines = _trait_lines(AXES)
+    assert set(lines) == {"Tone", "Energy", "Humor", "Closeness", "Curiosity"}

@@ -28,7 +28,6 @@ import threading
 import httpx
 
 from ai.contracts import AxisResult
-from ai.matrix_engine import compute_character
 from ai.user_name import user_name_rule
 
 # topic -> keywords that mark the topic as recently used (word-boundary match)
@@ -114,16 +113,39 @@ class OpenerRejected(ValueError):
 
 
 def _band(value: int, low: str, mid: str, high: str) -> str:
+    """Same cuts as the renderer's PallyCanvas `tier` (<=33 / <=66 / rest) and
+    the My-page trait tags, so every surface bands an axis identically."""
     return low if value < 34 else mid if value < 67 else high
 
 
 def persona_prompt(axes: dict) -> str:
-    """5 axes -> trait lines shared by the opener and the per-turn chat prompt."""
-    char = compute_character(axes)
+    """5 axes -> trait lines shared by the opener and the per-turn chat prompt.
+
+    Banded on the raw axes, which is what the renderer and the trait tags band,
+    so Pally's look and Pally's voice always come from the same number.
+
+    Tone, Energy and Humor used to be banded on compute_character's weighted
+    sums instead. Those pull hard toward the middle - two thirds of the axis
+    space lands in the mid band - so the voice disagreed with the tag and the
+    shape over a third of Humor's and Energy's range and two thirds of
+    Formality's, whose derived `tone_casual` runs opposite to it. In practice a
+    user tagged "ridiculous" kept hearing "lightly playful" until Humor hit
+    100, and two learners with clearly different styles got four of five
+    identical trait lines. compute_character still drives nothing here; it
+    remains the renderer's and the analyzer's own mapping.
+    """
     return "\n".join([
-        "- Tone: " + _band(char["tone_casual"], "polite and proper", "relaxed", "very casual, slangy"),
-        "- Energy: " + _band(char["energy_level"], "calm and gentle", "upbeat", "super excited"),
-        "- Humor: " + _band(char["humor_level"], "sincere", "lightly playful", "goofy and teasing"),
+        # Formality runs the other way from the rest: 0 is informal, 100 formal.
+        # The low band says blunt, not slangy, to match the trait tag
+        # ("blunt", "casual", "formal") and the renderer's plain dot eyes.
+        # "very casual, slangy" belonged to the derived tone_casual's HIGH end;
+        # carried onto raw Formality's low end it asked for American slang, and
+        # a learner at Formality 30 got openers like "Yo dude! What's up with
+        # your pals?" where they used to get "Hey! What music are you digging?".
+        # Pally's line is the model the learner copies, so it stays teachable.
+        "- Tone: " + _band(axes["Formality"], "blunt and direct, no slang", "relaxed", "polite and proper"),
+        "- Energy: " + _band(axes["Energy"], "calm and gentle", "upbeat", "super excited"),
+        "- Humor: " + _band(axes["Humor"], "sincere", "lightly playful", "goofy and teasing"),
         "- Closeness: " + _band(axes["Intimacy"], "friendly but a little reserved", "warm", "like a best friend"),
         "- Curiosity: " + _band(axes["Curiosity"], "simple, direct question", "interested question", "eager, specific question"),
     ])
