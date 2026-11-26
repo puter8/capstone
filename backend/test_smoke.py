@@ -1626,3 +1626,12 @@ def test_metrics_requires_a_valid_token_when_configured():
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0 and "OK" in result.stdout, result.stdout + result.stderr
+
+
+def test_api_responses_carry_security_headers():
+    from fastapi.testclient import TestClient
+
+    response = TestClient(main.app).get("/api/health")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "no-referrer"

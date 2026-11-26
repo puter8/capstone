@@ -39,13 +39,13 @@
     "react": "^18",
     "react-dom": "^18",
     "tailwind-merge": "^3.6.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@ai-sdk/openai": "^4.0.83",
     "@e2e-dev/web": "^0.11.2",
-    "@types/node": "^20",
-    "@types/react": "^18",
+    "@types/node": "20.19.43",
+    "@types/react": "18.3.32",
     "@types/react-dom": "^18",
     "ai": "^7.0.0",
     "e2e": "^0.16.0",
@@ -55,6 +55,6 @@
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.22.3",
-    "typescript": "^5"
+    "typescript": "5.9.3"
   }
 }
