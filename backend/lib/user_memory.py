@@ -23,6 +23,21 @@ def recent_facts(sb, user_id: str) -> list:
     return res.data or []
 
 
+def rebuild_prompt(sb, user_id: str):
+    """The memory block, raising on a read failure instead of returning None.
+
+    build_prompt cannot tell "no facts" from "the read failed", which is fine
+    when a conversation is being created: both mean it starts without memory.
+    A conversation that is being REOPENED already holds a block, and writing
+    None over it on a transient error would lose what Pally knew. A caller that
+    has something to lose uses this and keeps its current block on the error.
+    Returning None here is the real answer - the user has no facts, which is
+    what deleting the conversation they came from leaves behind - so it is
+    written through.
+    """
+    return memory_prompt(recent_facts(sb, user_id))
+
+
 def build_prompt(sb, user_id: str):
     """The memory block for a new conversation, or None when there is nothing.
 

@@ -5,12 +5,16 @@ check and the closed key list. The prompt is the first line of defence, but
 real calls showed it is not enough on its own - with the categories open,
 gemini-2.5-flash-lite stored `health_condition: depression` on 5 of 5 runs.
 """
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
+import main
 from ai.user_memory import (
-    ALLOWED_KEYS, MAX_PROMPT_FACTS, MAX_VALUE_CHARS, SINGLE_VALUED, ground_facts,
-    memory_prompt,
+    ALLOWED_KEYS, MAX_FACTS_PER_KEY, MAX_PROMPT_FACTS, MAX_VALUE_CHARS, SINGLE_VALUED,
+    ground_facts, memory_prompt,
 )
 from lib import user_memory as store
 
@@ -119,11 +123,76 @@ def test_every_single_valued_key_is_a_real_key():
     assert SINGLE_VALUED <= set(ALLOWED_KEYS)
 
 
+def _listed(block):
+    return [line for line in block.splitlines() if line.startswith("- ")]
+
+
 def test_the_block_is_capped():
-    """The reply is capped at 90 characters; a long list only dilutes the prompt."""
-    block = memory_prompt([{"key": "hobby", "value": f"hobby {n}"} for n in range(50)])
-    listed = [line for line in block.splitlines() if line.startswith("- ")]
-    assert len(listed) == MAX_PROMPT_FACTS
+    """The reply is capped at 90 characters; a long list only dilutes the prompt.
+
+    Spread over several keys, because one key alone cannot reach the overall cap
+    any more (see the per-key cap below).
+    """
+    keys = ["hobby", "skill", "language", "plan", "family", "pet"]
+    facts = [{"key": key, "value": f"{key} {n}"} for key in keys for n in range(5)]
+    assert len(_listed(memory_prompt(facts))) == MAX_PROMPT_FACTS
+
+
+def test_one_key_cannot_take_the_whole_block():
+    """A live account had five `pet` rows for three pets, which filled five of
+    the eight slots and pushed its occupation and field of study out."""
+    facts = [{"key": "pet", "value": f"pet number {n}"} for n in range(10)]
+    facts += [{"key": "occupation", "value": "student"}]
+    listed = _listed(memory_prompt(facts))
+    assert len([line for line in listed if line.startswith("- pet:")]) == MAX_FACTS_PER_KEY
+    assert "- occupation: student" in listed
+
+
+def test_a_newer_value_replaces_the_stale_fact_about_the_same_pet():
+    """The case this came from, with the stored values verbatim.
+
+    "my favorite animal is dog and my pet's name is donut" was fairly read as a
+    dog named Donut; two minutes later the user corrected it to a Siamese cat.
+    Both rows live in storage because `pet` is multi-valued, and the prompt
+    tells Pally to answer straight from the list, so the stale row is a wrong
+    answer waiting to happen.
+    """
+    block = memory_prompt([
+        {"key": "pet", "value": "a Siamese cat, Donut"},
+        {"key": "pet", "value": "a dog, Dumpling"},
+        {"key": "pet", "value": "dog named Donut"},
+    ])
+    assert "a Siamese cat, Donut" in block
+    assert "dog named Donut" not in block
+    # The other pet is a different animal and must survive the cleanup.
+    assert "a dog, Dumpling" in block
+
+
+def test_a_vaguer_restatement_does_not_cost_a_slot():
+    block = memory_prompt([
+        {"key": "pet", "value": "a Siamese cat, Donut"},
+        {"key": "pet", "value": "cat"},
+    ])
+    assert _listed(block) == ["- pet: a Siamese cat, Donut"]
+
+
+def test_two_pets_of_the_same_breed_are_both_kept():
+    """The replacement rule keys on the name the value introduces, not on every
+    capitalized word: "Siamese" is a breed, so two Siamese cats are two cats."""
+    block = memory_prompt([
+        {"key": "pet", "value": "a Siamese cat, Mocha"},
+        {"key": "pet", "value": "a Siamese cat, Donut"},
+    ])
+    assert "Mocha" in block and "Donut" in block
+
+
+def test_unrelated_values_of_one_key_are_all_kept():
+    block = memory_prompt([
+        {"key": "hobby", "value": "climbing"},
+        {"key": "hobby", "value": "baking bread"},
+        {"key": "hobby", "value": "playing bass"},
+    ])
+    assert len(_listed(block)) == 3
 
 
 def test_the_block_carries_the_fact_and_the_rules_for_using_it():
@@ -242,3 +311,62 @@ def test_the_model_sees_role_and_transcript_pairs_in_order(monkeypatch):
         .order.return_value.execute.return_value = SimpleNamespace(data=rows)
     store.process_session(lambda: sb, "conversation-1", "user-1", lambda given: given)
     extract.assert_called_once_with([("pally", "Hi!"), ("user", "I have two dog")])
+
+
+def test_a_read_failure_is_raised_for_a_caller_that_already_has_a_block():
+    """build_prompt cannot tell "no facts" from "the read failed"; a reopened
+    conversation has a block to lose, so it uses rebuild_prompt instead."""
+    sb = Mock()
+    sb.table.return_value.select.return_value.eq.return_value.order.return_value \
+        .limit.return_value.execute.side_effect = RuntimeError("connection lost")
+    with pytest.raises(RuntimeError):
+        store.rebuild_prompt(sb, "user-1")
+
+
+def test_rebuild_returns_none_when_the_user_really_has_no_facts():
+    """Deleting the conversation a fact came from cascades the row away, so an
+    empty read is a real answer and must be written through, not skipped."""
+    sb = Mock()
+    sb.table.return_value.select.return_value.eq.return_value.order.return_value \
+        .limit.return_value.execute.return_value = SimpleNamespace(data=[])
+    assert store.rebuild_prompt(sb, "user-1") is None
+
+
+def _reopen_with(monkeypatch, rebuild):
+    """Reopen one finished conversation, returning the update that was sent."""
+    session = {"id": "conversation-1", "user_id": "user-1",
+               "ended_at": "2026-11-26T07:04:00+00:00", "reopen_count": 1,
+               "axes_contribution": None}
+    sessions = Mock()
+    sessions.update.return_value.eq.return_value.eq.return_value.execute.return_value = \
+        SimpleNamespace(data=[{**session, "ended_at": None}])
+    sb = Mock()
+    sb.table.side_effect = lambda name: {"sessions": sessions}[name]
+    monkeypatch.setattr(main, "get_supabase", lambda: sb)
+    monkeypatch.setattr(main, "_owned_session", lambda *_: session)
+    monkeypatch.setattr(main.user_memory, "rebuild_prompt", rebuild)
+    asyncio.run(main.reopen_conversation("conversation-1", "user-1", "key"))
+    return sessions.update.call_args.args[0]
+
+
+def test_reopening_a_conversation_refreshes_what_pally_knows(monkeypatch):
+    """The bug this fixes: the user told Pally their cat's name, finished that
+    conversation, came back to an older one and was told "I don't remember"
+    while the fact was already stored. The block is a snapshot taken at
+    creation, so reopening has to take a new one."""
+    block = memory_prompt([{"key": "pet", "value": "a Siamese cat, Donut"}])
+    update = _reopen_with(monkeypatch, Mock(return_value=block))
+    assert update["memory_prompt"] == block
+    assert "Donut" in update["memory_prompt"]
+    # The rest of the reopen must still happen.
+    assert update["ended_at"] is None
+    assert update["reopen_count"] == 2
+
+
+def test_a_memory_read_failure_does_not_cost_the_conversation_its_block(monkeypatch, caplog):
+    """Writing None over the existing block on a transient error would make
+    reopening lose what Pally knew. Leave the column alone instead."""
+    update = _reopen_with(monkeypatch, Mock(side_effect=RuntimeError("connection lost")))
+    assert "memory_prompt" not in update
+    assert update["ended_at"] is None
+    assert "Memory rebuild on reopen failed" in caplog.text

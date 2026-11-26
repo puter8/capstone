@@ -49,6 +49,26 @@ MAX_VALUE_CHARS = 200
 # How many facts Pally is told about. The reply is capped at 90 characters, so a
 # long list only dilutes the prompt; the newest facts are the ones that matter.
 MAX_PROMPT_FACTS = 8
+# ...and how many of those one multi-valued key may take. A live account had
+# five `pet` rows holding three real pets, which filled five of the eight slots
+# and pushed the user's occupation and field of study out of the block.
+MAX_FACTS_PER_KEY = 3
+
+# Words that carry no fact of their own, so two values that differ only by these
+# say the same thing. Kept small and literal: this is a duplicate test, not
+# stemming.
+_FILLER = frozenset({
+    "a", "an", "the", "and", "or", "my", "of", "to", "in", "with", "is", "are",
+    "named", "name", "called", "one", "some", "both", "other", "another",
+})
+_TOKEN = re.compile(r"[A-Za-z0-9가-힣]+")
+# A capitalized token is treated as the name of a thing when the value introduces
+# it as one: right after "named"/"called"/a comma, or at the very end, which is
+# where the extraction prompt asks for it ("two dogs, Kongi and Bori"). A
+# capitalized word sitting in front of a noun is a breed or a place instead
+# ("a Siamese cat, Donut" names Donut, not Siamese), and treating that as a name
+# would make two Siamese cats collapse into one.
+_INTRODUCES_NAME = frozenset({"named", "called"})
 
 _SYSTEM_PROMPT = """\
 You extract durable facts about the USER from one finished English-practice conversation.
@@ -215,20 +235,74 @@ def extract_user_facts(turns: list, timeout: float = DEFAULT_TIMEOUT_S) -> list:
     return ground_facts(_call_gemini(conversation, timeout), turns)
 
 
-def memory_prompt(facts: list, limit: int = MAX_PROMPT_FACTS):
+def _content_words(value: str) -> frozenset:
+    return frozenset(w.lower() for w in _TOKEN.findall(value)) - _FILLER
+
+
+def _names(value: str) -> frozenset:
+    """The names of things the value introduces. See _INTRODUCES_NAME."""
+    tokens = _TOKEN.findall(value)
+    found = set()
+    for i, token in enumerate(tokens):
+        if not token[:1].isupper():
+            continue
+        after_marker = i > 0 and tokens[i - 1].lower() in _INTRODUCES_NAME
+        # A comma before the token is not a token, so look at the raw text.
+        after_comma = re.search(rf",\s*{re.escape(token)}\b", value) is not None
+        if after_marker or after_comma or i == len(tokens) - 1:
+            found.add(token.lower())
+    return frozenset(found)
+
+
+def _supersedes(newer: str, older: str) -> bool:
+    """Is `older` already answered by `newer`, for two values of the same key?
+
+    Two cases, both seen in stored data:
+
+    - The older value says less about the same thing: "cat" next to "a Siamese
+      cat, Donut" adds nothing and costs a slot.
+    - The older value says something different about the same NAMED thing:
+      "dog named Donut" was a fair reading of "my favorite animal is dog and my
+      pet's name is donut", and the user corrected it two minutes later to a
+      cat. Both rows survive because `pet` is multi-valued, and the prompt tells
+      Pally to answer straight from the list, so the stale row is a wrong answer
+      waiting to happen. A correction arrives after what it corrects, so the
+      newer value wins.
+    """
+    older_words, newer_words = _content_words(older), _content_words(newer)
+    if older_words and older_words <= newer_words:
+        return True
+    shared_names = _names(older) & _names(newer)
+    return bool(shared_names)
+
+
+def memory_prompt(facts: list, limit: int = MAX_PROMPT_FACTS,
+                  per_key: int = MAX_FACTS_PER_KEY):
     """The block injected into the chat system prompt, or None when empty.
 
-    `facts` is newest first; single-valued keys keep only their newest value so
-    a changed major or city does not appear twice with conflicting answers.
+    `facts` is newest first. Single-valued keys keep only their newest value so
+    a changed major or city does not appear twice with conflicting answers, and
+    a multi-valued key keeps at most `per_key` values, dropping the ones a newer
+    value already covers (see _supersedes). Nothing is deleted from storage:
+    this only decides what Pally is told, so a rule that turns out to be wrong
+    is reverted without losing a fact.
     """
     lines: list = []
     used: set = set()
+    kept: dict = {}
     for fact in facts:
         key, value = fact["key"], fact["value"]
         if key in SINGLE_VALUED:
             if key in used:
                 continue
             used.add(key)
+        else:
+            same_key = kept.setdefault(key, [])
+            if len(same_key) >= per_key:
+                continue
+            if any(_supersedes(newer, value) for newer in same_key):
+                continue
+            same_key.append(value)
         lines.append(f"- {key.replace('_', ' ')}: {value}")
         if len(lines) >= limit:
             break
