@@ -47,14 +47,14 @@ export default function AuthCallbackV2Page() {
       }
     };
 
-    void finishSignIn()
-      .catch((caught: unknown) => {
-        console.error("Sign-in callback failed", caught);
-        if (active) setError(signInErrorMessage(caught));
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
-      });
+    // The loader stays up on success: router.replace resolves before the next page
+    // paints, and clearing it then left a blank frame between the two screens.
+    void finishSignIn().catch((caught: unknown) => {
+      console.error("Sign-in callback failed", caught);
+      if (!active) return;
+      setError(signInErrorMessage(caught));
+      setIsLoading(false);
+    });
     return () => { active = false; };
   }, [router]);
 
