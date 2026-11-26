@@ -47,7 +47,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 from ai.analyzer import analyze_utterance
-from ai.conversation_rules import CONVERSATION_CORRECTION_RULES
+from ai.conversation_rules import CONVERSATION_CORRECTION_RULES, PALLY_IDENTITY, SAFETY_SETTINGS
 from ai import daily_expression
 from ai.intimacy import compute_intimacy_from_access_days
 from ai.matrix_engine import conversation_mean, replay_cumulative, compute_character
@@ -773,7 +773,7 @@ def _build_chat_system_prompt(character_name: str, level: str, axes: Dict[str, i
     memory_block = f"\n{memory}\n" if memory else ""
     return f"""\
 You are {character_name}, the user's English conversation friend.
-Your personality right now (show it in every reply; the level and length rules win if they conflict):
+{PALLY_IDENTITY}Your personality right now (show it in every reply; the level and length rules win if they conflict):
 {persona_prompt(axes)}
 {level_guide}
 {name_line}Keep the entire reply within 90 characters, using at most two short sentences.
@@ -797,7 +797,25 @@ Pally: "You watched it yesterday and were dying laughing? What was so funny?"
 
 {CONVERSATION_CORRECTION_RULES}
 
-Stay in character as {character_name} at all times. Never break the fourth wall."""
+Stay in character as {character_name} at all times."""
+
+
+def _gemini_block_reason(body: dict) -> Optional[str]:
+    """Why Gemini returned no reply under SAFETY_SETTINGS, or None if it did not.
+
+    A blocked prompt has promptFeedback.blockReason and no candidates; a
+    blocked reply has finishReason SAFETY (or a sibling such as PROHIBITED_CONTENT)
+    and no content parts."""
+    prompt_block = (body.get("promptFeedback") or {}).get("blockReason")
+    if prompt_block:
+        return f"prompt:{prompt_block}"
+    candidates = body.get("candidates")
+    if not candidates:
+        return "no_candidates"
+    finish = candidates[0].get("finishReason")
+    if finish in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII"):
+        return f"reply:{finish}"
+    return None
 
 
 async def _call_gemini_chat(
@@ -826,6 +844,7 @@ async def _call_gemini_chat(
             "maxOutputTokens": 512,
             "thinkingConfig": {"thinkingBudget": 0},
         },
+        "safetySettings": SAFETY_SETTINGS,
     }
 
     resp = await app.state.http_client.post(
@@ -838,7 +857,11 @@ async def _call_gemini_chat(
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini chat error {resp.status_code}: {resp.text}")
 
-    candidate = resp.json()["candidates"][0]
+    body = resp.json()
+    blocked = _gemini_block_reason(body)
+    if blocked:
+        raise RuntimeError(f"Gemini chat reply blocked ({blocked})")
+    candidate = body["candidates"][0]
     if candidate.get("finishReason") == "MAX_TOKENS":
         logging.warning("Gemini chat response cut off by MAX_TOKENS")
 
@@ -898,6 +921,7 @@ async def _call_gemini_chat_segments(
             "responseMimeType": "application/json",
             "responseSchema": reply_segments.RESPONSE_SCHEMA,
         },
+        "safetySettings": SAFETY_SETTINGS,
     }
 
     for attempt in range(1, _SEGMENT_ATTEMPTS + 1):
@@ -910,7 +934,15 @@ async def _call_gemini_chat_segments(
             )
             if resp.status_code != 200:
                 raise RuntimeError(f"Gemini segments error {resp.status_code}")
-            candidate = resp.json()["candidates"][0]
+            body = resp.json()
+            blocked = _gemini_block_reason(body)
+            if blocked:
+                # A blocked reply comes back without content. Name it in the
+                # log instead of a bare KeyError; the plain path below is
+                # called with the same safety settings and raises the same way.
+                logging.warning("segment reply blocked (attempt %d): %s", attempt, blocked)
+                break
+            candidate = body["candidates"][0]
             raw = " ".join(
                 p["text"] for p in candidate["content"]["parts"] if not p.get("thought", False)
             )

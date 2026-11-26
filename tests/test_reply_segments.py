@@ -202,3 +202,13 @@ def test_missing_braces_are_recovered_but_nameless_values_are_not():
     assert build_reply(recovered, "I am tired.") is not None
     assert parse_payload('"Pizza is great!"\n"I love pizza too."\n"love pizza"\n"What topping?"') is None
     assert parse_payload("") is None
+
+
+def test_segment_prompt_says_pally_is_an_ai_friend():
+    """사람인 척하지 않는다: "Are you a real person?" 에 얼버무리던 문제(2026-11-26 실호출)."""
+    from ai.conversation_rules import PALLY_IDENTITY
+
+    prompt = system_prompt("Pally", "Use simple English.", "Warm.")
+    assert PALLY_IDENTITY in prompt
+    assert "fourth wall" not in prompt  # AI 라고 밝히라는 규칙과 부딪힌다
+    assert "109" in prompt

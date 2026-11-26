@@ -1628,6 +1628,45 @@ def test_metrics_requires_a_valid_token_when_configured():
     assert result.returncode == 0 and "OK" in result.stdout, result.stdout + result.stderr
 
 
+def test_safety_blocked_segment_reply_is_named_and_not_retried(monkeypatch):
+    """필터가 답을 막으면 content 가 없다. KeyError 로 재시도하지 않고 막혔다고
+    남긴 뒤 평문 경로로 내려간다(평문 경로도 같은 설정이라 이름 붙은 에러로 실패)."""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from ai.conversation_rules import SAFETY_SETTINGS
+
+    bodies = []
+
+    async def blocked_post(*_args, json=None, **_kwargs):
+        bodies.append(json)
+        return SimpleNamespace(status_code=200, json=lambda: {"candidates": [{"finishReason": "SAFETY"}]})
+
+    monkeypatch.setattr(main.app.state, "http_client", SimpleNamespace(post=blocked_post), raising=False)
+    plain = AsyncMock(return_value="Let's talk about something else.")
+    monkeypatch.setattr(main, "_call_gemini_chat", plain)
+
+    asyncio.run(main._call_gemini_chat_segments("hi", [], "Pally", "A2", dict(main._INITIAL_AXES)))
+
+    assert len(bodies) == 1
+    assert bodies[0]["safetySettings"] == SAFETY_SETTINGS
+    plain.assert_awaited_once()
+
+
+def test_gemini_block_reason():
+    ok = {"content": {"parts": [{"text": "hi"}]}}
+    cases = [
+        ({"promptFeedback": {"blockReason": "SAFETY"}}, "prompt:SAFETY"),
+        ({"candidates": []}, "no_candidates"),
+        ({"candidates": [{"finishReason": "SAFETY"}]}, "reply:SAFETY"),
+        ({"candidates": [{"finishReason": "STOP", **ok}]}, None),
+        ({"candidates": [{"finishReason": "MAX_TOKENS", **ok}]}, None),
+    ]
+    for body, reason in cases:
+        assert main._gemini_block_reason(body) == reason
+
+
 def test_api_responses_carry_security_headers():
     from fastapi.testclient import TestClient
 

@@ -28,6 +28,7 @@ import threading
 import httpx
 
 from ai.contracts import AxisResult
+from ai.conversation_rules import PALLY_IDENTITY, SAFETY_SETTINGS
 from ai.user_name import user_name_rule
 
 # topic -> keywords that mark the topic as recently used (word-boundary match)
@@ -83,6 +84,7 @@ def _get_client() -> httpx.Client:
 
 _SYSTEM_PROMPT = """\
 You are Pally, the user's English speaking buddy (a friend, NOT an assistant or teacher).
+""" + PALLY_IDENTITY + """\
 You speak first to open a new voice chat.
 
 Your personality right now:
@@ -274,6 +276,7 @@ def _call_gemini(system_prompt: str, timeout: float) -> str:
             "maxOutputTokens": 80,
             "thinkingConfig": {"thinkingBudget": 0},
         },
+        "safetySettings": SAFETY_SETTINGS,
     }
     # Key in a header, not the URL, so httpx error text never carries it.
     resp = _get_client().post(_URL, headers={"x-goog-api-key": api_key}, json=payload, timeout=timeout)
