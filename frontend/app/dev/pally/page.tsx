@@ -43,7 +43,8 @@ function tierLabel(axis: keyof Axes, v: number): string {
   const t = v <= 33 ? 0 : v <= 66 ? 1 : 2;
   const map: Record<keyof Axes, string[]> = {
     Humor:     ['거의 정지', '보통 bob', '좌우 wiggle'],
-    Formality: ['단순한 점', '흰자+동공', '반짝이는 눈'],
+    // 격식도만 뒤집혀 있다 (PallyCanvas: eT = 2 - tier). 낮을수록 초롱한 눈.
+    Formality: ['반짝이는 눈', '흰자+동공', '단순한 점'],
     Energy:    ['원', '둥근 사각', '8각 별'],
     Intimacy:  ['ㅅ자 입', '작은 미소', '활짝 웃는 입'],
     Curiosity: ['파랑', '노랑', '빨강'],

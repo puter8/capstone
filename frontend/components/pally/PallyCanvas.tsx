@@ -151,8 +151,12 @@ export default function PallyCanvas({
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // ── 눈 (Formality → blunt=단순한 점 → casual=흰자+동공 → formal=반짝이는 눈) ──
-    const eT       = tier(ax.Formality);
+    // ── 눈 (Formality → formal=단순한 점 → casual=흰자+동공 → blunt=반짝이는 눈) ──
+    // 격식도만 축 방향과 반대로 읽는다: 낮을수록 초롱한 눈. 편하게 말하는 사이일수록
+    // 눈이 살아 있고, 격식을 차릴수록 표정을 덜 드러낸다는 쪽이 캐릭터로 더 읽힌다.
+    // 2 - tier 로 구간을 뒤집으므로 컷(33/66)은 그대로고, 기본값 Formality 50 은
+    // 가운데 구간이라 뒤집어도 같은 눈(흰자+동공)이다.
+    const eT       = 2 - tier(ax.Formality);
     const eyeSpcX  = sT === 2 ? bs * 0.25 : bs * 0.34;
     const eyeBaseY = sT === 2 ? bs * 0.08 : -bs * 0.04;
     const blink    = Math.sin(t * 0.4) > 0.98;
