@@ -71,4 +71,12 @@ def record_gemini_call(payload: dict, body: dict | None, output: str | None) -> 
     _langfuse().update_current_generation(input=payload, output=output, usage_details=usage)
 
 
-__all__ = ["gemini_generation", "init_tracing", "record_gemini_call"]
+def mark_generation_rejected(reason: str) -> None:
+    """Flag the current generation WARNING when the caller discards the output
+    without raising (e.g. a retry loop), so it stands out in Langfuse."""
+    if not trace.get_current_span().get_span_context().is_valid:
+        return
+    _langfuse().update_current_generation(level="WARNING", status_message=reason)
+
+
+__all__ = ["gemini_generation", "init_tracing", "mark_generation_rejected", "record_gemini_call"]

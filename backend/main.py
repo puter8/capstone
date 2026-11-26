@@ -52,7 +52,7 @@ from ai import daily_expression
 from ai.intimacy import compute_intimacy_from_access_days
 from ai.matrix_engine import conversation_mean, replay_cumulative, compute_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
-from ai.tracing import init_tracing
+from ai.tracing import gemini_generation, init_tracing, mark_generation_rejected, record_gemini_call
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
 from ai.user_name import user_name_rule
@@ -849,30 +849,34 @@ async def _call_gemini_chat(
         "safetySettings": SAFETY_SETTINGS,
     }
 
-    resp = await app.state.http_client.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
-        json=payload,
-        timeout=30.0,
-    )
+    with gemini_generation("chat_reply", "gemini-2.5-flash-lite"):
+        record_gemini_call(payload, None, None)
+        resp = await app.state.http_client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
+            json=payload,
+            timeout=30.0,
+        )
 
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini chat error {resp.status_code}: {resp.text}")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini chat error {resp.status_code}: {resp.text}")
 
-    body = resp.json()
-    blocked = _gemini_block_reason(body)
-    if blocked:
-        raise RuntimeError(f"Gemini chat reply blocked ({blocked})")
-    candidate = body["candidates"][0]
-    if candidate.get("finishReason") == "MAX_TOKENS":
-        logging.warning("Gemini chat response cut off by MAX_TOKENS")
+        body = resp.json()
+        record_gemini_call(payload, body, None)
+        blocked = _gemini_block_reason(body)
+        if blocked:
+            raise RuntimeError(f"Gemini chat reply blocked ({blocked})")
+        candidate = body["candidates"][0]
+        if candidate.get("finishReason") == "MAX_TOKENS":
+            logging.warning("Gemini chat response cut off by MAX_TOKENS")
 
-    # Skip thought parts (thinkingBudget=0이어도 방어적으로 필터)
-    parts = candidate["content"]["parts"]
-    reply = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
-    if not reply:
-        raise RuntimeError("Gemini returned empty chat response")
-    return shape_reply(reply)
+        # Skip thought parts (thinkingBudget=0이어도 방어적으로 필터)
+        parts = candidate["content"]["parts"]
+        reply = " ".join(p["text"] for p in parts if not p.get("thought", False)).strip()
+        record_gemini_call(payload, body, reply)
+        if not reply:
+            raise RuntimeError("Gemini returned empty chat response")
+        return shape_reply(reply)
 
 
 # 구조화 응답을 몇 번까지 다시 시도할지. 실측(40회) 기준 한 번에 92% 성공이라
@@ -928,30 +932,38 @@ async def _call_gemini_chat_segments(
 
     for attempt in range(1, _SEGMENT_ATTEMPTS + 1):
         try:
-            resp = await app.state.http_client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
-                json=payload,
-                timeout=30.0,
-            )
-            if resp.status_code != 200:
-                raise RuntimeError(f"Gemini segments error {resp.status_code}")
-            body = resp.json()
-            blocked = _gemini_block_reason(body)
-            if blocked:
-                # A blocked reply comes back without content. Name it in the
-                # log instead of a bare KeyError; the plain path below is
-                # called with the same safety settings and raises the same way.
-                logging.warning("segment reply blocked (attempt %d): %s", attempt, blocked)
-                break
-            candidate = body["candidates"][0]
-            raw = " ".join(
-                p["text"] for p in candidate["content"]["parts"] if not p.get("thought", False)
-            )
-            built = reply_segments.build_reply(reply_segments.parse_payload(raw), utterance)
-            if built:
-                return built.text, built.segments
-            logging.warning("segment reply rejected (attempt %d)", attempt)
+            # Inside the try: an exception marks this attempt ERROR in Langfuse
+            # on its way out, then the except below logs it as before.
+            with gemini_generation("chat_segments", "gemini-2.5-flash-lite"):
+                record_gemini_call(payload, None, None)
+                resp = await app.state.http_client.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/"
+                    f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
+                    json=payload,
+                    timeout=30.0,
+                )
+                if resp.status_code != 200:
+                    raise RuntimeError(f"Gemini segments error {resp.status_code}")
+                body = resp.json()
+                record_gemini_call(payload, body, None)
+                blocked = _gemini_block_reason(body)
+                if blocked:
+                    # A blocked reply comes back without content. Name it in the
+                    # log instead of a bare KeyError; the plain path below is
+                    # called with the same safety settings and raises the same way.
+                    logging.warning("segment reply blocked (attempt %d): %s", attempt, blocked)
+                    mark_generation_rejected(f"blocked: {blocked}")
+                    break
+                candidate = body["candidates"][0]
+                raw = " ".join(
+                    p["text"] for p in candidate["content"]["parts"] if not p.get("thought", False)
+                )
+                record_gemini_call(payload, body, raw)
+                built = reply_segments.build_reply(reply_segments.parse_payload(raw), utterance)
+                if built:
+                    return built.text, built.segments
+                logging.warning("segment reply rejected (attempt %d)", attempt)
+                mark_generation_rejected("segment contract rejected")
         except Exception as exc:
             # 키가 섞인 URL 이 로그에 남지 않도록 예외 타입만 남긴다.
             logging.warning("segment reply failed (attempt %d): %s", attempt, type(exc).__name__)
@@ -2356,16 +2368,21 @@ async def _generate_conversation_title(turns: list) -> Optional[str]:
             },
         },
     }
-    resp = await app.state.http_client.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
-        json=payload,
-        timeout=15.0,
-    )
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini title error {resp.status_code}: {resp.text[:200]}")
-    text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return _clean_title(json.loads(text)["title"])
+    with gemini_generation("conversation_title", "gemini-2.5-flash-lite"):
+        record_gemini_call(payload, None, None)
+        resp = await app.state.http_client.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            f"gemini-2.5-flash-lite:generateContent?key={GOOGLE_AI_API_KEY}",
+            json=payload,
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini title error {resp.status_code}: {resp.text[:200]}")
+        body = resp.json()
+        record_gemini_call(payload, body, None)
+        text = body["candidates"][0]["content"]["parts"][0]["text"]
+        record_gemini_call(payload, body, text)
+        return _clean_title(json.loads(text)["title"])
 
 
 async def _assign_conversation_title(conversation_id: str) -> None:
