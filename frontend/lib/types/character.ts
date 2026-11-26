@@ -12,6 +12,8 @@
  *   matrix_engine.py → apply_ema() → Axes (EMA 보정 후)
  */
 
+import { curiosityBodyRgb, rgbToHex } from '@/lib/pally-color';
+
 // ---------------------------------------------------------------------------
 // 5축 점수 (Axes)
 // analyzer.py analyze_utterance() 반환값과 1:1 대응
@@ -47,7 +49,7 @@ export const DEFAULT_AXES: Axes = {
 // 시각 매핑 — 최종 (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14, PallyCanvas.tsx가 기준):
 //   Intimacy  → 입: 0~33=ㅅ자 입(acquaint), 34~66=작은 미소(buddy), 67~100=활짝 웃는 입(bestie)
 //   Energy    → 몸 모양: 0~33=원(calm), 34~66=둥근 사각(lively), 67~100=8각 별(energetic)
-//   Curiosity → 몸 색상, 연속: 파랑(0) → 노랑(50) → 빨강(100)
+//   Curiosity → 몸 색상, 연속: 라벤더(0) → 로즈(50) → 살구(100) (lib/pally-color.ts, 2026-11-24)
 //   Formality → 눈 (축 방향과 반대): 0~33=반짝이는 눈(blunt), 34~66=흰자+동공(casual), 67~100=단순한 점(formal)
 //   Humor     → 전신 움직임: 0~33=거의 정지(serious), 34~66=보통 bob, 67~100=좌우 wiggle(ridiculous)
 // 아래 axesToCharacterParams 의 필드 이름(spikiness/borderRadius/eyeType/...)은 예전 매핑 기준이며
@@ -92,11 +94,11 @@ export interface CharacterParams {
   eyeType: 'small' | 'large' | 'glowing';
 
   /**
-   * 몸통 색상 (Intimacy 축 기반)
-   * 0   → 차가운 파랑  (#6B9FD4)
-   * 50  → 따뜻한 노랑  (#F5E642)
-   * 100 → 따뜻한 빨강  (#FF6B6B)
-   * 렌더러에서 HSL 보간으로 처리
+   * 몸통 색상 (Curiosity 축 기반, lib/pally-color.ts)
+   * 0   → 라벤더 (#B0AADB)
+   * 50  → 로즈   (#EE9ABF)
+   * 100 → 살구   (#F7C56D)
+   * OKLCH 보간
    */
   bodyColor: string;     // CSS 색상 문자열
 
@@ -127,29 +129,9 @@ export const DEFAULT_CHARACTER_PARAMS: CharacterParams = {
 // (백엔드가 CharacterParams 전체를 내려줄 때는 이 함수 불필요)
 // ---------------------------------------------------------------------------
 
-/**
- * Intimacy 점수(0~100)를 HSL 보간 색상으로 변환
- * 0   → hsl(210, 55%, 63%)  파랑
- * 50  → hsl(52,  90%, 61%)  노랑
- * 100 → hsl(0,   100%, 71%) 빨강
- */
-export function intimacyToColor(intimacy: number): string {
-  const t = Math.max(0, Math.min(100, intimacy)) / 100;
-  if (t <= 0.5) {
-    // 파랑 → 노랑
-    const u = t / 0.5;
-    const h = Math.round(210 + (52 - 210) * u);
-    const s = Math.round(55 + (90 - 55) * u);
-    const l = Math.round(63 + (61 - 63) * u);
-    return `hsl(${h}, ${s}%, ${l}%)`;
-  } else {
-    // 노랑 → 빨강
-    const u = (t - 0.5) / 0.5;
-    const h = Math.round(52 + (0 - 52) * u);
-    const s = Math.round(90 + (100 - 90) * u);
-    const l = Math.round(61 + (71 - 61) * u);
-    return `hsl(${h}, ${s}%, ${l}%)`;
-  }
+/** Curiosity 점수(0~100) → 몸통 색상 hex (PallyCanvas와 같은 lib/pally-color.ts 사용) */
+export function curiosityToColor(curiosity: number): string {
+  return rgbToHex(curiosityBodyRgb(curiosity));
 }
 
 /** Curiosity 점수 → eyeType 변환 */
@@ -183,7 +165,7 @@ export function axesToCharacterParams(
     spikiness: axes.Energy,
     borderRadius: 100 - axes.Formality,
     eyeType: curiosityToEyeType(axes.Curiosity),
-    bodyColor: intimacyToColor(axes.Intimacy),
+    bodyColor: curiosityToColor(axes.Curiosity),
     animationSpeed: humorToAnimSpeed(axes.Humor),
   };
 }
