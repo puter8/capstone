@@ -94,9 +94,17 @@ export default function PallyCanvas({
     const cy  = size / 2;
     ctx.clearRect(0, 0, size, size);
 
-    // Final mapping (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14):
-    // Intimacy=mouth, Energy=body shape, Curiosity=body colour (continuous, brand arc since 2026-11-24),
-    // Formality=eyes, Humor=whole-body motion.
+    // Axis → feature mapping. Based on the Figma guide "Pally 5축 → 캐릭터 매핑
+    // 가이드" (2026-10-14), with Formality and Energy swapped since 2026-11-26:
+    // Intimacy=mouth, Formality=body shape (read against the axis),
+    // Curiosity=body colour (continuous, brand arc since 2026-11-24),
+    // Energy=eyes, Humor=whole-body motion.
+    //
+    // Why the swap: replaying the labelled corpus through the real cumulative
+    // step, Formality leaves its starting band for 45% of simulated users and
+    // Energy for 29%, so the body shape - by far the largest of the three-stage
+    // channels - was carrying the axis that moves least. Trading them puts the
+    // livelier axis on the louder channel without touching the other three.
     //
     // Humor → 움직임(bob/bounce/wiggle): serious=거의 정지, ridiculous=활발한 wiggle.
     // 최종 매핑으로 옮길 때 고정 bob 으로 비워뒀던 자리에, 이전 매핑에서 쓰던 3단계를
@@ -113,8 +121,15 @@ export default function PallyCanvas({
     // Curiosity → body colour: lavender → rose → apricot (lib/pally-color.ts, 2026-11-24).
     const [r, g, b] = curiosityBodyRgb(ax.Curiosity);
     const [hr, hg, hb] = curiosityHighlightRgb(ax.Curiosity);
-    // Energy → body shape: calm=circle → lively=rounded square → energetic=8-point star
-    const sT = tier(ax.Energy);
+    // Formality → body shape, against the axis: formal=circle → casual=rounded
+    // square → blunt=8-point star. A circle is the tidy, composed silhouette and
+    // the star is the one that sticks out, so the spikes belong to the informal
+    // end. 2 - tier keeps the 33/66 cuts in tier() alone, and the default
+    // Formality of 50 stays the middle stage (rounded square) either way.
+    //
+    // sT also narrows the eye spacing and the mouth below: those are geometry
+    // fixes for the star's inner valleys, so they follow the shape, not the axis.
+    const sT = 2 - tier(ax.Formality);
 
     ctx.shadowColor = `rgba(${r},${g},${b},0.45)`;
     ctx.shadowBlur  = 20;
@@ -136,12 +151,11 @@ export default function PallyCanvas({
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // ── 눈 (Formality → formal=단순한 점 → casual=흰자+동공 → blunt=반짝이는 눈) ──
-    // 격식도만 축 방향과 반대로 읽는다: 낮을수록 초롱한 눈. 편하게 말하는 사이일수록
-    // 눈이 살아 있고, 격식을 차릴수록 표정을 덜 드러낸다는 쪽이 캐릭터로 더 읽힌다.
-    // 2 - tier 로 구간을 뒤집으므로 컷(33/66)은 그대로고, 기본값 Formality 50 은
-    // 가운데 구간이라 뒤집어도 같은 눈(흰자+동공)이다.
-    const eT       = 2 - tier(ax.Formality);
+    // ── 눈 (Energy → calm=단순한 점 → lively=흰자+동공 → energetic=반짝이는 눈) ──
+    // 축 방향 그대로다. 활발할수록 눈이 초롱해지는 쪽은 되물을 필요가 없는 방향이라,
+    // 격식도가 눈을 맡고 있을 때 필요했던 뒤집기가 사라진다. 기본값 Energy 50 은
+    // 가운데 구간이라 교환 전과 같은 눈(흰자+동공)이다.
+    const eT       = tier(ax.Energy);
     const eyeSpcX  = sT === 2 ? bs * 0.25 : bs * 0.34;
     const eyeBaseY = sT === 2 ? bs * 0.08 : -bs * 0.04;
     const blink    = Math.sin(t * 0.4) > 0.98;

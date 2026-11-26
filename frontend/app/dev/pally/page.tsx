@@ -22,11 +22,12 @@ const AXIS_COLORS: Record<keyof Axes, string> = {
   Humor: '#a78bfa', Formality: '#60a5fa', Energy: '#fb923c',
   Intimacy: '#f472b6', Curiosity: '#34d399',
 };
-// Final mapping (Figma "Pally 5축 → 캐릭터 매핑 가이드", 2026-10-14) — keep in sync with PallyCanvas.
+// Figma "Pally 5축 → 캐릭터 매핑 가이드" (2026-10-14) + Formality↔Energy 교환
+// (2026-11-26) — keep in sync with PallyCanvas.
 const AXIS_META: Record<keyof Axes, { low: string; high: string; visual: string }> = {
   Humor:     { low: '진지',   high: '유머/밈',  visual: '전신 움직임' },
-  Formality: { low: '슬랭',   high: '격식체',  visual: '눈' },
-  Energy:    { low: '차분',   high: '활발',    visual: '몸 모양' },
+  Formality: { low: '슬랭',   high: '격식체',  visual: '몸 모양 (역방향)' },
+  Energy:    { low: '차분',   high: '활발',    visual: '눈' },
   Intimacy:  { low: '거리감', high: '친밀',    visual: '입' },
   Curiosity: { low: '선언적', high: '탐구적',  visual: '몸 색상 (연속)' },
 };
@@ -43,9 +44,9 @@ function tierLabel(axis: keyof Axes, v: number): string {
   const t = v <= 33 ? 0 : v <= 66 ? 1 : 2;
   const map: Record<keyof Axes, string[]> = {
     Humor:     ['거의 정지', '보통 bob', '좌우 wiggle'],
-    // 격식도만 뒤집혀 있다 (PallyCanvas: eT = 2 - tier). 낮을수록 초롱한 눈.
-    Formality: ['반짝이는 눈', '흰자+동공', '단순한 점'],
-    Energy:    ['원', '둥근 사각', '8각 별'],
+    // 격식도만 뒤집혀 있다 (PallyCanvas: sT = 2 - tier). 낮을수록 튀는 모양.
+    Formality: ['8각 별', '둥근 사각', '원'],
+    Energy:    ['단순한 점', '흰자+동공', '반짝이는 눈'],
     Intimacy:  ['ㅅ자 입', '작은 미소', '활짝 웃는 입'],
     Curiosity: ['라벤더', '로즈', '살구'],
   };
