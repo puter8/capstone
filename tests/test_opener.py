@@ -134,7 +134,7 @@ class _FakeClient:
         _FakeClient.instances.append(self)
 
     def post(self, url, headers, json, timeout):
-        self.posts.append({"url": url, "headers": headers, "timeout": timeout})
+        self.posts.append({"url": url, "headers": headers, "timeout": timeout, "json": json})
         if self.fail_next:
             exc, self.fail_next = self.fail_next, None
             raise exc
@@ -170,6 +170,15 @@ def test_api_key_goes_in_header_not_url(fake_client):
     post = fake_client.instances[0].posts[0]
     assert post["headers"] == {"x-goog-api-key": "test-key"}
     assert "test-key" not in post["url"] and "key=" not in post["url"]
+
+
+def test_opener_request_carries_pally_identity_and_safety_settings(fake_client):
+    from ai.conversation_rules import PALLY_IDENTITY, SAFETY_SETTINGS
+
+    opener._call_gemini(opener._SYSTEM_PROMPT, 1.0)
+    body = fake_client.instances[0].posts[0]["json"]
+    assert body["safetySettings"] == SAFETY_SETTINGS
+    assert PALLY_IDENTITY in body["system_instruction"]["parts"][0]["text"]
 
 
 def test_transport_error_propagates_without_retry_and_client_stays_usable(fake_client):
