@@ -7,7 +7,7 @@ import { AppFrame } from "@/components/v2/AppFrame";
 import { BottomNav } from "@/components/v2/BottomNav";
 import { Button } from "@/components/v2/Button";
 import { Field } from "@/components/v2/Field";
-import { IconCard, IconGraduation, IconLogOut, IconPencil, IconTrash } from "@/components/v2/icons";
+import { IconCard, IconGraduation, IconInfo, IconLogOut, IconPencil, IconTrash } from "@/components/v2/icons";
 import { ListGroup, ListRow } from "@/components/v2/ListRow";
 import { PallyThumb } from "@/components/v2/PallyThumb";
 import { Sheet } from "@/components/v2/Sheet";
@@ -297,6 +297,10 @@ export default function MyV2Page() {
             }}
             tone="danger"
           />
+        </ListGroup>
+
+        <ListGroup label="정보">
+          <ListRow href={routes.privacy} icon={<IconInfo size={22} />} label="개인정보처리방침" />
         </ListGroup>
 
         <div className="flex items-center justify-center gap-p-1 text-p-label">

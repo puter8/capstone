@@ -1665,3 +1665,12 @@ def test_gemini_block_reason():
     ]
     for body, reason in cases:
         assert main._gemini_block_reason(body) == reason
+
+
+def test_api_responses_carry_security_headers():
+    from fastapi.testclient import TestClient
+
+    response = TestClient(main.app).get("/api/health")
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
