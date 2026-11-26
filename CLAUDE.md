@@ -56,6 +56,7 @@ CLI와 MCP의 접근 범위는 로그인한 계정·토큰의 권한에 따라 �
 | Railway project | `powerful-laughter` (`f9d8024f-96aa-4f83-b052-ed7c7fc1da4a`) |
 | Railway environment / service | `production` / `web` |
 | Railway deployment | `https://web-production-8dee5.up.railway.app` |
+| Langfuse (US cloud, **Hobby**) | org `pally`, owner 이찬희 / project `pally-prod` (Railway production 키) · `pally-dev` (로컬 개발 키) |
 
 다른 본인 개인 계정 리소스와 혼동하지 않도록 위 ID로 명시. 새 리소스 추가 시 이 표를 먼저 업데이트하고 팀 채널 공지.
 

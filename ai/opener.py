@@ -29,6 +29,7 @@ import httpx
 
 from ai.contracts import AxisResult
 from ai.conversation_rules import PALLY_IDENTITY, SAFETY_SETTINGS
+from ai.tracing import gemini_generation, record_gemini_call
 from ai.user_name import user_name_rule
 
 # topic -> keywords that mark the topic as recently used (word-boundary match)
@@ -279,10 +280,15 @@ def _call_gemini(system_prompt: str, timeout: float) -> str:
         "safetySettings": SAFETY_SETTINGS,
     }
     # Key in a header, not the URL, so httpx error text never carries it.
+    record_gemini_call(payload, None, None)
     resp = _get_client().post(_URL, headers={"x-goog-api-key": api_key}, json=payload, timeout=timeout)
     if resp.status_code != 200:
         raise OpenerRejected(f"http_{resp.status_code}")
-    return _extract_text(resp.json())
+    body = resp.json()
+    record_gemini_call(payload, body, None)  # keeps usage if _extract_text rejects
+    text = _extract_text(body)
+    record_gemini_call(payload, body, text)
+    return text
 
 
 def generate_opener(
@@ -311,7 +317,8 @@ def generate_opener(
         expression_rule=f"{expression_rule}\n" if expression_rule else "",
         name_rule=f"- {rule}\n" if (rule := user_name_rule(user_name)) else "",
     )
-    return validate_opener(_call_gemini(prompt, timeout), max_words)
+    with gemini_generation("opener", MODEL):
+        return validate_opener(_call_gemini(prompt, timeout), max_words)
 
 
 __all__ = ["generate_opener", "persona_prompt", "validate_opener", "word_count", "OpenerRejected", "LEVEL_RULES", "TOPICS"]
