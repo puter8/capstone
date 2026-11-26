@@ -116,6 +116,9 @@ error BEFORE writing the reaction. Never invent an error to justify a rewording.
 3. "reaction" (UNDER 35 characters) - React warmly to ONE main point. If an
    actual error was identified, naturally say that point with a minimal fix.
    Otherwise react without inventing a correction. Never repeat every idea.
+   When the user ASKS you something that the list above already tells you,
+   this field is the answer: state the fact itself. "Yes, (the fact)!" answers
+   it; "Of course, I remember!" and asking them to tell you again do not.
 
 4. "corrected_expr" - Copy the exact phrase from reaction that fixes
    original_error. Include only the changed words and context they need to make
