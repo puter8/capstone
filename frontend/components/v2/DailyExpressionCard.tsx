@@ -63,15 +63,38 @@ export function DailyExpressionCard() {
     return <DailyExpressionContent data={data} key={`${data.date}:${data.expression.id}:${data.expression.example_en}`} />;
   }
 
+  if (error) {
+    return (
+      <section aria-label="오늘의 표현" className={CARD_CLASS}>
+        <h2 className="text-p-eyebrow text-p-secondary">오늘의 표현</h2>
+        <p className="text-p-small text-p-text-secondary" role="alert">오늘의 표현을 불러오지 못했어요.</p>
+        <button className="min-h-[44px] self-start text-p-label text-p-primary" onClick={() => setAttempt((value) => value + 1)} type="button">다시 불러오기</button>
+      </section>
+    );
+  }
+
+  return <DailyExpressionSkeleton />;
+}
+
+const SKELETON_BAR_CLASS = "inline-block animate-pulse rounded-p-full bg-p-raised align-middle motion-reduce:animate-none";
+
+// Mirrors DailyExpressionContent line for line (header row, English title, meaning,
+// example) with the same type classes, so the card keeps its height when the
+// expression lands instead of pushing everything below it down. The example is one
+// line because 43 of the 48 catalog entries fit on one line at 360px.
+function DailyExpressionSkeleton() {
   return (
-    <section aria-label="오늘의 표현" aria-busy={!error} className={CARD_CLASS}>
-      <h2 className="text-p-eyebrow text-p-secondary">오늘의 표현</h2>
-      {error ? (
-        <>
-          <p className="text-p-small text-p-text-secondary" role="alert">오늘의 표현을 불러오지 못했어요.</p>
-          <button className="min-h-[44px] self-start text-p-label text-p-primary" onClick={() => setAttempt((value) => value + 1)} type="button">다시 불러오기</button>
-        </>
-      ) : <p className="text-p-small text-p-text-muted" role="status">오늘의 표현을 불러오고 있어요</p>}
+    <section aria-busy="true" aria-label="오늘의 표현" className={CARD_CLASS}>
+      <div className="flex min-h-[44px] items-center justify-between gap-p-3">
+        <h2 className="text-p-eyebrow text-p-secondary">오늘의 표현</h2>
+        <span aria-hidden="true" className="size-[44px] shrink-0 animate-pulse rounded-p-full bg-p-raised motion-reduce:animate-none" />
+      </div>
+      <p className="sr-only" role="status">오늘의 표현을 불러오고 있어요</p>
+      <div aria-hidden="true" className="flex flex-col gap-p-1">
+        <p className="font-p-brand text-p-title-en" lang="en"><span className={cn(SKELETON_BAR_CLASS, "h-[0.7em] w-3/5")} /></p>
+        <p className="text-p-small"><span className={cn(SKELETON_BAR_CLASS, "h-[0.8em] w-2/5")} /></p>
+        <p className="text-p-small"><span className={cn(SKELETON_BAR_CLASS, "h-[0.8em] w-4/5")} /></p>
+      </div>
     </section>
   );
 }

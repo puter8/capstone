@@ -200,7 +200,9 @@ export default function HomeV2Page() {
     return (
       <AppFrame className="pb-[calc(70px+var(--p-space-4)+env(safe-area-inset-bottom))]" withBottomNav>
         <header className="relative flex items-center px-p-5 pt-p-4">
-          <Wordmark className="flex-1" />
+          {/* The usage chip arrives with the first data load and is taller than the
+              wordmark; holding its 44px row here keeps the page from dropping when it does. */}
+          <Wordmark className="flex min-h-p-target flex-1 items-center" />
           {usage || plan === "pro" ? (
             <UsageChip
               context="home"
