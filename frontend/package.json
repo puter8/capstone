@@ -18,6 +18,7 @@
     "check:inline-feedback": "tsx scripts/check-inline-feedback.ts",
     "check:pally-segments": "tsx scripts/check-pally-segments.ts",
     "check:pally-color": "tsx scripts/check-pally-color.ts",
+    "check:axis-mapping": "tsx scripts/check-axis-mapping.ts",
     "check:mock-api": "tsx scripts/check-mock-api.ts",
     "check:name-edit-dialog": "tsx scripts/check-name-edit-dialog.ts",
     "check:onboarding-save": "tsx scripts/check-onboarding-save.ts",
