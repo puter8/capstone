@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from ai.contracts import FeedbackItem, FeedbackTurn
 from ai.conversation_rules import PALLY_NAME_RULES
+from ai.tracing import gemini_generation, record_gemini_call
 
 # Retain main's shared HTTP pool for calls made from worker threads. Request
 # timeouts remain per call: 10 seconds for legacy turns, 30 for session batches.
@@ -208,6 +209,7 @@ def _request_feedback(
         "https://generativelanguage.googleapis.com/v1beta/models/"
         "gemini-2.5-flash-lite:generateContent"
     )
+    record_gemini_call(payload, None, None)
     try:
         resp = _get_client().post(url, headers={"x-goog-api-key": api_key}, json=payload, timeout=timeout)
     except httpx.TransportError:
@@ -217,44 +219,49 @@ def _request_feedback(
         resp = _get_client().post(url, headers={"x-goog-api-key": api_key}, json=payload, timeout=timeout)
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini error {resp.status_code}")
-    candidates = resp.json().get("candidates")
+    body = resp.json()
+    record_gemini_call(payload, body, None)
+    candidates = body.get("candidates")
     if not candidates or candidates[0].get("finishReason") != "STOP":
         raise ValueError("Gemini feedback response is missing or incomplete")
     parts = candidates[0].get("content", {}).get("parts", [])
     raw = " ".join(p.get("text", "") for p in parts if not p.get("thought", False)).strip()
+    record_gemini_call(payload, body, raw)
     if not raw:
         raise ValueError("Gemini feedback response has no text")
     return _parse_json_from_candidate(raw)
 
 
 def _call_gemini_feedback(utterance: str, pally_reply: str) -> List[Dict]:
-    parsed = _request_feedback(
-        _FEEDBACK_SYSTEM_PROMPT,
-        {"user_transcript": utterance, "pally_text": pally_reply},
-        1024,
-        {"type": "ARRAY", "items": _ITEM_SCHEMA},
-    )
-    return [item.model_dump() for item in TypeAdapter(list[FeedbackItem]).validate_python(parsed)]
+    with gemini_generation("turn_feedback", "gemini-2.5-flash-lite"):
+        parsed = _request_feedback(
+            _FEEDBACK_SYSTEM_PROMPT,
+            {"user_transcript": utterance, "pally_text": pally_reply},
+            1024,
+            {"type": "ARRAY", "items": _ITEM_SCHEMA},
+        )
+        return [item.model_dump() for item in TypeAdapter(list[FeedbackItem]).validate_python(parsed)]
 
 
 def _call_gemini_session_feedback(turns: list[FeedbackTurn], level: str) -> list[dict]:
-    return _request_feedback(
-        _SESSION_SYSTEM_PROMPT,
-        {"level": level, "turns": [turn.model_dump() for turn in turns]},
-        4096,
-        {
-            "type": "ARRAY", "minItems": len(turns), "maxItems": len(turns),
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "turn_id": {"type": "STRING", "enum": [turn.turn_id for turn in turns]},
-                    "items": {"type": "ARRAY", "items": _ITEM_SCHEMA},
+    with gemini_generation("session_feedback", "gemini-2.5-flash-lite"):
+        return _request_feedback(
+            _SESSION_SYSTEM_PROMPT,
+            {"level": level, "turns": [turn.model_dump() for turn in turns]},
+            4096,
+            {
+                "type": "ARRAY", "minItems": len(turns), "maxItems": len(turns),
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "turn_id": {"type": "STRING", "enum": [turn.turn_id for turn in turns]},
+                        "items": {"type": "ARRAY", "items": _ITEM_SCHEMA},
+                    },
+                    "required": ["turn_id", "items"],
                 },
-                "required": ["turn_id", "items"],
             },
-        },
-        timeout=30.0,
-    )
+            timeout=30.0,
+        )
 
 
 def _feedback_tokens(text: str) -> list[str]:

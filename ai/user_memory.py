@@ -27,6 +27,8 @@ import threading
 
 import httpx
 
+from ai.tracing import gemini_generation, record_gemini_call
+
 MODEL = "gemini-2.5-flash-lite"
 DEFAULT_TIMEOUT_S = 20.0
 _URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
@@ -170,21 +172,26 @@ def _call_gemini(conversation: str, timeout: float) -> list:
             "responseSchema": _SCHEMA,
         },
     }
-    # Key in a header, not the URL, so httpx error text never carries it.
-    resp = _get_client().post(_URL, headers={"x-goog-api-key": api_key},
-                              json=payload, timeout=timeout)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Gemini memory extraction error {resp.status_code}")
-    candidate = resp.json()["candidates"][0]
-    reason = candidate.get("finishReason")
-    if reason not in (None, "STOP"):
-        raise RuntimeError(f"Gemini memory extraction stopped: {reason}")
-    text = "".join(part["text"] for part in candidate["content"]["parts"]
-                   if not part.get("thought", False))
-    facts = json.loads(text)["facts"]
-    if not isinstance(facts, list):
-        raise RuntimeError("Gemini memory extraction returned a non-list")
-    return facts
+    with gemini_generation("memory_extract", MODEL):
+        record_gemini_call(payload, None, None)
+        # Key in a header, not the URL, so httpx error text never carries it.
+        resp = _get_client().post(_URL, headers={"x-goog-api-key": api_key},
+                                  json=payload, timeout=timeout)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini memory extraction error {resp.status_code}")
+        body = resp.json()
+        record_gemini_call(payload, body, None)
+        candidate = body["candidates"][0]
+        reason = candidate.get("finishReason")
+        if reason not in (None, "STOP"):
+            raise RuntimeError(f"Gemini memory extraction stopped: {reason}")
+        text = "".join(part["text"] for part in candidate["content"]["parts"]
+                       if not part.get("thought", False))
+        record_gemini_call(payload, body, text)
+        facts = json.loads(text)["facts"]
+        if not isinstance(facts, list):
+            raise RuntimeError("Gemini memory extraction returned a non-list")
+        return facts
 
 
 def ground_facts(facts: list, turns: list) -> list:
