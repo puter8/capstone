@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 // Keep this in step with what the app actually stores and where it sends it.
 // Sources: supabase/migrations (tables, cascades), backend/main.py (Google calls,
-// in-memory audio), frontend/app/page.tsx (OAuth scopes).
+// in-memory audio), ai/tracing.py (Langfuse), frontend/app/page.tsx (OAuth scopes).
 export const POLICY_EFFECTIVE_DATE = "2026년 11월 26일";
 
 const PRIVACY_CONTACT = { owner: "Puter", email: "pally.pally2026@gmail.com" } as const;
@@ -59,6 +59,7 @@ export const POLICY_SECTIONS: ReadonlyArray<PolicySection> = [
             "모든 개인정보는 회원탈퇴 시 지체 없이 삭제해요. 탈퇴하면 대화 기록, 목소리 기준값, 기억한 정보, 이용·결제 기록이 한 번에 지워져요.",
             "마이 페이지의 ‘대화 기록 삭제’로 언제든 대화 기록을 지울 수 있어요. 이때 그 대화에서 기억한 정보도 함께 지워지고 Pally는 처음 모습으로 돌아가요.",
             "대화 중 녹음한 음성은 글로 바꾸는 데에만 쓰고 저장하지 않아요. 온보딩 녹음도 억양을 측정한 뒤 바로 버려요.",
+            "AI 답변 오류를 확인하려고 남기는 기록(Langfuse)은 회원탈퇴나 대화 기록 삭제와 별개로, 기록한 날부터 30일이 지나면 자동으로 삭제돼요.",
           ]}
         />
         <p>전자적 파일은 복구할 수 없는 방법으로 데이터베이스에서 삭제해요.</p>
@@ -80,6 +81,7 @@ export const POLICY_SECTIONS: ReadonlyArray<PolicySection> = [
             "Google LLC, 미국 (Speech-to-Text·Text-to-Speech·Gemini API) — 대화 음성과 글을 보내 글 변환, 답변·목소리 생성, 교정, 말투 분석에 사용",
             "Railway, 싱가포르 리전 (백엔드 서버) — 요청을 처리하는 동안 대화 음성과 글을 다룸",
             "Vercel Inc., 미국 (웹 화면 배포) — 화면 파일 전송, 접속 기록",
+            "ClickHouse, Inc. (Langfuse), 미국 (AI 답변 기록) — Gemini에 보낸 대화 글·기억한 정보와 Pally의 답변을 오류 확인과 품질 개선에 사용, 30일 보관",
             "Google·카카오 (소셜 로그인), 카카오페이 (테스트 결제)",
           ]}
         />

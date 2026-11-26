@@ -52,6 +52,7 @@ from ai import daily_expression
 from ai.intimacy import compute_intimacy_from_access_days
 from ai.matrix_engine import conversation_mean, replay_cumulative, compute_character
 from ai.opener import OpenerRejected, generate_opener, persona_prompt
+from ai.tracing import init_tracing
 from ai import reply_segments
 from ai.reply_shaping import shape_reply
 from ai.user_name import user_name_rule
@@ -141,6 +142,7 @@ async def lifespan(application: FastAPI):
     # Shared client for every outbound Google API call (STT/Gemini/TTS), so each
     # turn reuses warm TLS connections instead of paying a fresh handshake per
     # call. Per-request timeout overrides are passed at call time.
+    init_tracing()
     async with httpx.AsyncClient(
         timeout=30.0, limits=httpx.Limits(keepalive_expiry=60.0),
     ) as client:
