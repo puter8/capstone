@@ -2887,16 +2887,33 @@ async def reopen_conversation(
     if not session.get("ended_at"):
         raise AppError(409, "conversation_already_active", "Conversation is already active")
 
+    vote = session.get("axes_contribution")
+    patch = {
+        "ended_at": None,
+        "reopened_at": _now_iso(),
+        "reopen_count": (session.get("reopen_count") or 0) + 1,
+        # 지워지는 종료 시각을 표의 자리(처음 끝낸 시각)로 남긴다.
+        "axes_contribution": ({**vote, "first_completed_at": vote["first_completed_at"] or session["ended_at"]}
+                              if vote else {"mean": None, "turns": 0, "first_completed_at": session["ended_at"]}),
+    }
+    # Rebuild what Pally knows, the way creating a conversation does. The block
+    # is a snapshot taken when the conversation was created, so without this a
+    # reopened conversation answers from whatever was known back then: a user
+    # who told Pally their cat's name, finished that conversation and came back
+    # to an older conversation was told "I don't remember" while the fact sat in
+    # user_memories. Conversations created before this feature existed carry no
+    # block at all - 27 of the 41 conversations belonging to users who have
+    # stored facts - and reopening is the only thing that can fill them in.
+    # Facts from THIS conversation still land only after it is closed.
     try:
-        vote = session.get("axes_contribution")
-        res = sb.table("sessions").update({
-            "ended_at": None,
-            "reopened_at": _now_iso(),
-            "reopen_count": (session.get("reopen_count") or 0) + 1,
-            # 지워지는 종료 시각을 표의 자리(처음 끝낸 시각)로 남긴다.
-            "axes_contribution": ({**vote, "first_completed_at": vote["first_completed_at"] or session["ended_at"]}
-                                  if vote else {"mean": None, "turns": 0, "first_completed_at": session["ended_at"]}),
-        }).eq("id", conversation_id).eq("user_id", user_id).execute()
+        patch["memory_prompt"] = user_memory.rebuild_prompt(sb, user_id)
+    except Exception as exc:
+        # Keeping the block this conversation already has beats writing None
+        # over it: reopening must not cost Pally what it knew.
+        logging.error("Memory rebuild on reopen failed: %s", type(exc).__name__)
+
+    try:
+        res = sb.table("sessions").update(patch).eq("id", conversation_id).eq("user_id", user_id).execute()
     except Exception as e:
         logging.error(f"reopen_conversation failed: {e}")
         raise AppError(503, "persistence_failed", "Failed to reopen conversation")
