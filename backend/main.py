@@ -307,6 +307,13 @@ async def reject_oversized_body(request: Request, call_next):
     return await call_next(request)
 
 
+_SECURITY_HEADERS = (
+    ("X-Content-Type-Options", "nosniff"),
+    ("X-Frame-Options", "DENY"),
+    ("Referrer-Policy", "no-referrer"),
+)
+
+
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
     request_id = f"req_{uuid.uuid4().hex}"
@@ -326,6 +333,10 @@ async def add_request_id(request: Request, call_next):
         )
         raise
     response.headers["X-Request-ID"] = request_id
+    # API responses are data, never pages: no MIME sniffing, no framing.
+    # setdefault keeps headers a route chose itself (the KakaoPay callback redirect).
+    for name, value in _SECURITY_HEADERS:
+        response.headers.setdefault(name, value)
     _log_event(
         "http_request",
         request_id=request_id,

@@ -25,6 +25,7 @@ export const routes = {
   my: v2Path("/my"),
   level: v2Path("/settings/level"),
   plans: v2Path("/settings/plans"),
+  privacy: v2Path("/privacy"),
 } as const;
 
 export type NavItemId = "home" | "history" | "ranking" | "my";

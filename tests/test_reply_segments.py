@@ -166,6 +166,19 @@ def test_the_own_remark_rule_keeps_the_users_facts_out_of_pallys_own_sentence():
     assert "Nothing you know about the user belongs here" in " ".join(own_remark_rule.split())
 
 
+def test_the_reaction_field_is_where_a_remembered_fact_is_answered():
+    """실측: 이 규칙 없이 "Do you remember my cat's name?" 는 10번 중 6번만 이름을
+    말했다. 6개 필드 중 답이 들어갈 자리가 reaction 뿐인데 그 정의가 "반응"이라,
+    모델이 "Of course, I remember!" 로 자리를 채우고 이름을 빠뜨렸다. 규칙을 넣은
+    뒤 cat 20/20, dog 18/20 (2회 x N=10). 예시는 placeholder 로 둔다 - 실제 이름을
+    적었을 때는 20/20 이었지만 답변 문장이 10/10 똑같아졌다."""
+    reaction_rule = system_prompt("Pally", "Use simple English.", "Warm.").split(
+        '3. "reaction"')[1].split('4. "corrected_expr"')[0]
+    flat = " ".join(reaction_rule.split())
+    assert "this field is the answer" in flat
+    assert '"Of course, I remember!"' in flat
+
+
 def test_obsolete_model_fields_do_not_split_or_drop_the_reply():
     built = build_reply({**GOOD, "new_expr": "a phrase not in the reply"}, UTTERANCE)
     assert built is not None

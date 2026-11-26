@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useState } from "react";
 
 import { AppFrame } from "@/components/v2/AppFrame";
@@ -76,6 +77,10 @@ export default function LoginV2Page() {
           <Image alt="" height={20} src="/v2/kakao-symbol.svg" width={20} />
           {isLoading === "kakao" ? "카카오로 연결하고 있어요" : "카카오로 시작하기"}
         </button>
+        <p className="text-center text-p-caption text-p-text-muted">
+          시작하면 대화 음성과 글이 처리되는 방식을 담은{" "}
+          <Link className="underline" href={routes.privacy}>개인정보처리방침</Link>에 동의하게 돼요.
+        </p>
       </div>
       {error ? <Toast className="top-p-4" message={error} onDismiss={() => setError(null)} tone="error" /> : null}
     </AppFrame>
